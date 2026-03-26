@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: drivemind-postgres
+    environment:
+      POSTGRES_USER: drivemind
+      POSTGRES_PASSWORD: drivemind
+      POSTGRES_DB: drivemind
+    ports:
+      - "5432:5432"
+    volumes:
+      - drivemind_pg:/var/lib/postgresql/data
+
+volumes:
+  drivemind_pg:
+

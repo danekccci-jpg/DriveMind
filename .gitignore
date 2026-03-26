@@ -1,0 +1,11 @@
+node_modules/
+.expo/
+.vscode/
+android/
+ios/
+dist/
+npm-debug.*
+yarn-error.log
+.env*
+*.apk
+*.bundle

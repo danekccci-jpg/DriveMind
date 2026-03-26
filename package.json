@@ -1,0 +1,27 @@
+{
+  "name": "drivemind",
+  "private": true,
+  "workspaces": [
+    "mobile",
+    "backend",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm-run-all -p dev:backend dev:mobile",
+    "dev:mobile": "npm --workspace mobile run start",
+    "dev:backend": "npm --workspace backend run dev",
+    "lint": "npm-run-all -p lint:mobile lint:backend",
+    "lint:mobile": "npm --workspace mobile run lint",
+    "lint:backend": "npm --workspace backend run lint"
+  },
+  "devDependencies": {
+    "eslint": "^10.1.0",
+    "npm-run-all": "^4.1.5"
+  },
+  "dependencies": {
+    "@expo/metro-runtime": "~55.0.6",
+    "react-dom": "19.2.0",
+    "react-native-web": "^0.21.0"
+  },
+  "overrides": {}
+}
