@@ -1,4 +1,5 @@
-import React, { useEffect } from 'react'
+import React, { useEffect, useRef } from 'react'
+import { Animated } from 'react-native'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 import { NavigationContainer, DefaultTheme, DarkTheme } from '@react-navigation/native'
 import { StatusBar } from 'expo-status-bar'
@@ -11,27 +12,11 @@ import {
 } from '@expo-google-fonts/poppins'
 
 import { useRoleStore } from './src/store/roleStore'
-import { useThemeStore } from './src/store/themeStore'
+import { useTheme } from './src/theme/theme'
+import RoleSelectionScreen from './src/screens/RoleSelection'
 import OnboardingScreen from './src/screens/Onboarding'
 import AppTabs from './src/navigation/AppTabs'
 import './src/i18n'
-
-const NAV_DARK_THEME = {
-  ...DarkTheme,
-  colors: {
-    ...DarkTheme.colors,
-    background: '#000000',
-    card: '#000000',
-    text: '#FFFFFF',
-    border: '#1A1A1A',
-    primary: '#FFFFFF',
-    notification: '#FFFFFF',
-  },
-}
-
-const NAV_LIGHT_THEME = {
-  ...DefaultTheme,
-}
 
 export default function App() {
   const [fontsLoaded] = useFonts({
@@ -41,15 +26,51 @@ export default function App() {
     Poppins_700Bold,
   })
 
+  const role = useRoleStore((s) => s.role)
   const onboardingComplete = useRoleStore((s) => s.onboardingComplete)
-  const theme = useThemeStore((s) => s.theme)
+  const setRole = useRoleStore((s) => s.setRole)
+  const { colors: c, isDark } = useTheme()
+
+  const fadeAnim = useRef(new Animated.Value(0)).current
+
+  useEffect(() => {
+    if (onboardingComplete) {
+      Animated.timing(fadeAnim, {
+        toValue: 1,
+        duration: 400,
+        useNativeDriver: true,
+      }).start()
+    }
+  }, [onboardingComplete])
 
   if (!fontsLoaded) return null
+
+  const navTheme = {
+    ...(isDark ? DarkTheme : DefaultTheme),
+    colors: {
+      ...(isDark ? DarkTheme.colors : DefaultTheme.colors),
+      background: c.tabBar,
+      card: c.tabBar,
+      text: c.text,
+      border: c.tabBarBorder,
+      primary: c.primary,
+      notification: c.primary,
+    },
+  }
+
+  if (!role) {
+    return (
+      <SafeAreaProvider>
+        <StatusBar style={isDark ? 'light' : 'dark'} backgroundColor={c.bg} />
+        <RoleSelectionScreen onSelect={setRole} />
+      </SafeAreaProvider>
+    )
+  }
 
   if (!onboardingComplete) {
     return (
       <SafeAreaProvider>
-        <StatusBar style="light" backgroundColor="#000000" />
+        <StatusBar style={isDark ? 'light' : 'dark'} backgroundColor={c.bg} />
         <OnboardingScreen />
       </SafeAreaProvider>
     )
@@ -57,13 +78,12 @@ export default function App() {
 
   return (
     <SafeAreaProvider>
-      <StatusBar
-        style={theme === 'dark' ? 'light' : 'dark'}
-        backgroundColor="#000000"
-      />
-      <NavigationContainer theme={theme === 'dark' ? NAV_DARK_THEME : NAV_LIGHT_THEME}>
-        <AppTabs />
-      </NavigationContainer>
+      <StatusBar style={isDark ? 'light' : 'dark'} backgroundColor={c.tabBar} />
+      <Animated.View style={{ flex: 1, opacity: fadeAnim }}>
+        <NavigationContainer theme={navTheme}>
+          <AppTabs />
+        </NavigationContainer>
+      </Animated.View>
     </SafeAreaProvider>
   )
 }

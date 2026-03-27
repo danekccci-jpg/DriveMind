@@ -5,26 +5,27 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  Switch,
   TextInput,
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useTranslation } from 'react-i18next'
+import { Feather, MaterialCommunityIcons } from '@expo/vector-icons'
 import i18n from '../../i18n'
 import * as Haptics from 'expo-haptics'
 
 import { useRoleStore } from '../../store/roleStore'
 import { useThemeStore } from '../../store/themeStore'
 import { useLanguageStore } from '../../store/languageStore'
+import { useColors, type AppColors } from '../../theme/theme'
 import { fonts } from '../../theme/typography'
 
 type Role = 'courier' | 'taxi'
 type VehicleType = 'bike' | 'moped' | 'car'
 
-const VEHICLE_OPTIONS: { id: VehicleType; emoji: string; label: string }[] = [
-  { id: 'bike', emoji: '🚲', label: 'bike' },
-  { id: 'moped', emoji: '🛵', label: 'moped' },
-  { id: 'car', emoji: '🚗', label: 'car' },
+const VEHICLE_OPTIONS: { id: VehicleType; icon: string; label: string }[] = [
+  { id: 'bike', icon: 'bike', label: 'bike' },
+  { id: 'moped', icon: 'moped', label: 'moped' },
+  { id: 'car', icon: 'car-outline', label: 'car' },
 ]
 
 interface Alert {
@@ -36,34 +37,10 @@ interface Alert {
 }
 
 const MOCK_ALERTS: Alert[] = [
-  {
-    id: '1',
-    type: 'demand',
-    title: 'High demand nearby',
-    desc: 'Stare Miasto zone is surging right now',
-    time: '2 min ago',
-  },
-  {
-    id: '2',
-    type: 'platform',
-    title: 'Better platform available',
-    desc: 'Wolt paying +18% more than Glovo now',
-    time: '14 min ago',
-  },
-  {
-    id: '3',
-    type: 'milestone',
-    title: 'Earnings milestone',
-    desc: 'You reached 1,000 PLN this week 🎉',
-    time: '1 hr ago',
-  },
-  {
-    id: '4',
-    type: 'review',
-    title: 'Shift in review',
-    desc: 'Yesterday\'s shift summary is ready',
-    time: '3 hr ago',
-  },
+  { id: '1', type: 'demand', title: 'High demand nearby', desc: 'Stare Miasto zone is surging right now', time: '2 min ago' },
+  { id: '2', type: 'platform', title: 'Better platform available', desc: 'Wolt paying +18% more than Glovo now', time: '14 min ago' },
+  { id: '3', type: 'milestone', title: 'Earnings milestone', desc: 'You reached 1,000 PLN this week', time: '1 hr ago' },
+  { id: '4', type: 'review', title: 'Shift in review', desc: "Yesterday's shift summary is ready", time: '3 hr ago' },
 ]
 
 const ALERT_DOT_COLOR: Record<Alert['type'], string> = {
@@ -73,9 +50,12 @@ const ALERT_DOT_COLOR: Record<Alert['type'], string> = {
   review: '#888888',
 }
 
+const THEME_LABELS: Record<string, string> = { dark: 'Dark', light: 'Light', system: 'System' }
+
 export default function ProfileScreen() {
   const { t } = useTranslation()
   const insets = useSafeAreaInsets()
+  const c = useColors()
 
   const role = useRoleStore((s) => s.role)
   const vehicleType = useRoleStore((s) => s.vehicleType)
@@ -84,7 +64,8 @@ export default function ProfileScreen() {
   const setVehicleType = useRoleStore((s) => s.setVehicleType)
   const setFuelConsumption = useRoleStore((s) => s.setFuelConsumption)
 
-  const { theme, toggleTheme } = useThemeStore()
+  const themeMode = useThemeStore((s) => s.theme)
+  const toggleTheme = useThemeStore((s) => s.toggleTheme)
   const { language, setLanguage } = useLanguageStore()
 
   const [fuelInput, setFuelInput] = useState(String(fuelConsumption))
@@ -104,30 +85,30 @@ export default function ProfileScreen() {
 
   return (
     <ScrollView
-      style={s.root}
+      style={[s.root, { backgroundColor: c.bg }]}
       contentContainerStyle={[s.content, { paddingTop: insets.top + 12, paddingBottom: 40 }]}
       showsVerticalScrollIndicator={false}
     >
-      {/* ── User card ── */}
-      <View style={s.userCard}>
+      {/* User card */}
+      <View style={[s.userCard, { backgroundColor: c.surface, borderColor: c.border }]}>
         <View style={s.userRow}>
-          <View style={s.avatar}>
-            <Text style={s.avatarText}>DM</Text>
+          <View style={[s.avatar, { backgroundColor: c.surfaceAlt, borderColor: c.border }]}>
+            <Text style={[s.avatarText, { color: c.text }]}>DM</Text>
           </View>
           <View style={s.userInfo}>
             <View style={s.userNameRow}>
-              <Text style={s.userName}>Damian K.</Text>
-              <View style={s.rolePill}>
-                <Text style={s.rolePillText}>{role ?? 'courier'}</Text>
+              <Text style={[s.userName, { color: c.text }]}>Damian K.</Text>
+              <View style={[s.rolePill, { backgroundColor: c.surfaceAlt }]}>
+                <Text style={[s.rolePillText, { color: c.textSecondary }]}>{role ?? 'courier'}</Text>
               </View>
             </View>
-            <Text style={s.memberSince}>Member since March 2026</Text>
+            <Text style={[s.memberSince, { color: c.textSecondary }]}>Member since March 2026</Text>
           </View>
         </View>
       </View>
 
-      {/* ── My Role ── */}
-      <SectionLabel label={t('my_role')} />
+      {/* My Role */}
+      <SectionLabel label={t('my_role')} color={c.textMuted} />
       <View style={s.roleRow}>
         {(['courier', 'taxi'] as Role[]).map((r) => {
           const selected = role === r
@@ -135,15 +116,25 @@ export default function ProfileScreen() {
             <TouchableOpacity
               key={r}
               activeOpacity={0.7}
-              style={[s.roleCard, selected ? s.cardSelected : s.cardUnselected]}
+              style={[
+                s.roleCard,
+                {
+                  backgroundColor: selected ? c.primaryDim : c.surface,
+                  borderColor: selected ? c.primary : c.border,
+                },
+              ]}
               onPress={() => {
                 Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
                 setRole(r)
               }}
             >
-              <Text style={s.roleEmoji}>{r === 'courier' ? '🚲' : '🚗'}</Text>
-              <Text style={s.roleCardLabel}>{t(r)}</Text>
-              <Text style={s.roleCardSub}>
+              <MaterialCommunityIcons
+                name={r === 'courier' ? 'bike' : 'car-outline'}
+                size={24}
+                color={selected ? c.primary : c.secondary}
+              />
+              <Text style={[s.roleCardLabel, { color: c.text }]}>{t(r)}</Text>
+              <Text style={[s.roleCardSub, { color: c.textSecondary }]}>
                 {r === 'courier' ? t('courier_subtitle') : t('taxi_subtitle')}
               </Text>
             </TouchableOpacity>
@@ -151,25 +142,31 @@ export default function ProfileScreen() {
         })}
       </View>
 
-      {/* ── My Transport (courier only) ── */}
+      {/* Transport (courier only) */}
       {role === 'courier' && (
         <>
-          <SectionLabel label={t('my_transport')} />
+          <SectionLabel label={t('my_transport')} color={c.textMuted} />
           <View style={s.vehicleRow}>
-            {VEHICLE_OPTIONS.map(({ id, emoji, label }) => {
+            {VEHICLE_OPTIONS.map(({ id, icon, label }) => {
               const selected = vehicleType === id
               return (
                 <TouchableOpacity
                   key={id}
                   activeOpacity={0.7}
-                  style={[s.vehicleCard, selected ? s.cardSelected : s.cardUnselected]}
+                  style={[
+                    s.vehicleCard,
+                    {
+                      backgroundColor: selected ? c.primaryDim : c.surface,
+                      borderColor: selected ? c.primary : c.border,
+                    },
+                  ]}
                   onPress={() => {
                     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
                     setVehicleType(id)
                   }}
                 >
-                  <Text style={s.vehicleEmoji}>{emoji}</Text>
-                  <Text style={s.vehicleLabel}>{t(label)}</Text>
+                  <MaterialCommunityIcons name={icon as any} size={24} color={selected ? c.primary : c.secondary} />
+                  <Text style={[s.vehicleLabel, { color: c.text }]}>{t(label)}</Text>
                 </TouchableOpacity>
               )
             })}
@@ -177,262 +174,153 @@ export default function ProfileScreen() {
         </>
       )}
 
-      {/* ── My Vehicle (taxi only) ── */}
+      {/* Taxi vehicle */}
       {role === 'taxi' && (
         <>
-          <SectionLabel label={t('my_vehicle')} />
+          <SectionLabel label={t('my_vehicle')} color={c.textMuted} />
           <TextInput
-            style={s.fuelInput}
+            style={[s.fuelInput, { backgroundColor: c.surface, borderColor: c.border, color: c.text }]}
             value={fuelInput}
             onChangeText={handleFuelChange}
             placeholder={t('fuel_consumption')}
-            placeholderTextColor="#444444"
+            placeholderTextColor={c.textMuted}
             keyboardType="numeric"
             returnKeyType="done"
           />
         </>
       )}
 
-      {/* ── Recent Alerts ── */}
-      <SectionLabel label={t('recent_alerts')} />
+      {/* Alerts */}
+      <SectionLabel label={t('recent_alerts')} color={c.textMuted} />
       {MOCK_ALERTS.map((alert) => (
-        <View key={alert.id} style={s.alertCard}>
+        <View key={alert.id} style={[s.alertCard, { backgroundColor: c.surface, borderColor: c.border }]}>
           <View style={[s.alertDot, { backgroundColor: ALERT_DOT_COLOR[alert.type] }]} />
           <View style={s.alertBody}>
-            <Text style={s.alertTitle}>{alert.title}</Text>
-            <Text style={s.alertDesc}>{alert.desc}</Text>
+            <Text style={[s.alertTitle, { color: c.text }]}>{alert.title}</Text>
+            <Text style={[s.alertDesc, { color: c.textSecondary }]}>{alert.desc}</Text>
           </View>
-          <Text style={s.alertTime}>{alert.time}</Text>
+          <Text style={[s.alertTime, { color: c.textMuted }]}>{alert.time}</Text>
         </View>
       ))}
 
-      {/* ── Settings ── */}
-      <SectionLabel label={t('settings')} />
-      <View style={s.settingsCard}>
+      {/* Settings */}
+      <SectionLabel label={t('settings')} color={c.textMuted} />
+      <View style={[s.settingsCard, { backgroundColor: c.surface, borderColor: c.border }]}>
         <SettingsRow
-          icon="🔔"
+          icon={<Feather name="bell" size={20} color={c.secondary} />}
           label={t('notification_prefs')}
-          right={<Text style={s.settingsArrow}>›</Text>}
+          right={<Feather name="chevron-right" size={18} color={c.textMuted} />}
+          separatorColor={c.separator}
         />
         <SettingsRow
-          icon="🌐"
+          icon={<Feather name="globe" size={20} color={c.secondary} />}
           label={t('language')}
           right={
             <TouchableOpacity onPress={handleLanguageToggle} activeOpacity={0.7}>
-              <Text style={s.settingsValue}>{language === 'en' ? 'English' : 'Polski'}</Text>
+              <Text style={[s.settingsValue, { color: c.textMuted }]}>
+                {language === 'en' ? 'English' : 'Polski'}
+              </Text>
             </TouchableOpacity>
           }
-          noBorder={false}
+          separatorColor={c.separator}
         />
         <SettingsRow
-          icon="🌙"
+          icon={<Feather name="moon" size={20} color={c.secondary} />}
           label={t('dark_mode')}
-              right={
-            <Switch
-              value={theme === 'dark'}
-              onValueChange={() => {
+          right={
+            <TouchableOpacity
+              onPress={() => {
                 Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
                 toggleTheme()
               }}
-              trackColor={{ false: '#2A2A2A', true: '#FFFFFF' }}
-              thumbColor={theme === 'dark' ? '#000000' : '#888888'}
-            />
+              activeOpacity={0.7}
+              style={[s.themeToggle, { backgroundColor: c.surfaceAlt }]}
+            >
+              <Text style={[s.themeToggleText, { color: c.text }]}>
+                {THEME_LABELS[themeMode]}
+              </Text>
+            </TouchableOpacity>
           }
-          noBorder={false}
+          separatorColor={c.separator}
         />
         <SettingsRow
-          icon="ℹ️"
+          icon={<Feather name="info" size={20} color={c.secondary} />}
           label={t('about')}
-          right={<Text style={s.settingsArrow}>›</Text>}
+          right={<Feather name="chevron-right" size={18} color={c.textMuted} />}
+          separatorColor={c.separator}
           noBorder
         />
       </View>
 
-      {/* ── Sign out ── */}
       <TouchableOpacity style={s.signOutBtn} activeOpacity={0.7}>
-        <Text style={s.signOutText}>Sign out</Text>
+        <Text style={[s.signOutText, { color: c.danger }]}>Sign out</Text>
       </TouchableOpacity>
     </ScrollView>
   )
 }
 
-// ── Sub-components ────────────────────────────────────────────────────────────
-function SectionLabel({ label }: { label: string }) {
-  return <Text style={s.sectionLabel}>{label}</Text>
+function SectionLabel({ label, color }: { label: string; color: string }) {
+  return <Text style={[s.sectionLabel, { color }]}>{label}</Text>
 }
 
 function SettingsRow({
   icon,
   label,
   right,
+  separatorColor,
   noBorder = false,
 }: {
-  icon: string
+  icon: React.ReactNode
   label: string
   right: React.ReactNode
+  separatorColor: string
   noBorder?: boolean
 }) {
+  const colors = useColors()
   return (
-    <View style={[s.settingsRow, noBorder && s.settingsRowNoBorder]}>
-      <Text style={s.settingsIcon}>{icon}</Text>
-      <Text style={s.settingsLabel}>{label}</Text>
+    <View style={[s.settingsRow, !noBorder && { borderBottomWidth: 1, borderBottomColor: separatorColor }]}>
+      {icon}
+      <Text style={[s.settingsLabel, { color: colors.text }]}>{label}</Text>
       <View style={s.settingsRight}>{right}</View>
     </View>
   )
 }
 
-// ── Styles ────────────────────────────────────────────────────────────────────
 const s = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#000000' },
-  content: { paddingHorizontal: 16 },
-
-  // User card
-  userCard: {
-    backgroundColor: '#111111',
-    borderWidth: 1,
-    borderColor: '#2A2A2A',
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 20,
-  },
+  root: { flex: 1 },
+  content: { paddingHorizontal: 20 },
+  userCard: { borderWidth: 1, borderRadius: 16, padding: 16, marginBottom: 20 },
   userRow: { flexDirection: 'row', alignItems: 'center', gap: 14 },
-  avatar: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: '#1A1A1A',
-    borderWidth: 1,
-    borderColor: '#2A2A2A',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarText: { fontSize: 17, fontWeight: '600', fontFamily: fonts.semiBold, color: '#FFFFFF' },
+  avatar: { width: 48, height: 48, borderRadius: 24, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
+  avatarText: { fontSize: 17, fontWeight: '600', fontFamily: fonts.semiBold },
   userInfo: { flex: 1 },
   userNameRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 },
-  userName: { fontSize: 17, fontWeight: '600', fontFamily: fonts.semiBold, color: '#FFFFFF' },
-  rolePill: {
-    backgroundColor: '#1A1A1A',
-    borderRadius: 10,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-  },
-  rolePillText: {
-    fontSize: 11,
-    fontFamily: fonts.medium,
-    color: '#FFFFFF',
-    textTransform: 'capitalize',
-  },
-  memberSince: { fontSize: 13, fontFamily: fonts.regular, color: '#888888' },
-
-  // Section label
-  sectionLabel: {
-    fontSize: 11,
-    fontFamily: fonts.medium,
-    color: '#444444',
-    letterSpacing: 0.8,
-    textTransform: 'uppercase',
-    marginBottom: 10,
-    marginTop: 4,
-  },
-
-  // Role cards
+  userName: { fontSize: 17, fontWeight: '600', fontFamily: fonts.semiBold },
+  rolePill: { borderRadius: 10, paddingHorizontal: 8, paddingVertical: 2 },
+  rolePillText: { fontSize: 11, fontFamily: fonts.medium, textTransform: 'capitalize' },
+  memberSince: { fontSize: 13, fontFamily: fonts.regular },
+  sectionLabel: { fontSize: 11, fontFamily: fonts.medium, letterSpacing: 0.8, textTransform: 'uppercase', marginBottom: 10, marginTop: 4 },
   roleRow: { flexDirection: 'row', gap: 10, marginBottom: 16 },
-  roleCard: {
-    flex: 1,
-    borderWidth: 1,
-    borderRadius: 12,
-    padding: 14,
-    alignItems: 'flex-start',
-    gap: 4,
-  },
-  cardSelected: {
-    borderWidth: 1.5,
-    borderColor: '#FFFFFF',
-    backgroundColor: 'rgba(255,255,255,0.06)',
-  },
-  cardUnselected: { borderColor: '#2A2A2A', backgroundColor: '#111111' },
-  roleEmoji: { fontSize: 24, marginBottom: 4 },
-  roleCardLabel: { fontSize: 15, fontWeight: '600', fontFamily: fonts.semiBold, color: '#FFFFFF' },
-  roleCardSub: { fontSize: 11, fontFamily: fonts.regular, color: '#888888' },
-
-  // Vehicle cards
+  roleCard: { flex: 1, borderWidth: 1, borderRadius: 12, padding: 14, alignItems: 'flex-start', gap: 4 },
+  roleCardLabel: { fontSize: 15, fontWeight: '600', fontFamily: fonts.semiBold },
+  roleCardSub: { fontSize: 11, fontFamily: fonts.regular },
   vehicleRow: { flexDirection: 'row', gap: 10, marginBottom: 16 },
-  vehicleCard: {
-    flex: 1,
-    height: 72,
-    borderWidth: 1,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-  },
-  vehicleEmoji: { fontSize: 24 },
-  vehicleLabel: { fontSize: 12, fontFamily: fonts.medium, color: '#FFFFFF' },
-
-  // Fuel input
-  fuelInput: {
-    height: 48,
-    backgroundColor: '#111111',
-    borderWidth: 1,
-    borderColor: '#2A2A2A',
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    fontSize: 15,
-    fontFamily: fonts.regular,
-    color: '#FFFFFF',
-    marginBottom: 16,
-  },
-
-  // Alert cards
-  alertCard: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    backgroundColor: '#111111',
-    borderWidth: 1,
-    borderColor: '#2A2A2A',
-    borderRadius: 10,
-    padding: 12,
-    marginBottom: 8,
-    gap: 10,
-  },
-  alertDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    marginTop: 4,
-    flexShrink: 0,
-  },
+  vehicleCard: { flex: 1, height: 72, borderWidth: 1, borderRadius: 12, alignItems: 'center', justifyContent: 'center', gap: 6 },
+  vehicleLabel: { fontSize: 12, fontFamily: fonts.medium },
+  fuelInput: { height: 48, borderWidth: 1, borderRadius: 10, paddingHorizontal: 14, fontSize: 15, fontFamily: fonts.regular, marginBottom: 16 },
+  alertCard: { flexDirection: 'row', alignItems: 'flex-start', borderWidth: 1, borderRadius: 10, padding: 12, marginBottom: 8, gap: 10 },
+  alertDot: { width: 8, height: 8, borderRadius: 4, marginTop: 4, flexShrink: 0 },
   alertBody: { flex: 1 },
-  alertTitle: { fontSize: 14, fontWeight: '500', fontFamily: fonts.medium, color: '#FFFFFF', marginBottom: 2 },
-  alertDesc: { fontSize: 13, fontFamily: fonts.regular, color: '#888888' },
-  alertTime: { fontSize: 11, fontFamily: fonts.regular, color: '#444444' },
-
-  // Settings
-  settingsCard: {
-    backgroundColor: '#111111',
-    borderWidth: 1,
-    borderColor: '#2A2A2A',
-    borderRadius: 12,
-    marginBottom: 20,
-    overflow: 'hidden',
-  },
-  settingsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#1A1A1A',
-    gap: 12,
-  },
-  settingsRowNoBorder: { borderBottomWidth: 0 },
-  settingsIcon: { fontSize: 20 },
+  alertTitle: { fontSize: 14, fontWeight: '500', fontFamily: fonts.medium, marginBottom: 2 },
+  alertDesc: { fontSize: 13, fontFamily: fonts.regular },
+  alertTime: { fontSize: 11, fontFamily: fonts.regular },
+  settingsCard: { borderWidth: 1, borderRadius: 12, marginBottom: 20, overflow: 'hidden' },
+  settingsRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 14, paddingHorizontal: 16, gap: 12 },
   settingsLabel: { flex: 1, fontSize: 15, fontFamily: fonts.regular, color: '#FFFFFF' },
   settingsRight: { alignItems: 'flex-end' },
-  settingsValue: { fontSize: 14, fontFamily: fonts.regular, color: '#444444' },
-  settingsArrow: { fontSize: 20, color: '#444444' },
-
-  // Sign out
+  settingsValue: { fontSize: 14, fontFamily: fonts.regular },
+  themeToggle: { paddingHorizontal: 12, paddingVertical: 5, borderRadius: 10 },
+  themeToggleText: { fontSize: 13, fontFamily: fonts.medium },
   signOutBtn: { paddingVertical: 16, alignItems: 'center' },
-  signOutText: { fontSize: 14, fontFamily: fonts.medium, color: '#EF4444' },
+  signOutText: { fontSize: 14, fontFamily: fonts.medium },
 })
