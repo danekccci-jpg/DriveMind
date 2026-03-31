@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react'
+import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import {
   View,
   Text,
@@ -7,13 +7,12 @@ import {
   Modal,
   AppState,
   AppStateStatus,
-  Dimensions,
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useTranslation } from 'react-i18next'
 import * as Location from 'expo-location'
+import * as Haptics from 'expo-haptics'
 import { MaterialCommunityIcons, Feather } from '@expo/vector-icons'
-import Svg, { Path } from 'react-native-svg'
 
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from '../../components/MapViewWeb'
 import PlatformIcon from '../../components/PlatformIcon'
@@ -22,22 +21,37 @@ import { useOrdersStore, Order } from '../../store/ordersStore'
 import { useRoleStore } from '../../store/roleStore'
 import { getDashboardSuggestionOrder } from '../../data/mockOrders'
 import { openPlatformDeepLink } from '../../utils/platformDeepLink'
+import { getDirections, getTravelModeByVehicle } from '../../services/directionsService'
 import { fonts } from '../../theme/typography'
 import { useTheme, type AppColors } from '../../theme/theme'
 import { ProfitLabel } from '../../engine/profitEngine'
 
 const TAB_BAR_HEIGHT = 60
-const { width: SCREEN_W } = Dimensions.get('window')
 
 const DARK_MAP_STYLE = [
-  { elementType: 'geometry', stylers: [{ color: '#0a0a0a' }] },
-  { elementType: 'labels.text.fill', stylers: [{ color: '#555555' }] },
-  { elementType: 'labels.text.stroke', stylers: [{ color: '#0a0a0a' }] },
-  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#1c1c1c' }] },
-  { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#2a2a2a' }] },
-  { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#2a2a2a' }] },
+  { elementType: 'geometry', stylers: [{ color: '#0A0A0A' }] },
+  { elementType: 'labels.text.fill', stylers: [{ color: '#EFEFEF' }] },
+  { elementType: 'labels.text.stroke', stylers: [{ color: '#0A0A0A' }] },
+  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#1A1A1A' }] },
+  { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#2A2A2A' }] },
+  { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#202020' }] },
+  { featureType: 'road.highway', elementType: 'geometry.stroke', stylers: [{ color: '#FFFFFF' }] },
   { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#050505' }] },
   { featureType: 'poi', elementType: 'geometry', stylers: [{ color: '#111111' }] },
+  { featureType: 'transit', stylers: [{ visibility: 'off' }] },
+  { featureType: 'poi', elementType: 'labels', stylers: [{ visibility: 'off' }] },
+]
+
+const LIGHT_MAP_STYLE = [
+  { elementType: 'geometry', stylers: [{ color: '#FFFFFF' }] },
+  { elementType: 'labels.text.fill', stylers: [{ color: '#666666' }] },
+  { elementType: 'labels.text.stroke', stylers: [{ color: '#FFFFFF' }] },
+  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#EDEDED' }] },
+  { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#D8D8D8' }] },
+  { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#E3E3E3' }] },
+  { featureType: 'road.highway', elementType: 'geometry.stroke', stylers: [{ color: '#CFCFCF' }] },
+  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#F3F3F3' }] },
+  { featureType: 'poi', elementType: 'geometry', stylers: [{ color: '#F5F5F5' }] },
   { featureType: 'transit', stylers: [{ visibility: 'off' }] },
   { featureType: 'poi', elementType: 'labels', stylers: [{ visibility: 'off' }] },
 ]
@@ -47,14 +61,6 @@ const KRAKOW_REGION = {
   longitude: 19.9366,
   latitudeDelta: 0.06,
   longitudeDelta: 0.06,
-}
-
-function ChevronIcon({ open, color = '#888' }: { open: boolean; color?: string }) {
-  return (
-    <Svg width={16} height={16} viewBox="0 0 16 16" fill="none">
-      <Path d={open ? 'M3 10 L8 5 L13 10' : 'M3 6 L8 11 L13 6'} stroke={color} strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" />
-    </Svg>
-  )
 }
 
 function Pill({ label, c }: { label: string; c: AppColors }) {
@@ -71,20 +77,26 @@ export default function DashboardScreen() {
   const { colors: c, isDark } = useTheme()
 
   const role = useRoleStore((st) => st.role) ?? 'courier'
+  const vehicleType = useRoleStore((st) => st.vehicleType)
   const {
     shiftStats, dailyGoal, isNavigating, navigationPhase, routePolyline,
     currentStep, routeDistance, routeDuration, pendingConfirmation,
-    activeOrders, lastPlatformActivity, setPendingConfirmation,
+    activeOrders, setPendingConfirmation,
     confirmOrder, rejectOrder, setOrderStatus, completeOrder,
-    startNavigation, updateNavigationPhase, stopNavigation, setDailyGoal,
+    updateNavigationPhase, stopNavigation, recomputeNavigationTarget, updateNavigationRoute,
   } = useOrdersStore()
+  const navigationOrderId = useOrdersStore((s) => s.navigationOrderId)
 
   const [userLocation, setUserLocation] = useState<{ latitude: number; longitude: number } | null>(null)
-  const [calcOpen, setCalcOpen] = useState(false)
   const appStateRef = useRef<AppStateStatus>(AppState.currentState)
   const pendingOrderRef = useRef<Order | null>(null)
+  const mapRef = useRef<any>(null)
 
-  const activeOrder = activeOrders[0] ?? null
+  const activeOrder = useMemo(
+    () => activeOrders.find((o) => o.id === navigationOrderId) ?? activeOrders[0] ?? null,
+    [activeOrders, navigationOrderId],
+  )
+  const routePolylineSafe = routePolyline ?? []
   const suggestion = activeOrder ?? getDashboardSuggestionOrder(role as 'courier' | 'taxi')
 
   useEffect(() => {
@@ -118,34 +130,102 @@ export default function DashboardScreen() {
 
   const hoursOnline = shiftStats.startTime ? (Date.now() - shiftStats.startTime) / 3_600_000 : 0
   const goalProgress = Math.min(shiftStats.totalEarnings / dailyGoal, 1)
-  const ordersToGoal = Math.max(0, Math.ceil((dailyGoal - shiftStats.totalEarnings) / (suggestion.earnings || 1)))
-  const estMinutes = ordersToGoal * (suggestion.durationMin || 20)
-  const avgRate = shiftStats.totalKm > 0 ? (shiftStats.totalEarnings / shiftStats.totalKm).toFixed(2) : '—'
 
   const handleAcceptSuggestion = useCallback(() => {
+    console.log('[DriveMind Nav]: accept tapped', { orderId: suggestion.id })
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
     pendingOrderRef.current = suggestion
     openPlatformDeepLink(suggestion.platform)
   }, [suggestion])
 
   const handleConfirmYes = useCallback(() => {
     if (!pendingConfirmation) return
-    confirmOrder(pendingConfirmation)
-    startNavigation(pendingConfirmation)
-  }, [pendingConfirmation, confirmOrder, startNavigation])
+    const mode = getTravelModeByVehicle(vehicleType, role)
+    console.log('[DriveMind Nav]: confirm accepted order', {
+      orderId: pendingConfirmation.id,
+      mode,
+      hasLocation: !!userLocation,
+    })
+    void confirmOrder(
+      pendingConfirmation,
+      userLocation
+        ? {
+            originLat: userLocation.latitude,
+            originLng: userLocation.longitude,
+            mode,
+          }
+        : undefined,
+    )
+  }, [pendingConfirmation, confirmOrder, userLocation, vehicleType, role])
 
   const handleConfirmNo = useCallback(() => { rejectOrder() }, [rejectOrder])
 
   const handleReachedPickup = useCallback(() => {
     if (!activeOrder) return
+    console.log('[DriveMind Nav]: pickup confirmed', { orderId: activeOrder.id })
     setOrderStatus(activeOrder.id, 'dropoff')
     updateNavigationPhase('dropoff')
   }, [activeOrder, setOrderStatus, updateNavigationPhase])
 
   const handleCompleteOrder = useCallback(() => {
     if (!activeOrder) return
+    console.log('[DriveMind Nav]: destination reached; completing order', { orderId: activeOrder.id })
     completeOrder(activeOrder.id)
-    stopNavigation()
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
+    const remainingOrders = useOrdersStore.getState().activeOrders.filter((o) => o.id !== activeOrder.id)
+    if (remainingOrders.length === 0) {
+      console.log('[DriveMind Nav]: no remaining orders; navigation stop')
+      stopNavigation()
+    }
   }, [activeOrder, completeOrder, stopNavigation])
+
+  useEffect(() => {
+    if (!isNavigating || !userLocation) return
+    const selectedId = recomputeNavigationTarget(userLocation.latitude, userLocation.longitude, 0.25)
+    if (!selectedId) {
+      stopNavigation()
+    }
+  }, [activeOrders, userLocation, isNavigating, recomputeNavigationTarget, stopNavigation])
+
+  useEffect(() => {
+    const target = activeOrder
+    if (!isNavigating || !target || !userLocation) return
+    const destination =
+      target.status === 'pickup'
+        ? { latitude: target.pickupLat, longitude: target.pickupLng }
+        : { latitude: target.dropoffLat, longitude: target.dropoffLng }
+
+    const mode = getTravelModeByVehicle(vehicleType, role)
+    console.log('[DriveMind Nav]: route refresh', {
+      orderId: target.id,
+      phase: target.status,
+      mode,
+      origin: userLocation,
+      destination,
+    })
+    getDirections(
+      userLocation.latitude,
+      userLocation.longitude,
+      destination.latitude,
+      destination.longitude,
+      mode,
+    )
+      .then((route) => {
+        updateNavigationRoute({
+          polyline: route.polylinePoints,
+          currentStep: route.steps[0]?.instruction ?? '',
+          routeDistance: route.distanceText,
+          routeDuration: route.durationText,
+        })
+        updateNavigationPhase(target.status === 'pickup' ? 'pickup' : 'dropoff')
+        console.log('[DriveMind Nav]: route updated', {
+          points: route.polylinePoints.length,
+          distance: route.distanceText,
+          duration: route.durationText,
+        })
+      })
+      .catch((err) => console.warn('Directions fetch failed:', err))
+  }, [isNavigating, activeOrder, userLocation, vehicleType, role, updateNavigationRoute, updateNavigationPhase])
 
   const destCoord = isNavigating && activeOrder
     ? navigationPhase === 'pickup'
@@ -153,20 +233,65 @@ export default function DashboardScreen() {
       : { latitude: activeOrder.dropoffLat, longitude: activeOrder.dropoffLng }
     : null
 
+  useEffect(() => {
+    if (!mapRef.current || !userLocation) return
+    if (!isNavigating) {
+      mapRef.current.animateToRegion(
+        {
+          latitude: userLocation.latitude,
+          longitude: userLocation.longitude,
+          latitudeDelta: 0.02,
+          longitudeDelta: 0.02,
+        },
+        500,
+      )
+      return
+    }
+
+    if (routePolyline && routePolyline.length > 1) {
+      const coords = [...routePolyline]
+      if (destCoord) coords.push(destCoord)
+      mapRef.current.fitToCoordinates(coords, {
+        edgePadding: { top: 140, right: 60, bottom: 220, left: 60 },
+        animated: true,
+      })
+      return
+    }
+    mapRef.current.animateToRegion(
+      {
+        latitude: userLocation.latitude,
+        longitude: userLocation.longitude,
+        latitudeDelta: 0.02,
+        longitudeDelta: 0.02,
+      },
+      500,
+    )
+  }, [isNavigating, userLocation, routePolyline, destCoord])
+
+  useEffect(() => {
+    if (!mapRef.current || routePolylineSafe.length === 0) return
+    console.log('[DriveMind Nav]: fitting camera to polyline', { points: routePolylineSafe.length })
+    mapRef.current.fitToCoordinates(routePolylineSafe, {
+      edgePadding: { top: 140, right: 60, bottom: 220, left: 60 },
+      animated: true,
+    })
+  }, [routePolylineSafe])
+
   const platformName = suggestion.platform.charAt(0).toUpperCase() + suggestion.platform.slice(1)
 
   return (
     <View style={[s.root, { backgroundColor: c.tabBar }]}>
       <MapView
+        ref={mapRef}
         style={StyleSheet.absoluteFill}
         provider={PROVIDER_GOOGLE}
-        customMapStyle={isDark ? DARK_MAP_STYLE : []}
+        customMapStyle={isDark ? DARK_MAP_STYLE : LIGHT_MAP_STYLE}
         showsUserLocation
         showsMyLocationButton={false}
         initialRegion={userLocation ? { ...userLocation, latitudeDelta: 0.02, longitudeDelta: 0.02 } : KRAKOW_REGION}
       >
-        {isNavigating && routePolyline && routePolyline.length > 0 && (
-          <Polyline coordinates={routePolyline} strokeColor={c.primary} strokeWidth={3} />
+        {isNavigating && routePolylineSafe.length > 0 && (
+          <Polyline coordinates={routePolylineSafe} strokeColor="#1A5CFF" strokeWidth={4} zIndex={10} />
         )}
         {destCoord && <Marker coordinate={destCoord} pinColor={navigationPhase === 'pickup' ? '#F59E0B' : '#22C55E'} />}
       </MapView>
@@ -181,25 +306,15 @@ export default function DashboardScreen() {
       </View>
 
       {/* Bottom sheet */}
-      <View style={[s.sheet, { paddingBottom: insets.bottom + 8, backgroundColor: c.tabBar, borderTopColor: c.tabBarBorder }]}>
-        <View style={[s.pullBar, { backgroundColor: c.border }]} />
+      <View style={[s.sheet, { paddingBottom: insets.bottom + 6, backgroundColor: c.tabBar, borderTopColor: c.tabBarBorder }]}>
+        <View style={[s.pullBar, { backgroundColor: c.border, marginBottom: 10 }]} />
 
         <View style={s.statsRow}>
-          <StatCol label={t('earnings_label')} value={`${shiftStats.totalEarnings.toFixed(0)} PLN`} c={c} />
+          <StatCol label={t('earnings_label')} value={`${shiftStats.totalEarnings.toFixed(0)} PLN`} c={c} compact />
           <View style={[s.statDivider, { backgroundColor: c.separator }]} />
-          <StatCol label={t('orders_label')} value={String(shiftStats.completedOrders)} c={c} />
+          <StatCol label={t('orders_label')} value={String(shiftStats.completedOrders)} c={c} compact />
           <View style={[s.statDivider, { backgroundColor: c.separator }]} />
-          <StatCol label={t('hours_online')} value={`${hoursOnline.toFixed(1)}h`} c={c} />
-        </View>
-
-        <View style={s.goalRow}>
-          <Text style={[s.goalLabel, { color: c.textSecondary }]}>{t('daily_goal')}</Text>
-          <Text style={[s.goalValue, { color: c.text }]}>
-            {goalProgress >= 1 ? t('goal_reached') : `${shiftStats.totalEarnings.toFixed(0)} / ${dailyGoal} PLN`}
-          </Text>
-        </View>
-        <View style={[s.goalTrack, { backgroundColor: c.separator }]}>
-          <View style={[s.goalFill, { width: `${(goalProgress * 100).toFixed(1)}%` as any, backgroundColor: c.primary }]} />
+          <StatCol label={t('hours_online')} value={`${hoursOnline.toFixed(1)}h`} c={c} compact />
         </View>
 
         {isNavigating && activeOrder ? (
@@ -208,7 +323,7 @@ export default function DashboardScreen() {
         ) : (
           <View style={[s.suggCard, { backgroundColor: c.card, borderColor: c.separator }]}>
             <View style={s.suggHeader}>
-              <PlatformIcon platform={suggestion.platform as any} size={32} />
+              <PlatformIcon platform={suggestion.platform as any} size={32} active />
               <Text style={[s.suggPlatform, { color: c.text }]}>{platformName}</Text>
               <ProfitBadge label={suggestion.profitLabel as ProfitLabel} />
               <Text style={[s.suggPrice, { color: c.text }]}>{suggestion.earnings.toFixed(0)} PLN</Text>
@@ -218,27 +333,10 @@ export default function DashboardScreen() {
             <View style={s.pillRow}>
               <Pill label={`${suggestion.distanceKm.toFixed(1)} km`} c={c} />
               <Pill label={`${suggestion.durationMin} min`} c={c} />
-              <Pill label={role === 'taxi' ? t('ride') : t('delivery')} c={c} />
+              <Pill label={`${Math.round(goalProgress * 100)}% ${t('daily_goal')}`} c={c} />
             </View>
             <TouchableOpacity style={[s.acceptBtn, { backgroundColor: c.primary }]} activeOpacity={0.85} onPress={handleAcceptSuggestion}>
               <Text style={[s.acceptBtnText, { color: c.textInverse }]}>{t('open_platform', { platform: platformName })}</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-
-        <TouchableOpacity style={s.calcHeader} activeOpacity={0.7} onPress={() => setCalcOpen((o) => !o)}>
-          <Text style={[s.calcTitle, { color: c.text }]}>{t('shift_calculator')}</Text>
-          <ChevronIcon open={calcOpen} color={c.textSecondary} />
-        </TouchableOpacity>
-
-        {calcOpen && (
-          <View style={s.calcGrid}>
-            <CalcCard label={t('orders_to_goal')} value={String(ordersToGoal)} c={c} />
-            <CalcCard label={t('estimated_time')} value={`${estMinutes} min`} c={c} />
-            <CalcCard label={t('avg_pln_km')} value={`${avgRate} PLN`} c={c} />
-            <CalcCard label={t('daily_goal')} value={`${(goalProgress * 100).toFixed(0)}%`} c={c} />
-            <TouchableOpacity style={s.changeGoalBtn} onPress={() => setDailyGoal(dailyGoal === 300 ? 400 : 300)}>
-              <Text style={[s.changeGoalText, { color: c.primary }]}>{t('change_goal')}</Text>
             </TouchableOpacity>
           </View>
         )}
@@ -250,7 +348,7 @@ export default function DashboardScreen() {
           <View style={[s.modalCard, { backgroundColor: c.surface }]}>
             {pendingConfirmation && (
               <>
-                <PlatformIcon platform={pendingConfirmation.platform as any} size={48} />
+                <PlatformIcon platform={pendingConfirmation.platform as any} size={48} active />
                 <Text style={[s.modalTitle, { color: c.text }]}>{t('order_accepted_title')}</Text>
                 <Text style={[s.modalAddress, { color: c.textSecondary }]} numberOfLines={2}>{pendingConfirmation.pickupAddress}</Text>
                 <Text style={[s.modalArrow, { color: c.textMuted }]}>→</Text>
@@ -272,20 +370,11 @@ export default function DashboardScreen() {
   )
 }
 
-function StatCol({ label, value, c }: { label: string; value: string; c: AppColors }) {
+function StatCol({ label, value, c, compact = false }: { label: string; value: string; c: AppColors; compact?: boolean }) {
   return (
     <View style={s.statCol}>
       <Text style={[s.statLabel, { color: c.textMuted }]}>{label.toUpperCase()}</Text>
-      <Text style={[s.statValue, { color: c.text }]}>{value}</Text>
-    </View>
-  )
-}
-
-function CalcCard({ label, value, c }: { label: string; value: string; c: AppColors }) {
-  return (
-    <View style={[s.calcCard, { backgroundColor: c.card }]}>
-      <Text style={[s.calcCardValue, { color: c.text }]}>{value}</Text>
-      <Text style={[s.calcCardLabel, { color: c.textSecondary }]}>{label}</Text>
+      <Text style={[compact ? s.statValueCompact : s.statValue, { color: c.text }]}>{value}</Text>
     </View>
   )
 }
@@ -306,7 +395,7 @@ function NavigationBar({ step, distance, duration, phase, onReachedPickup, onCom
         </View>
       </View>
       <TouchableOpacity style={[s.navBtn, { borderColor: c.primary }]} activeOpacity={0.8} onPress={phase === 'pickup' ? onReachedPickup : onComplete}>
-        <Text style={[s.navBtnText, { color: c.primary }]}>{phase === 'pickup' ? t('reached_pickup') : t('complete_order')}</Text>
+        <Text style={[s.navBtnText, { color: c.primary }]}>{phase === 'pickup' ? 'Confirm Pickup' : t('complete_order')}</Text>
       </TouchableOpacity>
     </View>
   )
@@ -318,39 +407,27 @@ const s = StyleSheet.create({
   headerTitle: { fontSize: 17, fontWeight: '600', fontFamily: fonts.semiBold },
   rolePill: { flexDirection: 'row', alignItems: 'center', gap: 6, borderWidth: 1, borderRadius: 20, paddingHorizontal: 12, paddingVertical: 5 },
   rolePillText: { fontSize: 12, fontFamily: fonts.medium, textTransform: 'capitalize' },
-  sheet: { position: 'absolute', left: 0, right: 0, bottom: 0, borderTopLeftRadius: 20, borderTopRightRadius: 20, borderTopWidth: 0.5, paddingHorizontal: 20, paddingTop: 12, paddingBottom: TAB_BAR_HEIGHT },
+  sheet: { position: 'absolute', left: 0, right: 0, bottom: 0, borderTopLeftRadius: 18, borderTopRightRadius: 18, borderTopWidth: 0.5, paddingHorizontal: 16, paddingTop: 8, paddingBottom: TAB_BAR_HEIGHT },
   pullBar: { width: 36, height: 4, borderRadius: 2, alignSelf: 'center', marginBottom: 16 },
-  statsRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 16 },
+  statsRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
   statCol: { flex: 1, alignItems: 'center' },
-  statDivider: { width: 1, height: 32 },
+  statDivider: { width: 1, height: 24 },
   statLabel: { fontSize: 11, fontFamily: fonts.regular, letterSpacing: 0.5, marginBottom: 2 },
   statValue: { fontSize: 26, fontWeight: '700', fontFamily: fonts.bold },
-  goalRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
-  goalLabel: { fontSize: 13, fontFamily: fonts.regular },
-  goalValue: { fontSize: 13, fontFamily: fonts.regular },
-  goalTrack: { height: 2, borderRadius: 1, overflow: 'hidden', marginBottom: 16 },
-  goalFill: { height: 2, borderRadius: 1 },
-  suggCard: { borderWidth: 1, borderRadius: 14, padding: 14, marginBottom: 12 },
-  suggHeader: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 10 },
+  statValueCompact: { fontSize: 20, fontWeight: '700', fontFamily: fonts.bold },
+  suggCard: { borderWidth: 1, borderRadius: 12, padding: 12, marginBottom: 6 },
+  suggHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
   suggPlatform: { flex: 1, fontSize: 15, fontWeight: '600', fontFamily: fonts.semiBold },
-  suggPrice: { fontSize: 20, fontWeight: '700', fontFamily: fonts.bold },
+  suggPrice: { fontSize: 18, fontWeight: '700', fontFamily: fonts.bold },
   addressLabel: { fontSize: 11, fontFamily: fonts.regular, letterSpacing: 0.5, marginBottom: 3 },
-  addressValue: { fontSize: 14, fontFamily: fonts.regular, marginBottom: 10 },
-  pillRow: { flexDirection: 'row', gap: 8, marginBottom: 12 },
-  pill: { borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6 },
-  pillText: { fontSize: 13, fontFamily: fonts.regular },
-  acceptBtn: { height: 50, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  addressValue: { fontSize: 13, fontFamily: fonts.regular, marginBottom: 8 },
+  pillRow: { flexDirection: 'row', gap: 6, marginBottom: 8 },
+  pill: { borderRadius: 6, paddingHorizontal: 8, paddingVertical: 5 },
+  pillText: { fontSize: 12, fontFamily: fonts.regular },
+  acceptBtn: { height: 42, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
   acceptBtnText: { fontSize: 15, fontWeight: '600', fontFamily: fonts.semiBold },
-  calcHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 10 },
-  calcTitle: { fontSize: 14, fontWeight: '500', fontFamily: fonts.medium },
-  calcGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 },
-  calcCard: { width: (SCREEN_W - 48 - 8) / 2, borderRadius: 10, padding: 12 },
-  calcCardValue: { fontSize: 18, fontWeight: '700', fontFamily: fonts.bold, marginBottom: 2 },
-  calcCardLabel: { fontSize: 11, fontFamily: fonts.regular },
-  changeGoalBtn: { paddingVertical: 6 },
-  changeGoalText: { fontSize: 13, fontFamily: fonts.medium },
-  navBar: { borderLeftWidth: 2, borderRadius: 12, padding: 14, marginBottom: 12 },
-  navRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 },
+  navBar: { borderLeftWidth: 2, borderRadius: 12, padding: 12, marginBottom: 6 },
+  navRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 10 },
   navStep: { flex: 1, fontSize: 14, fontFamily: fonts.medium },
   navMeta: { alignItems: 'flex-end' },
   navMetaText: { fontSize: 12, fontFamily: fonts.regular },

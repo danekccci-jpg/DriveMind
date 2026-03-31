@@ -96,7 +96,7 @@ export default function OrderHubScreen() {
       return (
         <View style={[s.card, { backgroundColor: c.surface, borderColor: c.separator, borderLeftColor: a }]}>
           <View style={s.cardHeader}>
-            <PlatformIcon platform={item.platform as PlatformId} size={24} mono />
+            <PlatformIcon platform={item.platform as PlatformId} size={24} />
             <Text style={[s.cardPlatform, { color: c.text }]}>{PLATFORM_LABEL[item.platform] ?? item.platform}</Text>
             <ProfitBadge label={result.label} />
             <Text style={[s.cardPrice, { color: c.text }]}>{item.earnings.toFixed(0)} PLN</Text>
@@ -140,7 +140,7 @@ export default function OrderHubScreen() {
               key={p}
               activeOpacity={0.7}
               style={[s.pill, { backgroundColor: active ? c.primary : 'transparent', borderColor: active ? c.primary : c.border }]}
-              onPress={() => setSelectedPlatform(p as typeof selectedPlatform)}
+              onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setSelectedPlatform(p as typeof selectedPlatform) }}
             >
               <Text style={[s.pillText, { color: active ? c.textInverse : c.secondary }]}>
                 {p === 'all' ? 'All' : PLATFORM_LABEL[p]}
@@ -178,7 +178,7 @@ export default function OrderHubScreen() {
           <View style={[s.modalCard, { backgroundColor: c.surface }]}>
             {pendingConfirmation && (
               <>
-                <PlatformIcon platform={pendingConfirmation.platform as PlatformId} size={48} />
+                <PlatformIcon platform={pendingConfirmation.platform as PlatformId} size={48} active />
                 <Text style={[s.modalTitle, { color: c.text }]}>{t('order_accepted_title')}</Text>
                 <Text style={[s.modalAddr, { color: c.textSecondary }]} numberOfLines={2}>{pendingConfirmation.pickupAddress}</Text>
                 <Text style={[s.modalArrow, { color: c.textMuted }]}>→</Text>

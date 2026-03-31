@@ -13,9 +13,11 @@ import * as Haptics from 'expo-haptics'
 import { useColors } from '../../theme/theme'
 import { fonts } from '../../theme/typography'
 
-const { height: SCREEN_H } = Dimensions.get('window')
 const CARD_GAP = 14
 const H_PAD = 28
+const SCREEN_W = Dimensions.get('window').width
+const TILE_W = SCREEN_W - H_PAD * 2
+const TILE_H = 170
 
 type Role = 'courier' | 'taxi'
 
@@ -37,8 +39,6 @@ export default function RoleSelectionScreen({ onSelect }: Props) {
     ]).start(() => onSelect(role))
   }
 
-  const cardH = (SCREEN_H - insets.top - insets.bottom - 140 - CARD_GAP) / 2
-
   return (
     <View style={[s.root, { paddingTop: insets.top + 24, backgroundColor: c.bg }]}>
       <View style={s.header}>
@@ -48,10 +48,10 @@ export default function RoleSelectionScreen({ onSelect }: Props) {
       </View>
 
       <View style={s.cards}>
-        <Animated.View style={{ transform: [{ scale: scaleA }] }}>
+        <Animated.View style={{ width: '100%', alignItems: 'center', transform: [{ scale: scaleA }] }}>
           <TouchableOpacity
             activeOpacity={1}
-            style={[s.card, { height: cardH, backgroundColor: c.surface, borderColor: c.border }]}
+            style={[s.card, { width: TILE_W, height: TILE_H, backgroundColor: c.surface, borderColor: c.border }]}
             onPress={() => handlePress('courier', scaleA)}
           >
             <View style={[s.iconRing, { borderColor: c.primaryDim, backgroundColor: c.primaryDim }]}>
@@ -63,10 +63,10 @@ export default function RoleSelectionScreen({ onSelect }: Props) {
           </TouchableOpacity>
         </Animated.View>
 
-        <Animated.View style={{ transform: [{ scale: scaleB }] }}>
+        <Animated.View style={{ width: '100%', alignItems: 'center', transform: [{ scale: scaleB }] }}>
           <TouchableOpacity
             activeOpacity={1}
-            style={[s.card, { height: cardH, backgroundColor: c.surface, borderColor: c.border }]}
+            style={[s.card, { width: TILE_W, height: TILE_H, backgroundColor: c.surface, borderColor: c.border }]}
             onPress={() => handlePress('taxi', scaleB)}
           >
             <View style={[s.iconRing, { borderColor: c.primaryDim, backgroundColor: c.primaryDim }]}>
@@ -90,13 +90,14 @@ const s = StyleSheet.create({
   brand: { fontSize: 14, fontFamily: fonts.semiBold, fontWeight: '600', letterSpacing: 8 },
   divider: { width: 32, height: 1, marginVertical: 12 },
   subtitle: { fontSize: 11, fontFamily: fonts.medium, letterSpacing: 4 },
-  cards: { flex: 1, gap: CARD_GAP },
+  cards: { flex: 1, gap: CARD_GAP, alignItems: 'center', justifyContent: 'center' },
   card: {
     borderWidth: 1,
     borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 10,
+    gap: 8,
+    paddingVertical: 8,
     overflow: 'hidden',
   },
   iconRing: {
@@ -108,7 +109,7 @@ const s = StyleSheet.create({
     justifyContent: 'center',
     marginBottom: 6,
   },
-  cardTitle: { fontSize: 22, fontFamily: fonts.bold, fontWeight: '700', letterSpacing: 10 },
+  cardTitle: { fontSize: 22, fontFamily: fonts.bold, fontWeight: '700', letterSpacing: 8 },
   cardDesc: { fontSize: 12, fontFamily: fonts.regular, letterSpacing: 2 },
   cardLine: { position: 'absolute', bottom: 0, left: '15%', right: '15%', height: 1 },
   footer: { textAlign: 'center', fontSize: 12, fontFamily: fonts.regular, letterSpacing: 3, paddingVertical: 20 },

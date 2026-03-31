@@ -6,14 +6,19 @@ type Language = 'en' | 'pl'
 
 interface LanguageState {
   language: Language
+  hasChosenLanguage: boolean
   setLanguage: (language: Language) => void
+  confirmLanguageChoice: (language: Language) => void
 }
 
 export const useLanguageStore = create<LanguageState>()(
   persist(
     (set) => ({
       language: 'en',
+      hasChosenLanguage: false,
       setLanguage: (language) => set({ language }),
+      confirmLanguageChoice: (language) =>
+        set({ language, hasChosenLanguage: true }),
     }),
     {
       name: 'drivemind-language',

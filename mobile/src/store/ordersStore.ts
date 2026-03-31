@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import AsyncStorage from '@react-native-async-storage/async-storage'
+import { getDirections, type TravelMode } from '../services/directionsService'
 
 export interface Order {
   id: string
@@ -49,6 +50,24 @@ interface NavigationRoute {
   longitude: number
 }
 
+const KRAKOW_FALLBACK_ORIGIN = { latitude: 50.0614, longitude: 19.9366 }
+
+function toRad(value: number): number {
+  return (value * Math.PI) / 180
+}
+
+function distanceKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const earthRadiusKm = 6371
+  const dLat = toRad(lat2 - lat1)
+  const dLng = toRad(lng2 - lng1)
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+    Math.sin(dLng / 2) * Math.sin(dLng / 2)
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+  return earthRadiusKm * c
+}
+
 interface OrdersState {
   activeOrders: Order[]
   pendingConfirmation: Order | null
@@ -62,14 +81,20 @@ interface OrdersState {
   currentStep: string | null
   routeDistance: string | null
   routeDuration: string | null
+  navigationOrderId: string | null
+  lastNearestDistanceKm: number | null
 
   setPendingConfirmation: (order: Order | null) => void
-  confirmOrder: (order: Order) => void
+  confirmOrder: (
+    order: Order,
+    options?: { originLat: number; originLng: number; mode: TravelMode },
+  ) => Promise<void>
   rejectOrder: () => void
   completeOrder: (orderId: string) => void
   setOrderStatus: (orderId: string, status: Order['status']) => void
   setDailyGoal: (goal: number) => void
   startNavigation: (order: Order) => void
+  recomputeNavigationTarget: (originLat: number, originLng: number, thresholdKm?: number) => string | null
   updateNavigationPhase: (phase: 'pickup' | 'dropoff' | null) => void
   updateNavigationRoute: (route: {
     polyline: NavigationRoute[]
@@ -78,6 +103,8 @@ interface OrdersState {
     routeDuration: string
   }) => void
   stopNavigation: () => void
+  startShiftManually: () => void
+  endShiftManually: () => void
 }
 
 export const useOrdersStore = create<OrdersState>()(
@@ -95,14 +122,24 @@ export const useOrdersStore = create<OrdersState>()(
       currentStep: null,
       routeDistance: null,
       routeDuration: null,
+      navigationOrderId: null,
+      lastNearestDistanceKm: null,
 
       setPendingConfirmation: (order) => set({ pendingConfirmation: order }),
 
-      confirmOrder: (order) => {
+      confirmOrder: async (order, options) => {
         const { shiftStats, activeOrders } = get()
+        console.log('[DriveMind Nav]: confirmOrder called', {
+          orderId: order.id,
+          platform: order.platform,
+          hasRouteContext: !!options,
+        })
         set({
           activeOrders: [...activeOrders, { ...order, status: 'pickup' }],
           pendingConfirmation: null,
+          isNavigating: true,
+          navigationPhase: 'pickup',
+          navigationOrderId: order.id,
           shiftStats: {
             ...shiftStats,
             startTime: shiftStats.startTime ?? Date.now(),
@@ -112,6 +149,43 @@ export const useOrdersStore = create<OrdersState>()(
             [order.platform]: Date.now(),
           },
         })
+
+        const originLat = options?.originLat ?? KRAKOW_FALLBACK_ORIGIN.latitude
+        const originLng = options?.originLng ?? KRAKOW_FALLBACK_ORIGIN.longitude
+        const mode = options?.mode ?? 'driving'
+        try {
+          console.log('[DriveMind Nav]: fetching pickup route', {
+            orderId: order.id,
+            origin: { latitude: originLat, longitude: originLng },
+            pickup: { latitude: order.pickupLat, longitude: order.pickupLng },
+            mode,
+            usedFallbackOrigin: !options,
+          })
+          const route = await getDirections(
+            originLat,
+            originLng,
+            order.pickupLat,
+            order.pickupLng,
+            mode,
+          )
+          set({
+            routePolyline: route.polylinePoints,
+            currentStep: route.steps[0]?.instruction ?? '',
+            routeDistance: route.distanceText,
+            routeDuration: route.durationText,
+          })
+          console.log('[DriveMind Store]: State updated with polyline length:', route.polylinePoints.length)
+          console.log('[DriveMind Nav]: pickup route ready', {
+            points: route.polylinePoints.length,
+            distance: route.distanceText,
+            duration: route.durationText,
+          })
+        } catch (error) {
+          console.log('[DriveMind Nav]: pickup route fetch failed', {
+            orderId: order.id,
+            error,
+          })
+        }
       },
 
       rejectOrder: () => set({ pendingConfirmation: null }),
@@ -120,6 +194,7 @@ export const useOrdersStore = create<OrdersState>()(
         const { activeOrders, orderHistory, shiftStats } = get()
         const order = activeOrders.find((o) => o.id === orderId)
         if (!order) return
+        console.log('[DriveMind Nav]: completeOrder called', { orderId })
 
         const completed: CompletedOrder = { ...order, status: 'completed', completedAt: Date.now() }
         const trimmedHistory = [completed, ...orderHistory].slice(0, 50)
@@ -151,8 +226,52 @@ export const useOrdersStore = create<OrdersState>()(
       startNavigation: (order) =>
         set({
           isNavigating: true,
+          navigationOrderId: order.id,
           navigationPhase: order.status === 'pickup' ? 'pickup' : 'dropoff',
         }),
+
+      recomputeNavigationTarget: (originLat, originLng, thresholdKm = 0.2) => {
+        const { activeOrders, navigationOrderId, lastNearestDistanceKm } = get()
+        if (activeOrders.length === 0) {
+          console.log('[DriveMind Nav]: no active orders; stopping navigation target')
+          set({ navigationOrderId: null, navigationPhase: null, lastNearestDistanceKm: null })
+          return null
+        }
+
+        const pickupOrders = activeOrders.filter((o) => o.status === 'pickup')
+        const candidates = pickupOrders.length > 0 ? pickupOrders : activeOrders
+        const nearest = candidates.reduce<{ id: string; distance: number } | null>((best, order) => {
+          const targetLat = order.status === 'pickup' ? order.pickupLat : order.dropoffLat
+          const targetLng = order.status === 'pickup' ? order.pickupLng : order.dropoffLng
+          const currentDistance = distanceKm(originLat, originLng, targetLat, targetLng)
+          if (!best || currentDistance < best.distance) {
+            return { id: order.id, distance: currentDistance }
+          }
+          return best
+        }, null)
+
+        if (!nearest) return null
+
+        const shouldKeepCurrent =
+          navigationOrderId &&
+          navigationOrderId !== nearest.id &&
+          lastNearestDistanceKm !== null &&
+          nearest.distance >= lastNearestDistanceKm - thresholdKm
+
+        const nextId = shouldKeepCurrent ? navigationOrderId : nearest.id
+        const nextOrder = activeOrders.find((o) => o.id === nextId)
+        set({
+          navigationOrderId: nextId,
+          navigationPhase: nextOrder?.status === 'dropoff' ? 'dropoff' : 'pickup',
+          lastNearestDistanceKm: nearest.distance,
+        })
+        console.log('[DriveMind Nav]: navigation target recomputed', {
+          nextId,
+          phase: nextOrder?.status === 'dropoff' ? 'dropoff' : 'pickup',
+          nearestDistanceKm: nearest.distance,
+        })
+        return nextId
+      },
 
       updateNavigationPhase: (navigationPhase) => set({ navigationPhase }),
 
@@ -167,12 +286,30 @@ export const useOrdersStore = create<OrdersState>()(
       stopNavigation: () =>
         set({
           isNavigating: false,
+          navigationOrderId: null,
           navigationPhase: null,
           routePolyline: null,
           currentStep: null,
           routeDistance: null,
           routeDuration: null,
+          lastNearestDistanceKm: null,
         }),
+
+      startShiftManually: () =>
+        set((state) => ({
+          shiftStats: {
+            ...state.shiftStats,
+            startTime: state.shiftStats.startTime ?? Date.now(),
+          },
+        })),
+
+      endShiftManually: () =>
+        set((state) => ({
+          shiftStats: {
+            ...state.shiftStats,
+            startTime: null,
+          },
+        })),
     }),
     {
       name: 'drivemind-orders',
@@ -193,6 +330,8 @@ export const useOrdersStore = create<OrdersState>()(
           state.currentStep = null
           state.routeDistance = null
           state.routeDuration = null
+          state.navigationOrderId = null
+          state.lastNearestDistanceKm = null
         }
       },
     },

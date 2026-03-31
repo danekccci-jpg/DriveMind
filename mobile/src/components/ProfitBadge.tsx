@@ -1,13 +1,7 @@
 import React from 'react'
 import { View, Text, StyleSheet } from 'react-native'
 import { ProfitLabel } from '../engine/profitEngine'
-
-const LABEL_COLOR: Record<ProfitLabel, string> = {
-  GREAT: '#22C55E',
-  GOOD: '#F59E0B',
-  OK: '#888888',
-  SKIP: '#EF4444',
-}
+import { useColors } from '../theme/theme'
 
 interface Props {
   label: ProfitLabel
@@ -16,22 +10,30 @@ interface Props {
 }
 
 export default function ProfitBadge({ label, score, showScore = false }: Props) {
-  const color = LABEL_COLOR[label]
+  const c = useColors()
+  const colorMap: Record<ProfitLabel, { color: string; bg: string }> = {
+    GREAT: { color: c.profitGreat, bg: c.profitGreatBg },
+    GOOD: { color: c.profitGood, bg: c.profitGoodBg },
+    OK: { color: c.profitOk, bg: c.profitOkBg },
+    SKIP: { color: c.profitSkip, bg: c.profitSkipBg },
+  }
+  const normalized = String(label).toUpperCase() as ProfitLabel
+  const tone = colorMap[normalized] ?? colorMap.OK
   const text = showScore && score !== undefined
-    ? `${label} · ${score.toFixed(2)}`
-    : label
+    ? `${normalized} · ${score.toFixed(2)}`
+    : normalized
 
   return (
     <View
       style={[
         styles.badge,
         {
-          backgroundColor: color + '20',
-          borderColor: color + '40',
+          backgroundColor: tone.bg,
+          borderColor: tone.color,
         },
       ]}
     >
-      <Text style={[styles.text, { color }]}>{text}</Text>
+      <Text style={[styles.text, { color: tone.color }]}>{text}</Text>
     </View>
   )
 }

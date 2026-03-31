@@ -12,12 +12,16 @@ import {
 } from 'react-native'
 import { useTranslation } from 'react-i18next'
 import { MaterialCommunityIcons, Feather } from '@expo/vector-icons'
+import * as Haptics from 'expo-haptics'
 import { useRoleStore } from '../../store/roleStore'
 import PlatformIcon from '../../components/PlatformIcon'
 import { fonts } from '../../theme/typography'
 import { useColors } from '../../theme/theme'
 
 const { width: SCREEN_W } = Dimensions.get('window')
+const H_PAD = 28
+const TILE_W = SCREEN_W - H_PAD * 2
+const TILE_H = 170
 
 type VehicleType = 'bike' | 'moped' | 'car'
 type PlatformId = 'glovo' | 'uber' | 'bolt' | 'wolt'
@@ -131,14 +135,16 @@ export default function OnboardingScreen() {
               style={[
                 st.serviceCard,
                 {
+                  width: TILE_W,
+                  height: TILE_H,
                   backgroundColor: selected ? c.primaryDim : c.surface,
                   borderColor: selected ? c.primary : c.border,
                 },
               ]}
-              onPress={() => toggleService(id)}
+              onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); toggleService(id) }}
             >
-              <PlatformIcon platform={id} size={40} />
-              <Text style={[st.serviceLabel, { color: c.text }]}>{PLATFORM_LABELS[id]}</Text>
+              <PlatformIcon platform={id} size={34} active={selected} />
+              <Text style={[st.serviceLabel, { color: c.text }]}>{PLATFORM_LABELS[id].toUpperCase()}</Text>
               <View
                 style={[
                   st.checkbox,
@@ -184,18 +190,23 @@ export default function OnboardingScreen() {
               style={[
                 st.vehicleCard,
                 {
+                  width: TILE_W,
+                  height: TILE_H,
                   backgroundColor: selected ? c.primaryDim : c.surface,
                   borderColor: selected ? c.primary : c.border,
                 },
               ]}
-              onPress={() => setSelectedVehicle(id)}
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+                setSelectedVehicle(id)
+              }}
             >
               <MaterialCommunityIcons
                 name={icon as any}
-                size={28}
+                size={36}
                 color={selected ? c.primary : c.secondary}
               />
-              <Text style={[st.vehicleLabel, { color: c.text }]}>{t(label)}</Text>
+              <Text style={[st.vehicleLabel, { color: c.text }]}>{t(label).toUpperCase()}</Text>
             </TouchableOpacity>
           )
         })}
@@ -254,17 +265,18 @@ const st = StyleSheet.create({
   backBtn: { marginTop: 4, marginBottom: 8, alignSelf: 'flex-start', padding: 4 },
   title: { fontSize: 24, fontWeight: '600', fontFamily: fonts.semiBold, marginBottom: 6, marginTop: 16 },
   sub: { fontSize: 14, fontFamily: fonts.regular, marginBottom: 28 },
-  serviceList: { gap: 10, flex: 1 },
+  serviceList: { gap: 12, flex: 1, alignItems: 'center', justifyContent: 'center' },
   serviceCard: {
-    flexDirection: 'row',
+    flexDirection: 'column',
     alignItems: 'center',
-    height: 64,
-    borderRadius: 12,
+    justifyContent: 'center',
+    borderRadius: 18,
     paddingHorizontal: 16,
-    gap: 14,
+    gap: 8,
     borderWidth: 1,
+    position: 'relative',
   },
-  serviceLabel: { flex: 1, fontSize: 16, fontWeight: '500', fontFamily: fonts.medium },
+  serviceLabel: { fontSize: 18, fontWeight: '600', fontFamily: fonts.semiBold, letterSpacing: 2 },
   checkbox: {
     width: 22,
     height: 22,
@@ -272,18 +284,20 @@ const st = StyleSheet.create({
     borderWidth: 1.5,
     alignItems: 'center',
     justifyContent: 'center',
+    position: 'absolute',
+    right: 12,
+    top: 12,
   },
-  vehicleRow: { flexDirection: 'row', gap: 12, flex: 1, alignItems: 'flex-start', marginTop: 8 },
+  vehicleRow: { gap: 12, flex: 1, alignItems: 'center', justifyContent: 'center', marginTop: 8 },
   vehicleCard: {
-    width: 100,
-    height: 90,
-    borderRadius: 14,
+    borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
     borderWidth: 1,
+    paddingHorizontal: 16,
   },
-  vehicleLabel: { fontSize: 13, fontFamily: fonts.medium, fontWeight: '500' },
+  vehicleLabel: { fontSize: 18, fontFamily: fonts.semiBold, fontWeight: '600', letterSpacing: 2 },
   primaryBtn: {
     height: 54,
     borderRadius: 12,

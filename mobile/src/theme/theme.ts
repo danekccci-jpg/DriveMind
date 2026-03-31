@@ -26,6 +26,14 @@ interface ColorPalette {
   tabBarBorder: string
   overlay: string
   shimmer: string
+  profitGreat: string
+  profitGreatBg: string
+  profitGood: string
+  profitGoodBg: string
+  profitOk: string
+  profitOkBg: string
+  profitSkip: string
+  profitSkipBg: string
   glovo: string
   uber: string
   bolt: string
@@ -57,6 +65,14 @@ export const darkColors: ColorPalette = {
   tabBarBorder: '#1A1A1A',
   overlay: 'rgba(0,0,0,0.75)',
   shimmer: '#222222',
+  profitGreat: '#33D17A',
+  profitGreatBg: 'rgba(51,209,122,0.20)',
+  profitGood: '#FFD166',
+  profitGoodBg: 'rgba(255,209,102,0.20)',
+  profitOk: '#8FA2B8',
+  profitOkBg: 'rgba(143,162,184,0.22)',
+  profitSkip: '#FF6B6B',
+  profitSkipBg: 'rgba(255,107,107,0.22)',
   glovo: '#FFB800',
   uber: '#FFFFFF',
   bolt: '#34D186',
@@ -88,6 +104,14 @@ export const lightColors: ColorPalette = {
   tabBarBorder: '#E5E5E7',
   overlay: 'rgba(0,0,0,0.4)',
   shimmer: '#E5E5E7',
+  profitGreat: '#0E9F4B',
+  profitGreatBg: 'rgba(14,159,75,0.16)',
+  profitGood: '#B26A00',
+  profitGoodBg: 'rgba(178,106,0,0.18)',
+  profitOk: '#334155',
+  profitOkBg: 'rgba(51,65,85,0.15)',
+  profitSkip: '#C53030',
+  profitSkipBg: 'rgba(197,48,48,0.16)',
   glovo: '#FFB800',
   uber: '#1C1C1E',
   bolt: '#34D186',

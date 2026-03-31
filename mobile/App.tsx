@@ -12,10 +12,13 @@ import {
 } from '@expo-google-fonts/poppins'
 
 import { useRoleStore } from './src/store/roleStore'
+import { useLanguageStore } from './src/store/languageStore'
 import { useTheme } from './src/theme/theme'
 import RoleSelectionScreen from './src/screens/RoleSelection'
 import OnboardingScreen from './src/screens/Onboarding'
-import AppTabs from './src/navigation/AppTabs'
+import LanguageSelectionScreen from './src/screens/LanguageSelection'
+import RootNavigator from './src/navigation/RootNavigator'
+import i18n from './src/i18n'
 import './src/i18n'
 
 export default function App() {
@@ -29,9 +32,15 @@ export default function App() {
   const role = useRoleStore((s) => s.role)
   const onboardingComplete = useRoleStore((s) => s.onboardingComplete)
   const setRole = useRoleStore((s) => s.setRole)
+  const language = useLanguageStore((s) => s.language)
+  const hasChosenLanguage = useLanguageStore((s) => s.hasChosenLanguage)
   const { colors: c, isDark } = useTheme()
 
   const fadeAnim = useRef(new Animated.Value(0)).current
+
+  useEffect(() => {
+    i18n.changeLanguage(language)
+  }, [language])
 
   useEffect(() => {
     if (onboardingComplete) {
@@ -58,6 +67,15 @@ export default function App() {
     },
   }
 
+  if (!hasChosenLanguage) {
+    return (
+      <SafeAreaProvider>
+        <StatusBar style={isDark ? 'light' : 'dark'} backgroundColor={c.bg} />
+        <LanguageSelectionScreen />
+      </SafeAreaProvider>
+    )
+  }
+
   if (!role) {
     return (
       <SafeAreaProvider>
@@ -81,7 +99,7 @@ export default function App() {
       <StatusBar style={isDark ? 'light' : 'dark'} backgroundColor={c.tabBar} />
       <Animated.View style={{ flex: 1, opacity: fadeAnim }}>
         <NavigationContainer theme={navTheme}>
-          <AppTabs />
+          <RootNavigator />
         </NavigationContainer>
       </Animated.View>
     </SafeAreaProvider>

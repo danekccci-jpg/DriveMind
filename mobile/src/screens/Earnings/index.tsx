@@ -10,6 +10,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useTranslation } from 'react-i18next'
 import { Feather } from '@expo/vector-icons'
+import * as Haptics from 'expo-haptics'
 
 import PlatformIcon from '../../components/PlatformIcon'
 import { useOrdersStore, CompletedOrder } from '../../store/ordersStore'
@@ -124,7 +125,7 @@ export default function EarningsScreen() {
               key={p}
               style={[s.pill, { backgroundColor: active ? c.primary : 'transparent', borderColor: active ? c.primary : c.border }]}
               activeOpacity={0.7}
-              onPress={() => setPeriod(p)}
+              onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setPeriod(p) }}
             >
               <Text style={[s.pillText, { color: active ? c.textInverse : c.secondary }]}>{t(p as string)}</Text>
             </TouchableOpacity>
@@ -160,7 +161,7 @@ export default function EarningsScreen() {
           {breakdown.map(([platform, data]) => (
             <View key={platform} style={[s.platformCard, { backgroundColor: c.surface, borderColor: c.separator }]}>
               <View style={s.platformRow}>
-                <PlatformIcon platform={platform as PlatformId} size={24} mono />
+                <PlatformIcon platform={platform as PlatformId} size={24} active />
                 <View style={s.platformInfo}>
                   <Text style={[s.platformName, { color: c.text }]}>{PLATFORM_LABEL[platform] ?? platform}</Text>
                   <Text style={[s.platformSub, { color: c.secondary }]}>{data.orders} orders</Text>
@@ -220,7 +221,7 @@ function HistoryRow({ order, c }: { order: CompletedOrder; c: AppColors }) {
   const time = new Date(order.completedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
   return (
     <View style={[s.historyRow, { borderBottomColor: c.separator }]}>
-      <PlatformIcon platform={order.platform as PlatformId} size={22} mono />
+      <PlatformIcon platform={order.platform as PlatformId} size={24} />
       <Text style={[s.historyAddr, { color: c.secondary }]} numberOfLines={1}>{order.dropoffAddress}</Text>
       <Text style={[s.historyTime, { color: c.secondary }]}>{time}</Text>
       <Text style={[s.historyEarnings, { color: c.text }]}>{order.earnings.toFixed(2)} PLN</Text>

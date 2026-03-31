@@ -8,6 +8,7 @@ import {
   TextInput,
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
+import { useNavigation } from '@react-navigation/native'
 import { useTranslation } from 'react-i18next'
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons'
 import i18n from '../../i18n'
@@ -56,6 +57,7 @@ export default function ProfileScreen() {
   const { t } = useTranslation()
   const insets = useSafeAreaInsets()
   const c = useColors()
+  const navigation = useNavigation<any>()
 
   const role = useRoleStore((s) => s.role)
   const vehicleType = useRoleStore((s) => s.vehicleType)
@@ -174,10 +176,10 @@ export default function ProfileScreen() {
         </>
       )}
 
-      {/* Taxi vehicle */}
+      {/* Fuel consumption (taxi only) */}
       {role === 'taxi' && (
         <>
-          <SectionLabel label={t('my_vehicle')} color={c.textMuted} />
+          <SectionLabel label={t('fuel_consumption_label')} color={c.textMuted} />
           <TextInput
             style={[s.fuelInput, { backgroundColor: c.surface, borderColor: c.border, color: c.text }]}
             value={fuelInput}
@@ -209,6 +211,10 @@ export default function ProfileScreen() {
         <SettingsRow
           icon={<Feather name="bell" size={20} color={c.secondary} />}
           label={t('notification_prefs')}
+          onPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+            navigation.navigate('Notifications')
+          }}
           right={<Feather name="chevron-right" size={18} color={c.textMuted} />}
           separatorColor={c.separator}
         />
@@ -268,21 +274,35 @@ function SettingsRow({
   label,
   right,
   separatorColor,
+  onPress,
   noBorder = false,
 }: {
   icon: React.ReactNode
   label: string
   right: React.ReactNode
   separatorColor: string
+  onPress?: () => void
   noBorder?: boolean
 }) {
   const colors = useColors()
-  return (
+  const row = (
     <View style={[s.settingsRow, !noBorder && { borderBottomWidth: 1, borderBottomColor: separatorColor }]}>
       {icon}
       <Text style={[s.settingsLabel, { color: colors.text }]}>{label}</Text>
       <View style={s.settingsRight}>{right}</View>
     </View>
+  )
+
+  if (onPress) {
+    return (
+      <TouchableOpacity activeOpacity={0.7} onPress={onPress}>
+        {row}
+      </TouchableOpacity>
+    )
+  }
+
+  return (
+    row
   )
 }
 
@@ -316,7 +336,7 @@ const s = StyleSheet.create({
   alertTime: { fontSize: 11, fontFamily: fonts.regular },
   settingsCard: { borderWidth: 1, borderRadius: 12, marginBottom: 20, overflow: 'hidden' },
   settingsRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 14, paddingHorizontal: 16, gap: 12 },
-  settingsLabel: { flex: 1, fontSize: 15, fontFamily: fonts.regular, color: '#FFFFFF' },
+  settingsLabel: { flex: 1, fontSize: 15, fontFamily: fonts.regular },
   settingsRight: { alignItems: 'flex-end' },
   settingsValue: { fontSize: 14, fontFamily: fonts.regular },
   themeToggle: { paddingHorizontal: 12, paddingVertical: 5, borderRadius: 10 },

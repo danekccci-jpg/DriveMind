@@ -1,5 +1,14 @@
 const GMAPS_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_KEY ?? ''
 
+export type TravelMode = 'driving' | 'bicycling'
+export type VehicleType = 'bike' | 'moped' | 'car'
+
+export function getTravelModeByVehicle(vehicleType: VehicleType, role: 'courier' | 'taxi' | null): TravelMode {
+  if (vehicleType === 'bike' || vehicleType === 'moped') return 'bicycling'
+  if (role === 'taxi') return 'driving'
+  return 'driving'
+}
+
 export interface RouteStep {
   instruction: string
   distanceText: string
@@ -68,7 +77,7 @@ export async function getDirections(
   originLng: number,
   destLat: number,
   destLng: number,
-  mode: 'driving' | 'bicycling' = 'driving',
+  mode: TravelMode = 'driving',
 ): Promise<DirectionsResult> {
   if (!GMAPS_API_KEY || GMAPS_API_KEY === 'your_key_here') {
     throw new Error('[DriveMind] EXPO_PUBLIC_GOOGLE_MAPS_KEY is not configured.')
