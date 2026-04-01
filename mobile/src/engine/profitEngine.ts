@@ -1,4 +1,5 @@
 import { Order, ShiftStats } from '../store/ordersStore'
+import { computeProfitability } from '@drivemind/shared'
 
 export type Role = 'courier' | 'taxi'
 export type ProfitLabel = 'GREAT' | 'GOOD' | 'OK' | 'SKIP'
@@ -9,11 +10,7 @@ export interface ProfitScoreResult {
   color: string
 }
 
-const MAX_ACCEPTABLE_DETOUR = 3.0
-const FUEL_PRICE_PER_LITER = 6.5
 const PEAK_HOURS: [number, number][] = [[12, 14], [18, 21]]
-const PLATFORM_INACTIVITY_THRESHOLD = 30
-const SHORT_ORDER_THRESHOLD = 1.0
 
 const DEG_TO_RAD = Math.PI / 180
 const EARTH_RADIUS_KM = 6371
@@ -41,70 +38,31 @@ function labelFromScore(score: number): { label: ProfitLabel; color: string } {
 
 export function calculateProfitScore(
   order: Order,
-  shiftStats: ShiftStats,
+  _shiftStats: ShiftStats,
   role: Role,
-  fuelConsumption: number,
-  lastPlatformActivity: Record<string, number>,
+  _fuelConsumption: number,
+  _lastPlatformActivity: Record<string, number>,
 ): ProfitScoreResult {
-  const { earnings, distanceKm, deadrunKm, durationMin, platform,
-          pickupLat, pickupLng } = order
-
-  // 1. Pay efficiency (40%)
-  const payRate = earnings / (distanceKm + deadrunKm)
-  const shiftAvgRate =
-    shiftStats.totalKm > 0
-      ? shiftStats.totalEarnings / shiftStats.totalKm
-      : payRate
-  const payScore = payRate / shiftAvgRate
-
-  // 2. Route alignment (25%)
-  let detourScore = 1.0
-  if (
-    shiftStats.lastOrderDropoffLat !== null &&
-    shiftStats.lastOrderDropoffLng !== null
-  ) {
-    const detourKm = haversineDistance(
-      shiftStats.lastOrderDropoffLat,
-      shiftStats.lastOrderDropoffLng,
-      pickupLat,
-      pickupLng,
-    )
-    detourScore = Math.max(0, 1 - detourKm / MAX_ACCEPTABLE_DETOUR)
-  }
-
-  // 3. Traffic efficiency (20%)
-  const trafficScore = Math.min(1.0, distanceKm / durationMin / 0.5)
-
-  // 4. Fuel cost (15%) — taxi only
-  let fuelScore = 1.0
-  if (role === 'taxi') {
-    const fuelCost = (distanceKm * fuelConsumption) / 100 * FUEL_PRICE_PER_LITER
-    fuelScore = Math.max(0, (earnings - fuelCost) / earnings)
-  }
-
-  // Base weighted score
-  const base =
-    payScore * 0.40 +
-    detourScore * 0.25 +
-    trafficScore * 0.20 +
-    fuelScore * 0.15
-
-  // 5. Peak hours bonus
   const currentHour = new Date().getHours()
   const isPeak = PEAK_HOURS.some(([start, end]) => currentHour >= start && currentHour < end)
-  const timeBonus = isPeak ? 1.15 : 1.0
+  const trafficFactor = isPeak ? 1.15 : 1
 
-  // 6. Platform inactivity bonus
-  const lastActivity = lastPlatformActivity[platform]
-  const minutesSince =
-    lastActivity !== undefined ? (Date.now() - lastActivity) / 60_000 : Infinity
-  const platformBonus = minutesSince > PLATFORM_INACTIVITY_THRESHOLD ? 1.1 : 1.0
+  const profitability = computeProfitability({
+    role,
+    pricePLN: order.earnings,
+    distanceKm: order.distanceKm + order.deadrunKm,
+    etaMin: Math.max(order.durationMin, 1),
+    trafficFactor,
+    demandFactor: 1,
+  })
 
-  // 7. Short-order penalty (courier only)
-  const shortPenalty =
-    role === 'courier' && distanceKm < SHORT_ORDER_THRESHOLD ? 0.8 : 1.0
-
-  const finalScore = base * timeBonus * platformBonus * shortPenalty
-
-  return { score: finalScore, ...labelFromScore(finalScore) }
+  // Keep backward-compatible score range expected by existing badges/thresholds.
+  const normalizedScore = profitability.score0to100 / 100
+  let label: ProfitLabel = 'OK'
+  if (profitability.recommendation === 'SKIP') label = 'SKIP'
+  if (profitability.recommendation === 'TAKE') {
+    label = profitability.score0to100 >= 80 ? 'GREAT' : 'GOOD'
+  }
+  if (profitability.recommendation === 'WAIT') label = 'OK'
+  return { score: normalizedScore, ...labelFromScore(normalizedScore), label }
 }

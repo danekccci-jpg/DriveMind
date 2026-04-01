@@ -9,6 +9,7 @@ import {
   Modal,
   AppState,
   AppStateStatus,
+  Alert,
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useTranslation } from 'react-i18next'
@@ -39,7 +40,7 @@ export default function OrderHubScreen() {
   const fuelConsumption = useRoleStore((st) => st.fuelConsumption)
   const {
     shiftStats, lastPlatformActivity, pendingConfirmation,
-    setPendingConfirmation, confirmOrder, rejectOrder, startNavigation,
+    setPendingConfirmation, confirmOrder, rejectOrder,
   } = useOrdersStore()
 
   const [selectedPlatform, setSelectedPlatform] = useState<PlatformId | 'all'>('all')
@@ -77,9 +78,17 @@ export default function OrderHubScreen() {
 
   const handleConfirmYes = useCallback(() => {
     if (!pendingConfirmation) return
-    confirmOrder(pendingConfirmation)
-    startNavigation(pendingConfirmation)
-  }, [pendingConfirmation, confirmOrder, startNavigation])
+    const order = pendingConfirmation
+    void (async () => {
+      try {
+        await confirmOrder(order)
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e)
+        console.error('[DriveMind Nav]: OrderHub confirmOrder failed', e)
+        Alert.alert('Directions', message)
+      }
+    })()
+  }, [pendingConfirmation, confirmOrder])
 
   const handleConfirmNo = useCallback(() => rejectOrder(), [rejectOrder])
 

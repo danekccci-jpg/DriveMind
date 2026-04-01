@@ -18,10 +18,10 @@ interface NotificationItem {
 }
 
 const MOCK_NOTIFICATIONS: NotificationItem[] = [
-  { id: '1', type: 'demand', title: 'High demand nearby', desc: 'Stare Miasto zone is surging right now', time: '2 min ago' },
-  { id: '2', type: 'platform', title: 'Better platform available', desc: 'Wolt paying +18% more than Glovo now', time: '14 min ago' },
-  { id: '3', type: 'milestone', title: 'Earnings milestone', desc: 'You reached 1,000 PLN this week', time: '1 hr ago' },
-  { id: '4', type: 'review', title: 'Shift in review', desc: "Yesterday's shift summary is ready", time: '3 hr ago' },
+  { id: '1', type: 'demand', title: 'high_demand', desc: 'high_demand_desc', time: '2m' },
+  { id: '2', type: 'platform', title: 'better_platform', desc: 'better_platform_desc', time: '14m' },
+  { id: '3', type: 'milestone', title: 'earnings_milestone', desc: 'earnings_milestone_desc', time: '1h' },
+  { id: '4', type: 'review', title: 'shift_review', desc: 'shift_review_desc', time: '3h' },
 ]
 
 export default function NotificationsScreen() {
@@ -51,7 +51,7 @@ export default function NotificationsScreen() {
         </View>
         <View style={s.headerText}>
           <Text style={[s.headerTitle, { color: c.text }]}>{t('notification_prefs')}</Text>
-          <Text style={[s.headerSub, { color: c.textSecondary }]}>Latest updates from DriveMind</Text>
+          <Text style={[s.headerSub, { color: c.textSecondary }]}>{t('latest_updates_drivemind')}</Text>
         </View>
       </View>
 
@@ -59,10 +59,10 @@ export default function NotificationsScreen() {
         <View key={n.id} style={[s.item, { backgroundColor: c.surface, borderColor: c.border }]}>
           <View style={[s.dot, { backgroundColor: dotColor(n.type) }]} />
           <View style={s.itemBody}>
-            <Text style={[s.itemTitle, { color: c.text }]}>{n.title}</Text>
-            <Text style={[s.itemDesc, { color: c.textSecondary }]}>{n.desc}</Text>
+            <Text style={[s.itemTitle, { color: c.text }]}>{t(n.title)}</Text>
+            <Text style={[s.itemDesc, { color: c.textSecondary }]}>{t(n.desc)}</Text>
           </View>
-          <Text style={[s.itemTime, { color: c.textMuted }]}>{n.time}</Text>
+          <Text style={[s.itemTime, { color: c.textMuted }]}>{n.time.endsWith('m') ? `${n.time.replace('m', '')} ${t('min_ago_short')}` : `${n.time.replace('h', '')} ${t('hr_ago_short')}`}</Text>
         </View>
       ))}
     </ScrollView>

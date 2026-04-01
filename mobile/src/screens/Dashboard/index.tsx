@@ -7,21 +7,41 @@ import {
   Modal,
   AppState,
   AppStateStatus,
+  Alert,
+  Animated,
+  Platform,
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useTranslation } from 'react-i18next'
 import * as Location from 'expo-location'
 import * as Haptics from 'expo-haptics'
-import { MaterialCommunityIcons, Feather } from '@expo/vector-icons'
+import { MaterialCommunityIcons } from '@expo/vector-icons'
 
-import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from '../../components/MapViewWeb'
+import MapView, { Marker, MarkerAnimated, AnimatedRegion, PROVIDER_GOOGLE } from '../../components/MapViewWeb'
+import { NavigationMapLayers } from '../../components/navigation/NavigationMapLayers'
+import { NavigationHud } from '../../components/navigation/NavigationHud'
+import { PlayerNavMarker } from '../../components/navigation/PlayerNavMarker'
+import { MapControls } from '../../components/map/MapControls'
+import { formatNavDistanceLine } from '../../navigation/navigationFormatting'
+import { useNavigationSettingsStore } from '../../store/navigationSettingsStore'
+import {
+  haversineMeters,
+  trimPolylineBehindUser,
+  distancePointToPolylineMeters,
+  distanceToNextManeuverMeters,
+  lowPassHeading,
+  bearingDegrees,
+  extractStreetName,
+  type LatLng,
+} from '../../navigation/navigationGeometry'
 import PlatformIcon from '../../components/PlatformIcon'
 import ProfitBadge from '../../components/ProfitBadge'
 import { useOrdersStore, Order } from '../../store/ordersStore'
 import { useRoleStore } from '../../store/roleStore'
 import { getDashboardSuggestionOrder } from '../../data/mockOrders'
 import { openPlatformDeepLink } from '../../utils/platformDeepLink'
-import { getDirections, getTravelModeByVehicle } from '../../services/directionsService'
+import { getTravelModeByVehicle } from '../../services/directionsService'
+import { navigationEngine } from '../../services/navigationEngine'
 import { fonts } from '../../theme/typography'
 import { useTheme, type AppColors } from '../../theme/theme'
 import { ProfitLabel } from '../../engine/profitEngine'
@@ -76,21 +96,48 @@ export default function DashboardScreen() {
   const insets = useSafeAreaInsets()
   const { colors: c, isDark } = useTheme()
 
+  const mapAppearance = useNavigationSettingsStore((s) => s.mapAppearance)
+  const markerStyle = useNavigationSettingsStore((s) => s.markerStyle)
+  const units = useNavigationSettingsStore((s) => s.units)
+  const mapPerspective3d = useNavigationSettingsStore((s) => s.mapPerspective3d)
+
   const role = useRoleStore((st) => st.role) ?? 'courier'
   const vehicleType = useRoleStore((st) => st.vehicleType)
   const {
     shiftStats, dailyGoal, isNavigating, navigationPhase, routePolyline,
-    currentStep, routeDistance, routeDuration, pendingConfirmation,
+    currentStep, routeDistance, routeDuration, routeSteps, routeDurationSeconds, pendingConfirmation,
     activeOrders, setPendingConfirmation,
-    confirmOrder, rejectOrder, setOrderStatus, completeOrder,
+    confirmOrder, rejectOrder, completeOrder, markPickupArrived,
     updateNavigationPhase, stopNavigation, recomputeNavigationTarget, updateNavigationRoute,
   } = useOrdersStore()
   const navigationOrderId = useOrdersStore((s) => s.navigationOrderId)
 
-  const [userLocation, setUserLocation] = useState<{ latitude: number; longitude: number } | null>(null)
+  const [userLocation, setUserLocation] = useState<LatLng | null>(null)
+  const [userSpeedMps, setUserSpeedMps] = useState<number | null>(null)
+  const [userHeadingDeg, setUserHeadingDeg] = useState<number | null>(null)
+  const [smoothHeading, setSmoothHeading] = useState(0)
   const appStateRef = useRef<AppStateStatus>(AppState.currentState)
   const pendingOrderRef = useRef<Order | null>(null)
   const mapRef = useRef<any>(null)
+  const lastPosForBearingRef = useRef<LatLng | null>(null)
+  const prevHeadingRef = useRef<number | null>(null)
+  const navIntroPlayedRef = useRef(false)
+  const prevRouteLenRef = useRef(0)
+  const introTimersRef = useRef<{ t1?: ReturnType<typeof setTimeout>; t2?: ReturnType<typeof setTimeout> }>({})
+  const [navFollowReady, setNavFollowReady] = useState(false)
+  const lastOffRouteForceRef = useRef(0)
+  const destPulse = useRef(new Animated.Value(1)).current
+  const userLocationRef = useRef<LatLng | null>(null)
+  const smoothHeadingRef = useRef(0)
+
+  const animatedCoord = useRef(
+    new AnimatedRegion({
+      latitude: KRAKOW_REGION.latitude,
+      longitude: KRAKOW_REGION.longitude,
+      latitudeDelta: 0.008,
+      longitudeDelta: 0.008,
+    }),
+  ).current
 
   const activeOrder = useMemo(
     () => activeOrders.find((o) => o.id === navigationOrderId) ?? activeOrders[0] ?? null,
@@ -99,21 +146,90 @@ export default function DashboardScreen() {
   const routePolylineSafe = routePolyline ?? []
   const suggestion = activeOrder ?? getDashboardSuggestionOrder(role as 'courier' | 'taxi')
 
+  const destCoordNav: LatLng | null = useMemo(() => {
+    if (!isNavigating || !activeOrder) return null
+    return navigationPhase === 'pickup'
+      ? { latitude: activeOrder.pickupLat, longitude: activeOrder.pickupLng }
+      : { latitude: activeOrder.dropoffLat, longitude: activeOrder.dropoffLng }
+  }, [isNavigating, activeOrder, navigationPhase])
+
+  const trimmedRoute = useMemo(() => {
+    if (!isNavigating || !userLocation || routePolylineSafe.length < 2) return routePolylineSafe
+    return trimPolylineBehindUser(userLocation, routePolylineSafe)
+  }, [isNavigating, userLocation, routePolylineSafe])
+
+  const nearDestination = useMemo(() => {
+    if (!userLocation || !destCoordNav) return false
+    return haversineMeters(userLocation, destCoordNav) < 50
+  }, [userLocation, destCoordNav])
+
+  const hudDistanceM = useMemo(() => {
+    if (!isNavigating || !userLocation) return 0
+    return distanceToNextManeuverMeters(userLocation, routeSteps?.[0], trimmedRoute)
+  }, [isNavigating, userLocation, routeSteps, trimmedRoute])
+
+  const distanceLine = useMemo(
+    () => formatNavDistanceLine(hudDistanceM, units),
+    [hudDistanceM, units],
+  )
+  const streetTitle = extractStreetName(routeSteps?.[0]?.instruction ?? currentStep ?? '')
+  const timeLeftSeconds = routeDurationSeconds ?? 0
+
+  useEffect(() => {
+    userLocationRef.current = userLocation
+  }, [userLocation])
+
+  useEffect(() => {
+    smoothHeadingRef.current = smoothHeading
+  }, [smoothHeading])
+
   useEffect(() => {
     let sub: Location.LocationSubscription | null = null
+    let headingSub: { remove: () => void } | null = null
     ;(async () => {
       try {
         const { status } = await Location.requestForegroundPermissionsAsync()
         if (status !== 'granted') return
         const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced })
-        setUserLocation({ latitude: loc.coords.latitude, longitude: loc.coords.longitude })
+        const first: LatLng = { latitude: loc.coords.latitude, longitude: loc.coords.longitude }
+        setUserLocation(first)
+        lastPosForBearingRef.current = first
+        setUserSpeedMps(loc.coords.speed ?? null)
+        const h = loc.coords.heading
+        if (h != null && h >= 0) setUserHeadingDeg(h)
         sub = await Location.watchPositionAsync(
-          { accuracy: Location.Accuracy.Balanced, distanceInterval: 20 },
-          (l) => setUserLocation({ latitude: l.coords.latitude, longitude: l.coords.longitude }),
+          {
+            accuracy: Location.Accuracy.Balanced,
+            distanceInterval: 8,
+            timeInterval: 1000,
+          },
+          (l) => {
+            setUserLocation({ latitude: l.coords.latitude, longitude: l.coords.longitude })
+            setUserSpeedMps(l.coords.speed ?? null)
+            const hd = l.coords.heading
+            if (hd != null && hd >= 0) setUserHeadingDeg(hd)
+          },
         )
-      } catch (e) { console.warn('Location error:', e) }
+        if (Platform.OS !== 'web' && typeof Location.watchHeadingAsync === 'function') {
+          try {
+            headingSub = await Location.watchHeadingAsync((e) => {
+              const th = e.trueHeading
+              const mh = e.magHeading
+              const use = th >= 0 ? th : mh
+              if (use >= 0) setUserHeadingDeg(use)
+            })
+          } catch {
+            /* heading optional */
+          }
+        }
+      } catch (e) {
+        console.warn('Location error:', e)
+      }
     })()
-    return () => { sub?.remove() }
+    return () => {
+      sub?.remove()
+      headingSub?.remove()
+    }
   }, [])
 
   useEffect(() => {
@@ -141,21 +257,30 @@ export default function DashboardScreen() {
   const handleConfirmYes = useCallback(() => {
     if (!pendingConfirmation) return
     const mode = getTravelModeByVehicle(vehicleType, role)
+    const order = pendingConfirmation
     console.log('[DriveMind Nav]: confirm accepted order', {
-      orderId: pendingConfirmation.id,
+      orderId: order.id,
       mode,
       hasLocation: !!userLocation,
     })
-    void confirmOrder(
-      pendingConfirmation,
-      userLocation
-        ? {
-            originLat: userLocation.latitude,
-            originLng: userLocation.longitude,
-            mode,
-          }
-        : undefined,
-    )
+    void (async () => {
+      try {
+        await confirmOrder(
+          order,
+          userLocation
+            ? {
+                originLat: userLocation.latitude,
+                originLng: userLocation.longitude,
+                mode,
+              }
+            : undefined,
+        )
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e)
+        console.error('[DriveMind Nav]: confirmOrder / getDirections failed', e)
+        Alert.alert('Directions', message)
+      }
+    })()
   }, [pendingConfirmation, confirmOrder, userLocation, vehicleType, role])
 
   const handleConfirmNo = useCallback(() => { rejectOrder() }, [rejectOrder])
@@ -163,9 +288,8 @@ export default function DashboardScreen() {
   const handleReachedPickup = useCallback(() => {
     if (!activeOrder) return
     console.log('[DriveMind Nav]: pickup confirmed', { orderId: activeOrder.id })
-    setOrderStatus(activeOrder.id, 'dropoff')
-    updateNavigationPhase('dropoff')
-  }, [activeOrder, setOrderStatus, updateNavigationPhase])
+    markPickupArrived(activeOrder.id)
+  }, [activeOrder, markPickupArrived])
 
   const handleCompleteOrder = useCallback(() => {
     if (!activeOrder) return
@@ -178,6 +302,35 @@ export default function DashboardScreen() {
       stopNavigation()
     }
   }, [activeOrder, completeOrder, stopNavigation])
+
+  const onNavPrimary = useCallback(() => {
+    if (navigationPhase === 'pickup') handleReachedPickup()
+    else handleCompleteOrder()
+  }, [navigationPhase, handleReachedPickup, handleCompleteOrder])
+
+  const onPerspectiveToggle = useCallback(
+    (perspective3d: boolean) => {
+      if (!mapRef.current || !userLocation) return
+      mapRef.current.animateCamera(
+        {
+          center: { latitude: userLocation.latitude, longitude: userLocation.longitude },
+          pitch: perspective3d ? 60 : 0,
+          heading: smoothHeading,
+          zoom: 17.5,
+        },
+        { duration: 450 },
+      )
+    },
+    [userLocation, smoothHeading],
+  )
+
+  const mapStyleForMap = useMemo(() => {
+    if (mapAppearance === 'light') return LIGHT_MAP_STYLE
+    if (mapAppearance === 'dark') return DARK_MAP_STYLE
+    return isDark ? DARK_MAP_STYLE : LIGHT_MAP_STYLE
+  }, [mapAppearance, isDark])
+
+  const mapRemountKey = `${mapAppearance}-${markerStyle}-${isDark}`
 
   useEffect(() => {
     if (!isNavigating || !userLocation) return
@@ -196,42 +349,134 @@ export default function DashboardScreen() {
         : { latitude: target.dropoffLat, longitude: target.dropoffLng }
 
     const mode = getTravelModeByVehicle(vehicleType, role)
-    console.log('[DriveMind Nav]: route refresh', {
+    console.log('[DriveMind Nav]: route refresh scheduled', {
       orderId: target.id,
       phase: target.status,
       mode,
       origin: userLocation,
       destination,
     })
-    getDirections(
-      userLocation.latitude,
-      userLocation.longitude,
-      destination.latitude,
-      destination.longitude,
+    navigationEngine.scheduleRouteRefresh({
+      origin: userLocation,
+      destination,
       mode,
-    )
-      .then((route) => {
+      onRoute: (route) => {
         updateNavigationRoute({
-          polyline: route.polylinePoints,
-          currentStep: route.steps[0]?.instruction ?? '',
-          routeDistance: route.distanceText,
-          routeDuration: route.durationText,
+          polyline: route.polyline,
+          currentStep: route.currentStep,
+          routeDistance: route.routeDistance,
+          routeDuration: route.routeDuration,
+          steps: route.steps,
+          durationSecondsTotal: route.durationSecondsTotal,
         })
         updateNavigationPhase(target.status === 'pickup' ? 'pickup' : 'dropoff')
-        console.log('[DriveMind Nav]: route updated', {
-          points: route.polylinePoints.length,
-          distance: route.distanceText,
-          duration: route.durationText,
-        })
-      })
-      .catch((err) => console.warn('Directions fetch failed:', err))
+      },
+      onError: (err) => console.warn('Directions fetch failed:', err),
+    })
   }, [isNavigating, activeOrder, userLocation, vehicleType, role, updateNavigationRoute, updateNavigationPhase])
 
-  const destCoord = isNavigating && activeOrder
-    ? navigationPhase === 'pickup'
-      ? { latitude: activeOrder.pickupLat, longitude: activeOrder.pickupLng }
-      : { latitude: activeOrder.dropoffLat, longitude: activeOrder.dropoffLng }
-    : null
+  useEffect(() => {
+    if (isNavigating) return
+    navigationEngine.cancelPending()
+  }, [isNavigating])
+
+  useEffect(() => {
+    if (!isNavigating) {
+      clearTimeout(introTimersRef.current.t1)
+      clearTimeout(introTimersRef.current.t2)
+      introTimersRef.current = {}
+      navIntroPlayedRef.current = false
+      prevRouteLenRef.current = 0
+      setNavFollowReady(false)
+    }
+  }, [isNavigating])
+
+  useEffect(() => {
+    if (!userLocation) return
+    animatedCoord.timing({
+      latitude: userLocation.latitude,
+      longitude: userLocation.longitude,
+      duration: 1000,
+      useNativeDriver: false,
+    }).start()
+  }, [userLocation?.latitude, userLocation?.longitude, animatedCoord])
+
+  useEffect(() => {
+    if (!userLocation) return
+    let nextH: number
+    if (userHeadingDeg != null && userHeadingDeg >= 0) {
+      nextH = userHeadingDeg
+    } else if (lastPosForBearingRef.current) {
+      nextH = bearingDegrees(lastPosForBearingRef.current, userLocation)
+    } else {
+      lastPosForBearingRef.current = userLocation
+      return
+    }
+    lastPosForBearingRef.current = userLocation
+    setSmoothHeading((prev) => {
+      const p = prevHeadingRef.current ?? prev
+      const merged = lowPassHeading(p, nextH, 3)
+      prevHeadingRef.current = merged
+      return merged
+    })
+  }, [userLocation, userHeadingDeg])
+
+  useEffect(() => {
+    if (!nearDestination) {
+      destPulse.setValue(1)
+      return
+    }
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(destPulse, { toValue: 1.35, duration: 700, useNativeDriver: true }),
+        Animated.timing(destPulse, { toValue: 1, duration: 700, useNativeDriver: true }),
+      ]),
+    )
+    loop.start()
+    return () => {
+      loop.stop()
+    }
+  }, [nearDestination, destPulse])
+
+  useEffect(() => {
+    if (!isNavigating || !userLocation || !activeOrder || routePolylineSafe.length < 2) return
+    const d = distancePointToPolylineMeters(userLocation, routePolylineSafe)
+    if (d <= 50) return
+    if (Date.now() - lastOffRouteForceRef.current < 10_000) return
+    lastOffRouteForceRef.current = Date.now()
+    const destination =
+      activeOrder.status === 'pickup'
+        ? { latitude: activeOrder.pickupLat, longitude: activeOrder.pickupLng }
+        : { latitude: activeOrder.dropoffLat, longitude: activeOrder.dropoffLng }
+    const mode = getTravelModeByVehicle(vehicleType, role)
+    // Smart off-route: refresh polyline only — do not fitToCoordinates; camera stays user-centric.
+    navigationEngine.forceRefresh({
+      origin: userLocation,
+      destination,
+      mode,
+      onRoute: (route) => {
+        updateNavigationRoute({
+          polyline: route.polyline,
+          currentStep: route.currentStep,
+          routeDistance: route.routeDistance,
+          routeDuration: route.routeDuration,
+          steps: route.steps,
+          durationSecondsTotal: route.durationSecondsTotal,
+        })
+        updateNavigationPhase(activeOrder.status === 'pickup' ? 'pickup' : 'dropoff')
+      },
+      onError: (err) => console.warn('[DriveMind Nav]: off-route refresh failed', err),
+    })
+  }, [
+    isNavigating,
+    userLocation,
+    activeOrder,
+    routePolylineSafe,
+    vehicleType,
+    role,
+    updateNavigationRoute,
+    updateNavigationPhase,
+  ])
 
   useEffect(() => {
     if (!mapRef.current || !userLocation) return
@@ -245,65 +490,138 @@ export default function DashboardScreen() {
         },
         500,
       )
-      return
     }
-
-    if (routePolyline && routePolyline.length > 1) {
-      const coords = [...routePolyline]
-      if (destCoord) coords.push(destCoord)
-      mapRef.current.fitToCoordinates(coords, {
-        edgePadding: { top: 140, right: 60, bottom: 220, left: 60 },
-        animated: true,
-      })
-      return
-    }
-    mapRef.current.animateToRegion(
-      {
-        latitude: userLocation.latitude,
-        longitude: userLocation.longitude,
-        latitudeDelta: 0.02,
-        longitudeDelta: 0.02,
-      },
-      500,
-    )
-  }, [isNavigating, userLocation, routePolyline, destCoord])
+  }, [isNavigating, userLocation])
 
   useEffect(() => {
-    if (!mapRef.current || routePolylineSafe.length === 0) return
-    console.log('[DriveMind Nav]: fitting camera to polyline', { points: routePolylineSafe.length })
-    mapRef.current.fitToCoordinates(routePolylineSafe, {
-      edgePadding: { top: 140, right: 60, bottom: 220, left: 60 },
+    if (!isNavigating || !mapRef.current) return
+    const len = routePolylineSafe.length
+    const crossedIntoRoute = prevRouteLenRef.current < 2 && len >= 2
+    prevRouteLenRef.current = len
+    if (!crossedIntoRoute || navIntroPlayedRef.current || len < 2) return
+
+    navIntroPlayedRef.current = true
+    setNavFollowReady(false)
+
+    const coords = [...routePolylineSafe]
+    if (destCoordNav) coords.push(destCoordNav)
+
+    mapRef.current.fitToCoordinates(coords, {
+      edgePadding: { top: 150, right: 150, bottom: 150, left: 150 },
       animated: true,
     })
-  }, [routePolylineSafe])
+
+    clearTimeout(introTimersRef.current.t1)
+    clearTimeout(introTimersRef.current.t2)
+
+    introTimersRef.current.t1 = setTimeout(() => {
+      const loc = userLocationRef.current
+      if (!mapRef.current || !loc) {
+        setNavFollowReady(true)
+        return
+      }
+      mapRef.current.animateCamera(
+        {
+          center: { latitude: loc.latitude, longitude: loc.longitude },
+          pitch: useNavigationSettingsStore.getState().mapPerspective3d ? 60 : 0,
+          zoom: 17.5,
+          heading: smoothHeadingRef.current,
+        },
+        { duration: 1500 },
+      )
+      introTimersRef.current.t2 = setTimeout(() => setNavFollowReady(true), 1500)
+    }, 750)
+  }, [isNavigating, routePolylineSafe.length, routePolylineSafe, destCoordNav])
+
+  useEffect(() => {
+    if (!isNavigating || !navFollowReady || !mapRef.current || !userLocation) return
+    const sp = userSpeedMps ?? 0
+    const zoom = sp < 2 ? 17.5 : sp < 8 ? 17 : sp < 15 ? 16.5 : 16
+    mapRef.current.animateCamera(
+      {
+        center: { latitude: userLocation.latitude, longitude: userLocation.longitude },
+        pitch: mapPerspective3d ? 60 : 0,
+        heading: smoothHeading,
+        zoom,
+      },
+      { duration: 1000 },
+    )
+  }, [isNavigating, navFollowReady, userLocation, smoothHeading, userSpeedMps, mapPerspective3d])
 
   const platformName = suggestion.platform.charAt(0).toUpperCase() + suggestion.platform.slice(1)
 
   return (
     <View style={[s.root, { backgroundColor: c.tabBar }]}>
+      <View style={s.mapFill}>
       <MapView
+        key={mapRemountKey}
         ref={mapRef}
         style={StyleSheet.absoluteFill}
         provider={PROVIDER_GOOGLE}
-        customMapStyle={isDark ? DARK_MAP_STYLE : LIGHT_MAP_STYLE}
-        showsUserLocation
+        customMapStyle={mapStyleForMap}
+        showsUserLocation={!isNavigating}
         showsMyLocationButton={false}
         initialRegion={userLocation ? { ...userLocation, latitudeDelta: 0.02, longitudeDelta: 0.02 } : KRAKOW_REGION}
       >
-        {isNavigating && routePolylineSafe.length > 0 && (
-          <Polyline coordinates={routePolylineSafe} strokeColor="#1A5CFF" strokeWidth={4} zIndex={10} />
+        {isNavigating && (
+          <NavigationMapLayers
+            trimmedPolyline={trimmedRoute}
+            destCoord={destCoordNav}
+            navigationPhase={navigationPhase}
+            destPulse={destPulse}
+            nearDestination={nearDestination}
+          />
         )}
-        {destCoord && <Marker coordinate={destCoord} pinColor={navigationPhase === 'pickup' ? '#F59E0B' : '#22C55E'} />}
+        {isNavigating && Platform.OS !== 'web' && (
+          <MarkerAnimated coordinate={animatedCoord} anchor={{ x: 0.5, y: 0.5 }} flat>
+            <PlayerNavMarker styleId={markerStyle} headingDeg={smoothHeading} />
+          </MarkerAnimated>
+        )}
+        {isNavigating && Platform.OS === 'web' && userLocation && (
+          <Marker coordinate={userLocation} anchor={{ x: 0.5, y: 0.5 }} flat>
+            <PlayerNavMarker styleId={markerStyle} headingDeg={smoothHeading} />
+          </Marker>
+        )}
       </MapView>
+      </View>
+
+      {isNavigating && activeOrder && (
+        <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
+          <MapControls
+            mapRef={mapRef}
+            userLocation={userLocation}
+            smoothHeading={smoothHeading}
+            isDark={isDark}
+            bottomOffset={insets.bottom + 168}
+            onPerspectiveToggle={onPerspectiveToggle}
+          />
+          <NavigationHud
+            maneuver={routeSteps?.[0]?.maneuver}
+            distanceLine={distanceLine}
+            streetName={streetTitle}
+            timeLeftSeconds={timeLeftSeconds}
+            c={c}
+            phase={navigationPhase}
+            onPrimary={onNavPrimary}
+            timeLeftLabel={t('nav_time_left')}
+            arrivalLabel={t('nav_arrival')}
+            primaryPickupLabel={t('reached_pickup')}
+            primaryDropoffLabel={t('nav_finish')}
+            topInset={insets.top + 28}
+          />
+        </View>
+      )}
 
       {/* Header */}
-      <View style={[s.header, { top: insets.top + 16 }]}>
-        <Text style={[s.headerTitle, { color: c.text }]}>DriveMind</Text>
-        <View style={[s.rolePill, { backgroundColor: c.surface, borderColor: c.border }]}>
-          <MaterialCommunityIcons name={role === 'courier' ? 'bike' : 'car-outline'} size={14} color={c.secondary} />
-          <Text style={[s.rolePillText, { color: c.text }]}>{role}</Text>
+      {!isNavigating && (
+        <View style={[s.header, { top: insets.top + 16 }]}>
+          <Text style={[s.headerTitle, { color: c.text }]}>DriveMind</Text>
+          <View style={[s.rolePill, { backgroundColor: c.surface, borderColor: c.border }]}>
+            <MaterialCommunityIcons name={role === 'courier' ? 'bike' : 'car-outline'} size={14} color={c.secondary} />
+            <Text style={[s.rolePillText, { color: c.text }]}>{role}</Text>
+          </View>
         </View>
-      </View>
+      )}
 
       {/* Bottom sheet */}
       <View style={[s.sheet, { paddingBottom: insets.bottom + 6, backgroundColor: c.tabBar, borderTopColor: c.tabBarBorder }]}>
@@ -318,8 +636,7 @@ export default function DashboardScreen() {
         </View>
 
         {isNavigating && activeOrder ? (
-          <NavigationBar step={currentStep} distance={routeDistance} duration={routeDuration} phase={navigationPhase}
-            onReachedPickup={handleReachedPickup} onComplete={handleCompleteOrder} t={t} c={c} />
+          <View style={{ height: 8 }} />
         ) : (
           <View style={[s.suggCard, { backgroundColor: c.card, borderColor: c.separator }]}>
             <View style={s.suggHeader}>
@@ -379,30 +696,9 @@ function StatCol({ label, value, c, compact = false }: { label: string; value: s
   )
 }
 
-function NavigationBar({ step, distance, duration, phase, onReachedPickup, onComplete, t, c }: {
-  step: string | null; distance: string | null; duration: string | null
-  phase: 'pickup' | 'dropoff' | null; onReachedPickup: () => void; onComplete: () => void
-  t: (key: string) => string; c: AppColors
-}) {
-  return (
-    <View style={[s.navBar, { backgroundColor: c.card, borderLeftColor: c.primary }]}>
-      <View style={s.navRow}>
-        <Feather name="arrow-right" size={18} color={c.text} />
-        <Text style={[s.navStep, { color: c.text }]} numberOfLines={2}>{step ?? '—'}</Text>
-        <View style={s.navMeta}>
-          {distance && <Text style={[s.navMetaText, { color: c.textSecondary }]}>{distance}</Text>}
-          {duration && <Text style={[s.navMetaText, { color: c.textSecondary }]}>{duration}</Text>}
-        </View>
-      </View>
-      <TouchableOpacity style={[s.navBtn, { borderColor: c.primary }]} activeOpacity={0.8} onPress={phase === 'pickup' ? onReachedPickup : onComplete}>
-        <Text style={[s.navBtnText, { color: c.primary }]}>{phase === 'pickup' ? 'Confirm Pickup' : t('complete_order')}</Text>
-      </TouchableOpacity>
-    </View>
-  )
-}
-
 const s = StyleSheet.create({
   root: { flex: 1 },
+  mapFill: { flex: 1, width: '100%' },
   header: { position: 'absolute', left: 20, right: 20, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   headerTitle: { fontSize: 17, fontWeight: '600', fontFamily: fonts.semiBold },
   rolePill: { flexDirection: 'row', alignItems: 'center', gap: 6, borderWidth: 1, borderRadius: 20, paddingHorizontal: 12, paddingVertical: 5 },
@@ -426,13 +722,6 @@ const s = StyleSheet.create({
   pillText: { fontSize: 12, fontFamily: fonts.regular },
   acceptBtn: { height: 42, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
   acceptBtnText: { fontSize: 15, fontWeight: '600', fontFamily: fonts.semiBold },
-  navBar: { borderLeftWidth: 2, borderRadius: 12, padding: 12, marginBottom: 6 },
-  navRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 10 },
-  navStep: { flex: 1, fontSize: 14, fontFamily: fonts.medium },
-  navMeta: { alignItems: 'flex-end' },
-  navMetaText: { fontSize: 12, fontFamily: fonts.regular },
-  navBtn: { height: 44, borderRadius: 10, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
-  navBtnText: { fontSize: 14, fontWeight: '600', fontFamily: fonts.semiBold },
   modalOverlay: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
   modalCard: { borderRadius: 16, padding: 24, width: '100%', alignItems: 'center', gap: 10 },
   modalTitle: { fontSize: 18, fontWeight: '600', fontFamily: fonts.semiBold, marginTop: 6 },

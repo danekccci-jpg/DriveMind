@@ -209,6 +209,16 @@ export default function ProfileScreen() {
       <SectionLabel label={t('settings')} color={c.textMuted} />
       <View style={[s.settingsCard, { backgroundColor: c.surface, borderColor: c.border }]}>
         <SettingsRow
+          icon={<Feather name="map" size={20} color={c.secondary} />}
+          label={t('navigation_settings')}
+          onPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+            navigation.navigate('NavigationSettings')
+          }}
+          right={<Feather name="chevron-right" size={18} color={c.textMuted} />}
+          separatorColor={c.separator}
+        />
+        <SettingsRow
           icon={<Feather name="bell" size={20} color={c.secondary} />}
           label={t('notification_prefs')}
           onPress={() => {

@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import AsyncStorage from '@react-native-async-storage/async-storage'
+import { Platform } from 'react-native'
 
 type Language = 'en' | 'pl'
 
@@ -10,6 +11,11 @@ interface LanguageState {
   setLanguage: (language: Language) => void
   confirmLanguageChoice: (language: Language) => void
 }
+
+const storage =
+  Platform.OS === 'web'
+    ? createJSONStorage(() => localStorage)
+    : createJSONStorage(() => AsyncStorage)
 
 export const useLanguageStore = create<LanguageState>()(
   persist(
@@ -22,7 +28,7 @@ export const useLanguageStore = create<LanguageState>()(
     }),
     {
       name: 'drivemind-language',
-      storage: createJSONStorage(() => AsyncStorage),
+      storage,
     },
   ),
 )

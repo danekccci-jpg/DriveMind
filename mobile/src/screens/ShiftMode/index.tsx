@@ -15,7 +15,6 @@ import PlatformIcon from '../../components/PlatformIcon'
 import ProfitBadge from '../../components/ProfitBadge'
 import { useOrdersStore, CompletedOrder } from '../../store/ordersStore'
 import { useRoleStore } from '../../store/roleStore'
-import { MOCK_SHIFT_HISTORY } from '../../data/mockShiftHistory'
 import { fonts } from '../../theme/typography'
 import { useColors, type AppColors } from '../../theme/theme'
 import { ProfitLabel } from '../../engine/profitEngine'
@@ -62,8 +61,7 @@ export default function ShiftModeScreen() {
   }
 
   const shiftOrders: CompletedOrder[] = useMemo(() => {
-    const real = orderHistory.filter((o) => shiftStats.startTime && o.completedAt >= shiftStats.startTime)
-    return real.length > 0 ? real : MOCK_SHIFT_HISTORY
+    return orderHistory.filter((o) => shiftStats.startTime && o.completedAt >= shiftStats.startTime)
   }, [orderHistory, shiftStats.startTime])
 
   const avgRate = shiftStats.totalKm > 0 ? (shiftStats.totalEarnings / shiftStats.totalKm).toFixed(2) : '—'

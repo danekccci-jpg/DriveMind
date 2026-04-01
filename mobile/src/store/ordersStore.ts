@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import AsyncStorage from '@react-native-async-storage/async-storage'
-import { getDirections, type TravelMode } from '../services/directionsService'
+import { getDirections, type TravelMode, type RouteStep } from '../services/directionsService'
 
 export interface Order {
   id: string
@@ -51,6 +51,13 @@ interface NavigationRoute {
 }
 
 const KRAKOW_FALLBACK_ORIGIN = { latitude: 50.0614, longitude: 19.9366 }
+export type LifecyclePhase =
+  | 'idle'
+  | 'awaitingConfirm'
+  | 'pickupRouting'
+  | 'pickupArrived'
+  | 'dropoffRouting'
+  | 'completed'
 
 function toRad(value: number): number {
   return (value * Math.PI) / 180
@@ -81,8 +88,11 @@ interface OrdersState {
   currentStep: string | null
   routeDistance: string | null
   routeDuration: string | null
+  routeSteps: RouteStep[] | null
+  routeDurationSeconds: number | null
   navigationOrderId: string | null
   lastNearestDistanceKm: number | null
+  lifecyclePhase: LifecyclePhase
 
   setPendingConfirmation: (order: Order | null) => void
   confirmOrder: (
@@ -101,10 +111,13 @@ interface OrdersState {
     currentStep: string
     routeDistance: string
     routeDuration: string
+    steps?: RouteStep[]
+    durationSecondsTotal?: number
   }) => void
   stopNavigation: () => void
   startShiftManually: () => void
   endShiftManually: () => void
+  markPickupArrived: (orderId: string) => void
 }
 
 export const useOrdersStore = create<OrdersState>()(
@@ -122,10 +135,17 @@ export const useOrdersStore = create<OrdersState>()(
       currentStep: null,
       routeDistance: null,
       routeDuration: null,
+      routeSteps: null,
+      routeDurationSeconds: null,
       navigationOrderId: null,
       lastNearestDistanceKm: null,
+      lifecyclePhase: 'idle',
 
-      setPendingConfirmation: (order) => set({ pendingConfirmation: order }),
+      setPendingConfirmation: (order) =>
+        set({
+          pendingConfirmation: order,
+          lifecyclePhase: order ? 'awaitingConfirm' : get().isNavigating ? get().lifecyclePhase : 'idle',
+        }),
 
       confirmOrder: async (order, options) => {
         const { shiftStats, activeOrders } = get()
@@ -140,6 +160,7 @@ export const useOrdersStore = create<OrdersState>()(
           isNavigating: true,
           navigationPhase: 'pickup',
           navigationOrderId: order.id,
+          lifecyclePhase: 'pickupRouting',
           shiftStats: {
             ...shiftStats,
             startTime: shiftStats.startTime ?? Date.now(),
@@ -173,6 +194,8 @@ export const useOrdersStore = create<OrdersState>()(
             currentStep: route.steps[0]?.instruction ?? '',
             routeDistance: route.distanceText,
             routeDuration: route.durationText,
+            routeSteps: route.steps.length > 0 ? route.steps : null,
+            routeDurationSeconds: route.durationSecondsTotal > 0 ? route.durationSecondsTotal : null,
           })
           console.log('[DriveMind Store]: State updated with polyline length:', route.polylinePoints.length)
           console.log('[DriveMind Nav]: pickup route ready', {
@@ -185,6 +208,7 @@ export const useOrdersStore = create<OrdersState>()(
             orderId: order.id,
             error,
           })
+          throw error
         }
       },
 
@@ -202,6 +226,7 @@ export const useOrdersStore = create<OrdersState>()(
         set({
           activeOrders: activeOrders.filter((o) => o.id !== orderId),
           orderHistory: trimmedHistory,
+          lifecyclePhase: activeOrders.length > 1 ? 'pickupRouting' : 'completed',
           shiftStats: {
             ...shiftStats,
             totalEarnings: shiftStats.totalEarnings + order.earnings,
@@ -275,12 +300,16 @@ export const useOrdersStore = create<OrdersState>()(
 
       updateNavigationPhase: (navigationPhase) => set({ navigationPhase }),
 
-      updateNavigationRoute: ({ polyline, currentStep, routeDistance, routeDuration }) =>
+      updateNavigationRoute: ({ polyline, currentStep, routeDistance, routeDuration, steps, durationSecondsTotal }) =>
         set({
           routePolyline: polyline,
           currentStep,
           routeDistance,
           routeDuration,
+          ...(steps !== undefined && { routeSteps: steps.length > 0 ? steps : null }),
+          ...(durationSecondsTotal !== undefined && {
+            routeDurationSeconds: durationSecondsTotal > 0 ? durationSecondsTotal : null,
+          }),
         }),
 
       stopNavigation: () =>
@@ -292,7 +321,10 @@ export const useOrdersStore = create<OrdersState>()(
           currentStep: null,
           routeDistance: null,
           routeDuration: null,
+          routeSteps: null,
+          routeDurationSeconds: null,
           lastNearestDistanceKm: null,
+          lifecyclePhase: 'idle',
         }),
 
       startShiftManually: () =>
@@ -309,6 +341,15 @@ export const useOrdersStore = create<OrdersState>()(
             ...state.shiftStats,
             startTime: null,
           },
+        })),
+
+      markPickupArrived: (orderId) =>
+        set((state) => ({
+          activeOrders: state.activeOrders.map((o) =>
+            o.id === orderId ? { ...o, status: 'dropoff' } : o,
+          ),
+          navigationPhase: 'dropoff',
+          lifecyclePhase: 'dropoffRouting',
         })),
     }),
     {
@@ -330,8 +371,11 @@ export const useOrdersStore = create<OrdersState>()(
           state.currentStep = null
           state.routeDistance = null
           state.routeDuration = null
+          state.routeSteps = null
+          state.routeDurationSeconds = null
           state.navigationOrderId = null
           state.lastNearestDistanceKm = null
+          state.lifecyclePhase = 'idle'
         }
       },
     },

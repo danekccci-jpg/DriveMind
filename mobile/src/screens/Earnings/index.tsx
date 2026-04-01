@@ -14,7 +14,6 @@ import * as Haptics from 'expo-haptics'
 
 import PlatformIcon from '../../components/PlatformIcon'
 import { useOrdersStore, CompletedOrder } from '../../store/ordersStore'
-import { MOCK_SHIFT_HISTORY } from '../../data/mockShiftHistory'
 import { fonts } from '../../theme/typography'
 import { useColors, type AppColors } from '../../theme/theme'
 
@@ -38,8 +37,8 @@ function periodStart(period: Period): number {
 function formatGroupDate(ts: number): string {
   const now = new Date()
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
-  if (ts >= todayStart) return 'Today'
-  if (ts >= todayStart - 86_400_000) return 'Yesterday'
+  if (ts >= todayStart) return 'today'
+  if (ts >= todayStart - 86_400_000) return 'yesterday'
   return new Date(ts).toLocaleDateString([], { day: 'numeric', month: 'short' })
 }
 
@@ -56,7 +55,7 @@ export default function EarningsScreen() {
   const [period, setPeriod] = useState<Period>('today')
 
   const allOrders: CompletedOrder[] = useMemo(
-    () => (orderHistory.length > 0 ? orderHistory : MOCK_SHIFT_HISTORY),
+    () => orderHistory,
     [orderHistory],
   )
 
@@ -137,7 +136,7 @@ export default function EarningsScreen() {
         <Text style={[s.mainAmount, { color: c.text }]}>{total.toFixed(2)} PLN</Text>
         <View style={s.changeRow}>
           <Text style={[s.changePct, { color: changePositive ? c.success : c.danger }]}>
-            {changePositive ? '↑' : '↓'} {Math.abs(changePct).toFixed(1)}% vs prev period
+            {changePositive ? '↑' : '↓'} {Math.abs(changePct).toFixed(1)}% {t('vs_prev_period')}
           </Text>
         </View>
         <View style={s.statsRow}>
@@ -152,19 +151,19 @@ export default function EarningsScreen() {
       {!hasData ? (
         <View style={s.emptyBlock}>
           <Feather name="package" size={48} color={c.textMuted} />
-          <Text style={[s.emptyTitle, { color: c.secondary }]}>Ready for your first delivery</Text>
-          <Text style={[s.emptySub, { color: c.textMuted }]}>Completed orders and earnings will appear here</Text>
+          <Text style={[s.emptyTitle, { color: c.secondary }]}>{t('ready_first_delivery')}</Text>
+          <Text style={[s.emptySub, { color: c.textMuted }]}>{t('completed_orders_will_appear')}</Text>
         </View>
       ) : (
         <>
-          <Text style={[s.section, { color: c.text }]}>Platform Breakdown</Text>
+          <Text style={[s.section, { color: c.text }]}>{t('platform_breakdown')}</Text>
           {breakdown.map(([platform, data]) => (
             <View key={platform} style={[s.platformCard, { backgroundColor: c.surface, borderColor: c.separator }]}>
               <View style={s.platformRow}>
                 <PlatformIcon platform={platform as PlatformId} size={24} active />
                 <View style={s.platformInfo}>
                   <Text style={[s.platformName, { color: c.text }]}>{PLATFORM_LABEL[platform] ?? platform}</Text>
-                  <Text style={[s.platformSub, { color: c.secondary }]}>{data.orders} orders</Text>
+                  <Text style={[s.platformSub, { color: c.secondary }]}>{data.orders} {t('orders')}</Text>
                 </View>
                 <Text style={[s.platformEarnings, { color: c.text }]}>{data.earnings.toFixed(2)} PLN</Text>
               </View>
@@ -174,7 +173,7 @@ export default function EarningsScreen() {
             </View>
           ))}
 
-          <Text style={[s.section, { color: c.text }]}>Peak Hours</Text>
+          <Text style={[s.section, { color: c.text }]}>{t('peak_hours')}</Text>
           <View style={[s.peakCard, { backgroundColor: c.surface, borderColor: c.separator }]}>
             <View style={s.peakBars}>
               {Array.from({ length: 24 }, (_, h) => {
@@ -187,14 +186,14 @@ export default function EarningsScreen() {
                 )
               })}
             </View>
-            <Text style={[s.peakHint, { color: c.textMuted }]}>Highlighted: peak demand windows</Text>
+            <Text style={[s.peakHint, { color: c.textMuted }]}>{t('peak_windows_highlighted')}</Text>
           </View>
 
           <Text style={[s.section, { color: c.text }]}>{t('order_history')}</Text>
           {groupedHistory.map((group) => (
             <View key={group.dayTs}>
               <View style={[s.groupHeader, { borderBottomColor: c.separator }]}>
-                <Text style={[s.groupDate, { color: c.text }]}>{group.date}</Text>
+                <Text style={[s.groupDate, { color: c.text }]}>{group.date === 'today' || group.date === 'yesterday' ? t(group.date) : group.date}</Text>
                 <Text style={[s.groupTotal, { color: c.secondary }]}>{group.dayTotal.toFixed(2)} PLN</Text>
               </View>
               {group.orders.map((o) => (
