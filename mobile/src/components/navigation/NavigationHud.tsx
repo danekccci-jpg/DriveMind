@@ -50,12 +50,16 @@ type Props = {
   streetName: string
   timeLeftSeconds: number
   c: AppColors
-  phase: 'pickup' | 'dropoff' | null
+  /** Turn-by-turn vs stationary “at pickup” banner */
+  hudVariant: 'navigation' | 'atPickup'
   onPrimary: () => void
   timeLeftLabel: string
   arrivalLabel: string
-  primaryPickupLabel: string
-  primaryDropoffLabel: string
+  /** Dynamic CTA label from delivery phase */
+  primaryLabel: string
+  primaryDisabled?: boolean
+  atPickupTitle: string
+  atPickupSubtitle?: string
   /** Safe-area aware top offset for the instruction card */
   topInset: number
 }
@@ -66,15 +70,18 @@ function NavigationHudInner({
   streetName,
   timeLeftSeconds,
   c,
-  phase,
+  hudVariant,
   onPrimary,
   timeLeftLabel,
   arrivalLabel,
-  primaryPickupLabel,
-  primaryDropoffLabel,
+  primaryLabel,
+  primaryDisabled,
+  atPickupTitle,
+  atPickupSubtitle,
   topInset,
 }: Props) {
   const icon = maneuverToIcon(maneuver)
+  const navMode = hudVariant === 'navigation'
 
   return (
     <>
@@ -84,15 +91,33 @@ function NavigationHudInner({
           { backgroundColor: c.surface, borderColor: c.separator, top: topInset },
         ]}
       >
-        <View style={[styles.iconCircle, { backgroundColor: c.surfaceAlt }]}>
-          <MaterialCommunityIcons name={icon} size={36} color={ROUTE_STROKE_MAIN} />
-        </View>
-        <View style={styles.topTextCol}>
-          <Text style={[styles.nextDist, { color: c.text }]}>{distanceLine}</Text>
-          <Text style={[styles.street, { color: c.text }]} numberOfLines={2}>
-            {streetName || '—'}
-          </Text>
-        </View>
+        {navMode ? (
+          <>
+            <View style={[styles.iconCircle, { backgroundColor: c.surfaceAlt }]}>
+              <MaterialCommunityIcons name={icon} size={36} color={ROUTE_STROKE_MAIN} />
+            </View>
+            <View style={styles.topTextCol}>
+              <Text style={[styles.nextDist, { color: c.text }]}>{distanceLine}</Text>
+              <Text style={[styles.street, { color: c.text }]} numberOfLines={2}>
+                {streetName || '—'}
+              </Text>
+            </View>
+          </>
+        ) : (
+          <>
+            <View style={[styles.iconCircle, { backgroundColor: c.surfaceAlt }]}>
+              <MaterialCommunityIcons name="check-decagram" size={36} color={ROUTE_STROKE_MAIN} />
+            </View>
+            <View style={styles.topTextCol}>
+              <Text style={[styles.nextDist, { color: c.text }]}>{atPickupTitle}</Text>
+              {!!atPickupSubtitle && (
+                <Text style={[styles.street, { color: c.textMuted }]} numberOfLines={2}>
+                  {atPickupSubtitle}
+                </Text>
+              )}
+            </View>
+          </>
+        )}
       </View>
 
       <View
@@ -107,21 +132,28 @@ function NavigationHudInner({
       >
         <View style={styles.bottomMeta}>
           <Text style={[styles.metaLabel, { color: c.textMuted }]}>{timeLeftLabel}</Text>
-          <Text style={[styles.metaValue, { color: c.text }]}>{formatTimeLeft(timeLeftSeconds)}</Text>
+          <Text style={[styles.metaValue, { color: c.text }]}>
+            {navMode ? formatTimeLeft(timeLeftSeconds) : '—'}
+          </Text>
         </View>
         <View style={[styles.bottomDivider, { backgroundColor: c.separator }]} />
         <View style={styles.bottomMeta}>
           <Text style={[styles.metaLabel, { color: c.textMuted }]}>{arrivalLabel}</Text>
-          <Text style={[styles.metaValue, { color: c.text }]}>{formatArrival(timeLeftSeconds)}</Text>
+          <Text style={[styles.metaValue, { color: c.text }]}>
+            {navMode ? formatArrival(timeLeftSeconds) : '—'}
+          </Text>
         </View>
         <TouchableOpacity
-          style={[styles.finishBtn, { backgroundColor: ROUTE_STROKE_MAIN }]}
-          activeOpacity={0.75}
+          style={[
+            styles.finishBtn,
+            { backgroundColor: ROUTE_STROKE_MAIN },
+            primaryDisabled && styles.finishBtnDisabled,
+          ]}
+          activeOpacity={primaryDisabled ? 1 : 0.75}
           onPress={onPrimary}
+          disabled={primaryDisabled}
         >
-          <Text style={[styles.finishBtnText, { color: '#FFFFFF' }]}>
-            {phase === 'pickup' ? primaryPickupLabel : primaryDropoffLabel}
-          </Text>
+          <Text style={[styles.finishBtnText, { color: '#FFFFFF' }]}>{primaryLabel}</Text>
         </TouchableOpacity>
       </View>
     </>
@@ -197,5 +229,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  finishBtnDisabled: { opacity: 0.42 },
   finishBtnText: { fontSize: 14, fontWeight: '700', fontFamily: fonts.bold },
 })

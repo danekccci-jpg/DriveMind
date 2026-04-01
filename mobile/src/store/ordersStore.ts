@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { getDirections, type TravelMode, type RouteStep } from '../services/directionsService'
+import { navigationEngine } from '../services/navigationEngine'
 
 export interface Order {
   id: string
@@ -51,13 +52,14 @@ interface NavigationRoute {
 }
 
 const KRAKOW_FALLBACK_ORIGIN = { latitude: 50.0614, longitude: 19.9366 }
-export type LifecyclePhase =
-  | 'idle'
-  | 'awaitingConfirm'
-  | 'pickupRouting'
-  | 'pickupArrived'
-  | 'dropoffRouting'
-  | 'completed'
+
+/** Explicit delivery lifecycle for navigation UX and routing. */
+export type DeliveryPhase =
+  | 'IDLE'
+  | 'EN_ROUTE_TO_PICKUP'
+  | 'AT_PICKUP'
+  | 'EN_ROUTE_TO_DROPOFF'
+  | 'COMPLETED'
 
 function toRad(value: number): number {
   return (value * Math.PI) / 180
@@ -69,10 +71,20 @@ function distanceKm(lat1: number, lng1: number, lat2: number, lng2: number): num
   const dLng = toRad(lng2 - lng1)
   const a =
     Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
-    Math.sin(dLng / 2) * Math.sin(dLng / 2)
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) * Math.sin(dLng / 2)
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
   return earthRadiusKm * c
+}
+
+function emptyRouteState() {
+  return {
+    routePolyline: null as NavigationRoute[] | null,
+    currentStep: null as string | null,
+    routeDistance: null as string | null,
+    routeDuration: null as string | null,
+    routeSteps: null as RouteStep[] | null,
+    routeDurationSeconds: null as number | null,
+  }
 }
 
 interface OrdersState {
@@ -83,7 +95,9 @@ interface OrdersState {
   dailyGoal: number
   lastPlatformActivity: Record<string, number>
   isNavigating: boolean
+  /** Leg of journey for map layers & destination marker (pickup vs dropoff). */
   navigationPhase: 'pickup' | 'dropoff' | null
+  deliveryPhase: DeliveryPhase
   routePolyline: NavigationRoute[] | null
   currentStep: string | null
   routeDistance: string | null
@@ -92,7 +106,6 @@ interface OrdersState {
   routeDurationSeconds: number | null
   navigationOrderId: string | null
   lastNearestDistanceKm: number | null
-  lifecyclePhase: LifecyclePhase
 
   setPendingConfirmation: (order: Order | null) => void
   confirmOrder: (
@@ -117,7 +130,13 @@ interface OrdersState {
   stopNavigation: () => void
   startShiftManually: () => void
   endShiftManually: () => void
-  markPickupArrived: (orderId: string) => void
+  /** Driver is within 50 m of pickup — waiting to start delivery leg. */
+  arriveAtPickup: (orderId: string) => void
+  /** Clears route, fetches new directions from current GPS to dropoff. */
+  startDeliveryToDropoff: (
+    orderId: string,
+    options: { originLat: number; originLng: number; mode: TravelMode },
+  ) => Promise<void>
 }
 
 export const useOrdersStore = create<OrdersState>()(
@@ -131,6 +150,7 @@ export const useOrdersStore = create<OrdersState>()(
       lastPlatformActivity: {},
       isNavigating: false,
       navigationPhase: null,
+      deliveryPhase: 'IDLE',
       routePolyline: null,
       currentStep: null,
       routeDistance: null,
@@ -139,12 +159,12 @@ export const useOrdersStore = create<OrdersState>()(
       routeDurationSeconds: null,
       navigationOrderId: null,
       lastNearestDistanceKm: null,
-      lifecyclePhase: 'idle',
 
       setPendingConfirmation: (order) =>
         set({
           pendingConfirmation: order,
-          lifecyclePhase: order ? 'awaitingConfirm' : get().isNavigating ? get().lifecyclePhase : 'idle',
+          deliveryPhase:
+            order ? 'IDLE' : get().isNavigating ? get().deliveryPhase : 'IDLE',
         }),
 
       confirmOrder: async (order, options) => {
@@ -160,7 +180,7 @@ export const useOrdersStore = create<OrdersState>()(
           isNavigating: true,
           navigationPhase: 'pickup',
           navigationOrderId: order.id,
-          lifecyclePhase: 'pickupRouting',
+          deliveryPhase: 'EN_ROUTE_TO_PICKUP',
           shiftStats: {
             ...shiftStats,
             startTime: shiftStats.startTime ?? Date.now(),
@@ -215,6 +235,7 @@ export const useOrdersStore = create<OrdersState>()(
       rejectOrder: () => set({ pendingConfirmation: null }),
 
       completeOrder: (orderId) => {
+        navigationEngine.cancelPending()
         const { activeOrders, orderHistory, shiftStats } = get()
         const order = activeOrders.find((o) => o.id === orderId)
         if (!order) return
@@ -222,28 +243,49 @@ export const useOrdersStore = create<OrdersState>()(
 
         const completed: CompletedOrder = { ...order, status: 'completed', completedAt: Date.now() }
         const trimmedHistory = [completed, ...orderHistory].slice(0, 50)
+        const remaining = activeOrders.filter((o) => o.id !== orderId)
 
+        const nextStats: ShiftStats = {
+          ...shiftStats,
+          totalEarnings: shiftStats.totalEarnings + order.earnings,
+          totalKm: shiftStats.totalKm + order.distanceKm,
+          totalMinutes: shiftStats.totalMinutes + order.durationMin,
+          completedOrders: shiftStats.completedOrders + 1,
+          lastOrderDropoffLat: order.dropoffLat,
+          lastOrderDropoffLng: order.dropoffLng,
+        }
+
+        if (remaining.length === 0) {
+          set({
+            activeOrders: [],
+            orderHistory: trimmedHistory,
+            shiftStats: nextStats,
+            isNavigating: false,
+            navigationOrderId: null,
+            navigationPhase: null,
+            deliveryPhase: 'IDLE',
+            lastNearestDistanceKm: null,
+            ...emptyRouteState(),
+          })
+          return
+        }
+
+        const next = remaining[0]
         set({
-          activeOrders: activeOrders.filter((o) => o.id !== orderId),
+          activeOrders: remaining,
           orderHistory: trimmedHistory,
-          lifecyclePhase: activeOrders.length > 1 ? 'pickupRouting' : 'completed',
-          shiftStats: {
-            ...shiftStats,
-            totalEarnings: shiftStats.totalEarnings + order.earnings,
-            totalKm: shiftStats.totalKm + order.distanceKm,
-            totalMinutes: shiftStats.totalMinutes + order.durationMin,
-            completedOrders: shiftStats.completedOrders + 1,
-            lastOrderDropoffLat: order.dropoffLat,
-            lastOrderDropoffLng: order.dropoffLng,
-          },
+          shiftStats: nextStats,
+          navigationOrderId: next.id,
+          navigationPhase: next.status === 'dropoff' ? 'dropoff' : 'pickup',
+          deliveryPhase: next.status === 'dropoff' ? 'EN_ROUTE_TO_DROPOFF' : 'EN_ROUTE_TO_PICKUP',
+          lastNearestDistanceKm: null,
+          ...emptyRouteState(),
         })
       },
 
       setOrderStatus: (orderId, status) =>
         set((state) => ({
-          activeOrders: state.activeOrders.map((o) =>
-            o.id === orderId ? { ...o, status } : o,
-          ),
+          activeOrders: state.activeOrders.map((o) => (o.id === orderId ? { ...o, status } : o)),
         })),
 
       setDailyGoal: (dailyGoal) => set({ dailyGoal }),
@@ -253,10 +295,14 @@ export const useOrdersStore = create<OrdersState>()(
           isNavigating: true,
           navigationOrderId: order.id,
           navigationPhase: order.status === 'pickup' ? 'pickup' : 'dropoff',
+          deliveryPhase: order.status === 'pickup' ? 'EN_ROUTE_TO_PICKUP' : 'EN_ROUTE_TO_DROPOFF',
         }),
 
       recomputeNavigationTarget: (originLat, originLng, thresholdKm = 0.2) => {
-        const { activeOrders, navigationOrderId, lastNearestDistanceKm } = get()
+        const { activeOrders, navigationOrderId, lastNearestDistanceKm, deliveryPhase } = get()
+        if (deliveryPhase === 'AT_PICKUP') {
+          return navigationOrderId
+        }
         if (activeOrders.length === 0) {
           console.log('[DriveMind Nav]: no active orders; stopping navigation target')
           set({ navigationOrderId: null, navigationPhase: null, lastNearestDistanceKm: null })
@@ -265,12 +311,12 @@ export const useOrdersStore = create<OrdersState>()(
 
         const pickupOrders = activeOrders.filter((o) => o.status === 'pickup')
         const candidates = pickupOrders.length > 0 ? pickupOrders : activeOrders
-        const nearest = candidates.reduce<{ id: string; distance: number } | null>((best, order) => {
-          const targetLat = order.status === 'pickup' ? order.pickupLat : order.dropoffLat
-          const targetLng = order.status === 'pickup' ? order.pickupLng : order.dropoffLng
+        const nearest = candidates.reduce<{ id: string; distance: number } | null>((best, o) => {
+          const targetLat = o.status === 'pickup' ? o.pickupLat : o.dropoffLat
+          const targetLng = o.status === 'pickup' ? o.pickupLng : o.dropoffLng
           const currentDistance = distanceKm(originLat, originLng, targetLat, targetLng)
           if (!best || currentDistance < best.distance) {
-            return { id: order.id, distance: currentDistance }
+            return { id: o.id, distance: currentDistance }
           }
           return best
         }, null)
@@ -317,6 +363,7 @@ export const useOrdersStore = create<OrdersState>()(
           isNavigating: false,
           navigationOrderId: null,
           navigationPhase: null,
+          deliveryPhase: 'IDLE',
           routePolyline: null,
           currentStep: null,
           routeDistance: null,
@@ -324,7 +371,6 @@ export const useOrdersStore = create<OrdersState>()(
           routeSteps: null,
           routeDurationSeconds: null,
           lastNearestDistanceKm: null,
-          lifecyclePhase: 'idle',
         }),
 
       startShiftManually: () =>
@@ -343,14 +389,51 @@ export const useOrdersStore = create<OrdersState>()(
           },
         })),
 
-      markPickupArrived: (orderId) =>
-        set((state) => ({
-          activeOrders: state.activeOrders.map((o) =>
-            o.id === orderId ? { ...o, status: 'dropoff' } : o,
-          ),
+      arriveAtPickup: (orderId) => {
+        const { activeOrders, deliveryPhase } = get()
+        const o = activeOrders.find((x) => x.id === orderId)
+        if (!o || deliveryPhase !== 'EN_ROUTE_TO_PICKUP') return
+        set({ deliveryPhase: 'AT_PICKUP' })
+      },
+
+      startDeliveryToDropoff: async (orderId, options) => {
+        const state = get()
+        const order = state.activeOrders.find((o) => o.id === orderId)
+        if (!order || state.deliveryPhase !== 'AT_PICKUP') return
+
+        navigationEngine.cancelPending()
+        set({
+          activeOrders: state.activeOrders.map((o) => (o.id === orderId ? { ...o, status: 'dropoff' as const } : o)),
           navigationPhase: 'dropoff',
-          lifecyclePhase: 'dropoffRouting',
-        })),
+          deliveryPhase: 'EN_ROUTE_TO_DROPOFF',
+          ...emptyRouteState(),
+        })
+
+        try {
+          const route = await getDirections(
+            options.originLat,
+            options.originLng,
+            order.dropoffLat,
+            order.dropoffLng,
+            options.mode,
+          )
+          set({
+            routePolyline: route.polylinePoints,
+            currentStep: route.steps[0]?.instruction ?? '',
+            routeDistance: route.distanceText,
+            routeDuration: route.durationText,
+            routeSteps: route.steps.length > 0 ? route.steps : null,
+            routeDurationSeconds: route.durationSecondsTotal > 0 ? route.durationSecondsTotal : null,
+          })
+          console.log('[DriveMind Nav]: dropoff route ready', {
+            orderId,
+            points: route.polylinePoints.length,
+          })
+        } catch (error) {
+          console.error('[DriveMind Nav]: startDeliveryToDropoff failed', error)
+          throw error
+        }
+      },
     }),
     {
       name: 'drivemind-orders',
@@ -367,6 +450,7 @@ export const useOrdersStore = create<OrdersState>()(
         if (state) {
           state.isNavigating = false
           state.navigationPhase = null
+          state.deliveryPhase = 'IDLE'
           state.routePolyline = null
           state.currentStep = null
           state.routeDistance = null
@@ -375,7 +459,6 @@ export const useOrdersStore = create<OrdersState>()(
           state.routeDurationSeconds = null
           state.navigationOrderId = null
           state.lastNearestDistanceKm = null
-          state.lifecyclePhase = 'idle'
         }
       },
     },

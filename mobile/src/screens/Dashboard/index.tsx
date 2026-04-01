@@ -104,10 +104,10 @@ export default function DashboardScreen() {
   const role = useRoleStore((st) => st.role) ?? 'courier'
   const vehicleType = useRoleStore((st) => st.vehicleType)
   const {
-    shiftStats, dailyGoal, isNavigating, navigationPhase, routePolyline,
+    shiftStats, dailyGoal, isNavigating, navigationPhase, deliveryPhase, routePolyline,
     currentStep, routeDistance, routeDuration, routeSteps, routeDurationSeconds, pendingConfirmation,
     activeOrders, setPendingConfirmation,
-    confirmOrder, rejectOrder, completeOrder, markPickupArrived,
+    confirmOrder, rejectOrder, completeOrder, arriveAtPickup, startDeliveryToDropoff,
     updateNavigationPhase, stopNavigation, recomputeNavigationTarget, updateNavigationRoute,
   } = useOrdersStore()
   const navigationOrderId = useOrdersStore((s) => s.navigationOrderId)
@@ -126,6 +126,7 @@ export default function DashboardScreen() {
   const introTimersRef = useRef<{ t1?: ReturnType<typeof setTimeout>; t2?: ReturnType<typeof setTimeout> }>({})
   const [navFollowReady, setNavFollowReady] = useState(false)
   const lastOffRouteForceRef = useRef(0)
+  const skipEngineAfterDropoffRouteRef = useRef(false)
   const destPulse = useRef(new Animated.Value(1)).current
   const userLocationRef = useRef<LatLng | null>(null)
   const smoothHeadingRef = useRef(0)
@@ -148,10 +149,13 @@ export default function DashboardScreen() {
 
   const destCoordNav: LatLng | null = useMemo(() => {
     if (!isNavigating || !activeOrder) return null
-    return navigationPhase === 'pickup'
-      ? { latitude: activeOrder.pickupLat, longitude: activeOrder.pickupLng }
-      : { latitude: activeOrder.dropoffLat, longitude: activeOrder.dropoffLng }
-  }, [isNavigating, activeOrder, navigationPhase])
+    const toPickup =
+      deliveryPhase === 'EN_ROUTE_TO_PICKUP' || deliveryPhase === 'AT_PICKUP'
+    if (toPickup) {
+      return { latitude: activeOrder.pickupLat, longitude: activeOrder.pickupLng }
+    }
+    return { latitude: activeOrder.dropoffLat, longitude: activeOrder.dropoffLng }
+  }, [isNavigating, activeOrder, deliveryPhase])
 
   const trimmedRoute = useMemo(() => {
     if (!isNavigating || !userLocation || routePolylineSafe.length < 2) return routePolylineSafe
@@ -174,6 +178,14 @@ export default function DashboardScreen() {
   )
   const streetTitle = extractStreetName(routeSteps?.[0]?.instruction ?? currentStep ?? '')
   const timeLeftSeconds = routeDurationSeconds ?? 0
+
+  const hudVariant = deliveryPhase === 'AT_PICKUP' ? 'atPickup' : 'navigation'
+  const navPrimaryLabel = useMemo(() => {
+    if (deliveryPhase === 'EN_ROUTE_TO_PICKUP') return t('reached_pickup')
+    if (deliveryPhase === 'AT_PICKUP') return t('nav_start_delivery')
+    return t('nav_finish')
+  }, [deliveryPhase, t])
+  const navPrimaryDisabled = deliveryPhase === 'EN_ROUTE_TO_PICKUP' && !nearDestination
 
   useEffect(() => {
     userLocationRef.current = userLocation
@@ -285,28 +297,57 @@ export default function DashboardScreen() {
 
   const handleConfirmNo = useCallback(() => { rejectOrder() }, [rejectOrder])
 
-  const handleReachedPickup = useCallback(() => {
-    if (!activeOrder) return
-    console.log('[DriveMind Nav]: pickup confirmed', { orderId: activeOrder.id })
-    markPickupArrived(activeOrder.id)
-  }, [activeOrder, markPickupArrived])
-
   const handleCompleteOrder = useCallback(() => {
     if (!activeOrder) return
     console.log('[DriveMind Nav]: destination reached; completing order', { orderId: activeOrder.id })
     completeOrder(activeOrder.id)
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
-    const remainingOrders = useOrdersStore.getState().activeOrders.filter((o) => o.id !== activeOrder.id)
-    if (remainingOrders.length === 0) {
-      console.log('[DriveMind Nav]: no remaining orders; navigation stop')
-      stopNavigation()
-    }
-  }, [activeOrder, completeOrder, stopNavigation])
+  }, [activeOrder, completeOrder])
 
   const onNavPrimary = useCallback(() => {
-    if (navigationPhase === 'pickup') handleReachedPickup()
-    else handleCompleteOrder()
-  }, [navigationPhase, handleReachedPickup, handleCompleteOrder])
+    if (!activeOrder) return
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
+
+    if (deliveryPhase === 'EN_ROUTE_TO_PICKUP') {
+      if (!nearDestination) return
+      arriveAtPickup(activeOrder.id)
+      return
+    }
+    if (deliveryPhase === 'AT_PICKUP') {
+      if (!userLocation) {
+        Alert.alert('', t('nav_need_location'))
+        return
+      }
+      const mode = getTravelModeByVehicle(vehicleType, role)
+      void (async () => {
+        try {
+          await startDeliveryToDropoff(activeOrder.id, {
+            originLat: userLocation.latitude,
+            originLng: userLocation.longitude,
+            mode,
+          })
+          skipEngineAfterDropoffRouteRef.current = true
+        } catch (e) {
+          const message = e instanceof Error ? e.message : String(e)
+          Alert.alert('Directions', message)
+        }
+      })()
+      return
+    }
+    if (deliveryPhase === 'EN_ROUTE_TO_DROPOFF') {
+      handleCompleteOrder()
+    }
+  }, [
+    activeOrder,
+    deliveryPhase,
+    nearDestination,
+    userLocation,
+    vehicleType,
+    role,
+    arriveAtPickup,
+    startDeliveryToDropoff,
+    handleCompleteOrder,
+    t,
+  ])
 
   const onPerspectiveToggle = useCallback(
     (perspective3d: boolean) => {
@@ -334,15 +375,21 @@ export default function DashboardScreen() {
 
   useEffect(() => {
     if (!isNavigating || !userLocation) return
+    if (deliveryPhase === 'AT_PICKUP') return
     const selectedId = recomputeNavigationTarget(userLocation.latitude, userLocation.longitude, 0.25)
     if (!selectedId) {
       stopNavigation()
     }
-  }, [activeOrders, userLocation, isNavigating, recomputeNavigationTarget, stopNavigation])
+  }, [activeOrders, userLocation, isNavigating, deliveryPhase, recomputeNavigationTarget, stopNavigation])
 
   useEffect(() => {
     const target = activeOrder
     if (!isNavigating || !target || !userLocation) return
+    if (deliveryPhase === 'AT_PICKUP') return
+    if (skipEngineAfterDropoffRouteRef.current) {
+      skipEngineAfterDropoffRouteRef.current = false
+      return
+    }
     const destination =
       target.status === 'pickup'
         ? { latitude: target.pickupLat, longitude: target.pickupLng }
@@ -373,7 +420,16 @@ export default function DashboardScreen() {
       },
       onError: (err) => console.warn('Directions fetch failed:', err),
     })
-  }, [isNavigating, activeOrder, userLocation, vehicleType, role, updateNavigationRoute, updateNavigationPhase])
+  }, [
+    isNavigating,
+    activeOrder,
+    userLocation,
+    vehicleType,
+    role,
+    deliveryPhase,
+    updateNavigationRoute,
+    updateNavigationPhase,
+  ])
 
   useEffect(() => {
     if (isNavigating) return
@@ -440,6 +496,7 @@ export default function DashboardScreen() {
 
   useEffect(() => {
     if (!isNavigating || !userLocation || !activeOrder || routePolylineSafe.length < 2) return
+    if (deliveryPhase === 'AT_PICKUP') return
     const d = distancePointToPolylineMeters(userLocation, routePolylineSafe)
     if (d <= 50) return
     if (Date.now() - lastOffRouteForceRef.current < 10_000) return
@@ -476,6 +533,7 @@ export default function DashboardScreen() {
     role,
     updateNavigationRoute,
     updateNavigationPhase,
+    deliveryPhase,
   ])
 
   useEffect(() => {
@@ -485,10 +543,10 @@ export default function DashboardScreen() {
         {
           latitude: userLocation.latitude,
           longitude: userLocation.longitude,
-          latitudeDelta: 0.02,
-          longitudeDelta: 0.02,
+          latitudeDelta: 0.035,
+          longitudeDelta: 0.035,
         },
-        500,
+        600,
       )
     }
   }, [isNavigating, userLocation])
@@ -601,12 +659,14 @@ export default function DashboardScreen() {
             streetName={streetTitle}
             timeLeftSeconds={timeLeftSeconds}
             c={c}
-            phase={navigationPhase}
+            hudVariant={hudVariant}
             onPrimary={onNavPrimary}
             timeLeftLabel={t('nav_time_left')}
             arrivalLabel={t('nav_arrival')}
-            primaryPickupLabel={t('reached_pickup')}
-            primaryDropoffLabel={t('nav_finish')}
+            primaryLabel={navPrimaryLabel}
+            primaryDisabled={navPrimaryDisabled}
+            atPickupTitle={t('nav_at_pickup_banner')}
+            atPickupSubtitle={activeOrder.pickupAddress}
             topInset={insets.top + 28}
           />
         </View>
