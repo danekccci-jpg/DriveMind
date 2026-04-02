@@ -1,6 +1,6 @@
 import { getDirections, type TravelMode, type RouteStep } from './directionsService'
-
-type LatLng = { latitude: number; longitude: number }
+import { emitDriverLocation } from './socketService'
+import { haversineMeters, smallestHeadingDeltaDeg, type LatLng } from '../navigation/navigationGeometry'
 
 export interface NavigationRoutePayload {
   polyline: LatLng[]
@@ -37,6 +37,11 @@ function distanceKm(a: LatLng, b: LatLng): number {
   return earthRadiusKm * c
 }
 
+const MIN_MOVE_EMIT_M = 5
+const MIN_HEADING_DELTA_DEG = 10
+/** Ensures a heartbeat at least every minute if the filter blocks all samples. */
+const MAX_EMIT_INTERVAL_MS = 60_000
+
 class NavigationEngine {
   private debounceTimer: ReturnType<typeof setTimeout> | null = null
   private lastRunAt = 0
@@ -48,16 +53,86 @@ class NavigationEngine {
   private readonly minIntervalMs = 1600
   private readonly minDistanceDeltaKm = 0.08
 
+  private lastEmitLat: number | null = null
+  private lastEmitLng: number | null = null
+  private lastEmitHeading: number | null = null
+  private lastEmitAtMs = 0
+
+  /**
+   * Distance + heading-based emit (≥5 m or ≥10°), with a 60s safety heartbeat.
+   * Queues via socketService when disconnected.
+   */
+  reportDriverLocation(payload: {
+    lat: number
+    lng: number
+    heading: number | null
+    speed: number | null
+    isOnline: boolean
+  }): void {
+    if (!payload.isOnline) return
+
+    const now = Date.now()
+    const here: LatLng = { latitude: payload.lat, longitude: payload.lng }
+
+    const isFirst = this.lastEmitLat == null || this.lastEmitLng == null
+    let movedM = 0
+    if (!isFirst) {
+      movedM = haversineMeters(
+        { latitude: this.lastEmitLat!, longitude: this.lastEmitLng! },
+        here,
+      )
+    }
+
+    let headingDelta = 0
+    if (payload.heading != null && payload.heading >= 0 && this.lastEmitHeading != null) {
+      headingDelta = smallestHeadingDeltaDeg(payload.heading, this.lastEmitHeading)
+    }
+
+    const movedEnough = movedM >= MIN_MOVE_EMIT_M
+    const headingEnough =
+      payload.heading != null &&
+      payload.heading >= 0 &&
+      this.lastEmitHeading != null &&
+      headingDelta >= MIN_HEADING_DELTA_DEG
+    const firstHeading =
+      payload.heading != null && payload.heading >= 0 && this.lastEmitHeading == null
+    const timeSafety = now - this.lastEmitAtMs >= MAX_EMIT_INTERVAL_MS
+
+    if (!isFirst && !movedEnough && !headingEnough && !firstHeading && !timeSafety) {
+      return
+    }
+
+    this.lastEmitLat = payload.lat
+    this.lastEmitLng = payload.lng
+    if (payload.heading != null && payload.heading >= 0) {
+      this.lastEmitHeading = payload.heading
+    }
+    this.lastEmitAtMs = now
+
+    emitDriverLocation({
+      lat: payload.lat,
+      lng: payload.lng,
+      heading: payload.heading,
+      speed: payload.speed,
+    })
+  }
+
+  /** Call when ending a shift or going offline so the next fix is not suppressed. */
+  resetLocationEmitFilter(): void {
+    this.lastEmitLat = null
+    this.lastEmitLng = null
+    this.lastEmitHeading = null
+    this.lastEmitAtMs = 0
+  }
+
   cancelPending(): void {
     if (this.debounceTimer) {
       clearTimeout(this.debounceTimer)
       this.debounceTimer = null
     }
-    // Logical cancellation: older promises are ignored by seq checks
     this.requestSeq += 1
   }
 
-  /** Bypass debounce/throttle (e.g. off-route > 50 m). */
   forceRefresh(params: RouteRefreshParams): void {
     this.cancelPending()
     void this.run(params)
@@ -130,4 +205,3 @@ class NavigationEngine {
 }
 
 export const navigationEngine = new NavigationEngine()
-

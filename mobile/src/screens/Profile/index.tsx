@@ -6,6 +6,7 @@ import {
   ScrollView,
   TouchableOpacity,
   TextInput,
+  Switch,
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useNavigation } from '@react-navigation/native'
@@ -15,6 +16,7 @@ import i18n from '../../i18n'
 import * as Haptics from 'expo-haptics'
 
 import { useRoleStore } from '../../store/roleStore'
+import { useDriverSessionStore } from '../../store/driverSessionStore'
 import { useThemeStore } from '../../store/themeStore'
 import { useLanguageStore } from '../../store/languageStore'
 import { useColors, type AppColors } from '../../theme/theme'
@@ -66,6 +68,9 @@ export default function ProfileScreen() {
   const setVehicleType = useRoleStore((s) => s.setVehicleType)
   const setFuelConsumption = useRoleStore((s) => s.setFuelConsumption)
 
+  const isOnline = useDriverSessionStore((s) => s.isOnline)
+  const setIsOnline = useDriverSessionStore((s) => s.setIsOnline)
+
   const themeMode = useThemeStore((s) => s.theme)
   const toggleTheme = useThemeStore((s) => s.toggleTheme)
   const { language, setLanguage } = useLanguageStore()
@@ -106,6 +111,25 @@ export default function ProfileScreen() {
             </View>
             <Text style={[s.memberSince, { color: c.textSecondary }]}>Member since March 2026</Text>
           </View>
+        </View>
+      </View>
+
+      <SectionLabel label={t('availability_section')} color={c.textMuted} />
+      <View style={[s.settingsCard, { backgroundColor: c.surface, borderColor: c.border, marginBottom: 16 }]}>
+        <View style={s.availabilityRow}>
+          <View style={{ flex: 1, paddingRight: 12 }}>
+            <Text style={[s.availTitle, { color: c.text }]}>{t('driver_online')}</Text>
+            <Text style={[s.availSub, { color: c.textSecondary }]}>{t('driver_online_desc')}</Text>
+          </View>
+          <Switch
+            value={isOnline}
+            onValueChange={(v) => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+              setIsOnline(v)
+            }}
+            trackColor={{ false: c.border, true: c.primaryDim }}
+            thumbColor={isOnline ? c.primary : c.surfaceAlt}
+          />
         </View>
       </View>
 
@@ -329,6 +353,15 @@ const s = StyleSheet.create({
   rolePill: { borderRadius: 10, paddingHorizontal: 8, paddingVertical: 2 },
   rolePillText: { fontSize: 11, fontFamily: fonts.medium, textTransform: 'capitalize' },
   memberSince: { fontSize: 13, fontFamily: fonts.regular },
+  availabilityRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+  },
+  availTitle: { fontSize: 15, fontFamily: fonts.medium, marginBottom: 2 },
+  availSub: { fontSize: 12, fontFamily: fonts.regular, lineHeight: 16 },
   sectionLabel: { fontSize: 11, fontFamily: fonts.medium, letterSpacing: 0.8, textTransform: 'uppercase', marginBottom: 10, marginTop: 4 },
   roleRow: { flexDirection: 'row', gap: 10, marginBottom: 16 },
   roleCard: { flex: 1, borderWidth: 1, borderRadius: 12, padding: 14, alignItems: 'flex-start', gap: 4 },

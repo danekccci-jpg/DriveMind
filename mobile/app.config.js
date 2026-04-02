@@ -6,6 +6,11 @@ module.exports = ({ config }) => {
   const merged = { ...config, ...base.expo }
   return {
     ...merged,
+    extra: {
+      ...(merged.extra || {}),
+      /** Socket.io / API base; also set EXPO_PUBLIC_BACKEND_URL for Metro. */
+      backendUrl: process.env.EXPO_PUBLIC_BACKEND_URL ?? process.env.BACKEND_URL ?? '',
+    },
     android: {
       ...merged.android,
       config: {

@@ -10,6 +10,7 @@ import {
   Alert,
   Animated,
   Platform,
+  ScrollView,
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useTranslation } from 'react-i18next'
@@ -22,6 +23,7 @@ import { NavigationMapLayers } from '../../components/navigation/NavigationMapLa
 import { NavigationHud } from '../../components/navigation/NavigationHud'
 import { PlayerNavMarker } from '../../components/navigation/PlayerNavMarker'
 import { MapControls } from '../../components/map/MapControls'
+import { RouteSummary } from '../../components/RouteSummary'
 import { formatNavDistanceLine } from '../../navigation/navigationFormatting'
 import { useNavigationSettingsStore } from '../../store/navigationSettingsStore'
 import {
@@ -42,6 +44,7 @@ import { getDashboardSuggestionOrder } from '../../data/mockOrders'
 import { openPlatformDeepLink } from '../../utils/platformDeepLink'
 import { getTravelModeByVehicle } from '../../services/directionsService'
 import { navigationEngine } from '../../services/navigationEngine'
+import { useDriverSessionStore } from '../../store/driverSessionStore'
 import { fonts } from '../../theme/typography'
 import { useTheme, type AppColors } from '../../theme/theme'
 import { ProfitLabel } from '../../engine/profitEngine'
@@ -111,6 +114,7 @@ export default function DashboardScreen() {
     updateNavigationPhase, stopNavigation, recomputeNavigationTarget, updateNavigationRoute,
   } = useOrdersStore()
   const navigationOrderId = useOrdersStore((s) => s.navigationOrderId)
+  const isDriverOnline = useDriverSessionStore((s) => s.isOnline)
 
   const [userLocation, setUserLocation] = useState<LatLng | null>(null)
   const [userSpeedMps, setUserSpeedMps] = useState<number | null>(null)
@@ -146,6 +150,13 @@ export default function DashboardScreen() {
   )
   const routePolylineSafe = routePolyline ?? []
   const suggestion = activeOrder ?? getDashboardSuggestionOrder(role as 'courier' | 'taxi')
+
+  const mapControlsBottomOffset = useMemo(() => {
+    const base = insets.bottom + 168
+    const extra =
+      isNavigating && activeOrder?.dropoffAddress?.trim() ? 48 : 0
+    return base + extra
+  }, [insets.bottom, isNavigating, activeOrder?.dropoffAddress])
 
   const destCoordNav: LatLng | null = useMemo(() => {
     if (!isNavigating || !activeOrder) return null
@@ -243,6 +254,17 @@ export default function DashboardScreen() {
       headingSub?.remove()
     }
   }, [])
+
+  useEffect(() => {
+    if (!userLocation) return
+    navigationEngine.reportDriverLocation({
+      lat: userLocation.latitude,
+      lng: userLocation.longitude,
+      heading: userHeadingDeg,
+      speed: userSpeedMps,
+      isOnline: isDriverOnline,
+    })
+  }, [userLocation, userHeadingDeg, userSpeedMps, isDriverOnline])
 
   useEffect(() => {
     const handler = (next: AppStateStatus) => {
@@ -650,7 +672,7 @@ export default function DashboardScreen() {
             userLocation={userLocation}
             smoothHeading={smoothHeading}
             isDark={isDark}
-            bottomOffset={insets.bottom + 168}
+            bottomOffset={mapControlsBottomOffset}
             onPerspectiveToggle={onPerspectiveToggle}
           />
           <NavigationHud
@@ -668,6 +690,7 @@ export default function DashboardScreen() {
             atPickupTitle={t('nav_at_pickup_banner')}
             atPickupSubtitle={activeOrder.pickupAddress}
             topInset={insets.top + 28}
+            finalDestinationLine={activeOrder.dropoffAddress?.trim() || undefined}
           />
         </View>
       )}
@@ -675,7 +698,9 @@ export default function DashboardScreen() {
       {/* Header */}
       {!isNavigating && (
         <View style={[s.header, { top: insets.top + 16 }]}>
-          <Text style={[s.headerTitle, { color: c.text }]}>DriveMind</Text>
+          <View style={s.headerLeft}>
+            <Text style={[s.headerTitle, { color: c.text }]}>DriveMind</Text>
+          </View>
           <View style={[s.rolePill, { backgroundColor: c.surface, borderColor: c.border }]}>
             <MaterialCommunityIcons name={role === 'courier' ? 'bike' : 'car-outline'} size={14} color={c.secondary} />
             <Text style={[s.rolePillText, { color: c.text }]}>{role}</Text>
@@ -705,8 +730,14 @@ export default function DashboardScreen() {
               <ProfitBadge label={suggestion.profitLabel as ProfitLabel} />
               <Text style={[s.suggPrice, { color: c.text }]}>{suggestion.earnings.toFixed(0)} PLN</Text>
             </View>
-            <Text style={[s.addressLabel, { color: c.textMuted }]}>{t('pickup').toUpperCase()}</Text>
-            <Text style={[s.addressValue, { color: c.text }]} numberOfLines={1}>{suggestion.pickupAddress}</Text>
+            <View style={s.suggRoute}>
+              <RouteSummary
+                compact
+                pickupAddress={suggestion.pickupAddress}
+                dropoffAddress={suggestion.dropoffAddress}
+                distanceKm={suggestion.distanceKm}
+              />
+            </View>
             <View style={s.pillRow}>
               <Pill label={`${suggestion.distanceKm.toFixed(1)} km`} c={c} />
               <Pill label={`${suggestion.durationMin} min`} c={c} />
@@ -727,9 +758,13 @@ export default function DashboardScreen() {
               <>
                 <PlatformIcon platform={pendingConfirmation.platform as any} size={48} active />
                 <Text style={[s.modalTitle, { color: c.text }]}>{t('order_accepted_title')}</Text>
-                <Text style={[s.modalAddress, { color: c.textSecondary }]} numberOfLines={2}>{pendingConfirmation.pickupAddress}</Text>
-                <Text style={[s.modalArrow, { color: c.textMuted }]}>→</Text>
-                <Text style={[s.modalAddress, { color: c.textSecondary }]} numberOfLines={2}>{pendingConfirmation.dropoffAddress}</Text>
+                <ScrollView style={s.modalRoute} nestedScrollEnabled showsVerticalScrollIndicator={false}>
+                  <RouteSummary
+                    pickupAddress={pendingConfirmation.pickupAddress}
+                    dropoffAddress={pendingConfirmation.dropoffAddress}
+                    distanceKm={pendingConfirmation.distanceKm}
+                  />
+                </ScrollView>
                 <View style={s.modalBtns}>
                   <TouchableOpacity style={[s.modalBtnYes, { backgroundColor: c.primary }]} activeOpacity={0.8} onPress={handleConfirmYes}>
                     <Text style={[s.modalBtnYesText, { color: c.textInverse }]}>{t('yes')}</Text>
@@ -760,6 +795,7 @@ const s = StyleSheet.create({
   root: { flex: 1 },
   mapFill: { flex: 1, width: '100%' },
   header: { position: 'absolute', left: 20, right: 20, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   headerTitle: { fontSize: 17, fontWeight: '600', fontFamily: fonts.semiBold },
   rolePill: { flexDirection: 'row', alignItems: 'center', gap: 6, borderWidth: 1, borderRadius: 20, paddingHorizontal: 12, paddingVertical: 5 },
   rolePillText: { fontSize: 12, fontFamily: fonts.medium, textTransform: 'capitalize' },
@@ -772,7 +808,8 @@ const s = StyleSheet.create({
   statValue: { fontSize: 26, fontWeight: '700', fontFamily: fonts.bold },
   statValueCompact: { fontSize: 20, fontWeight: '700', fontFamily: fonts.bold },
   suggCard: { borderWidth: 1, borderRadius: 12, padding: 12, marginBottom: 6 },
-  suggHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
+  suggHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 },
+  suggRoute: { width: '100%', marginBottom: 4 },
   suggPlatform: { flex: 1, fontSize: 15, fontWeight: '600', fontFamily: fonts.semiBold },
   suggPrice: { fontSize: 18, fontWeight: '700', fontFamily: fonts.bold },
   addressLabel: { fontSize: 11, fontFamily: fonts.regular, letterSpacing: 0.5, marginBottom: 3 },
@@ -785,6 +822,7 @@ const s = StyleSheet.create({
   modalOverlay: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
   modalCard: { borderRadius: 16, padding: 24, width: '100%', alignItems: 'center', gap: 10 },
   modalTitle: { fontSize: 18, fontWeight: '600', fontFamily: fonts.semiBold, marginTop: 6 },
+  modalRoute: { width: '100%', maxHeight: 320, marginVertical: 4 },
   modalAddress: { fontSize: 14, fontFamily: fonts.regular, textAlign: 'center' },
   modalArrow: { fontSize: 16 },
   modalBtns: { flexDirection: 'row', gap: 12, marginTop: 8, width: '100%' },

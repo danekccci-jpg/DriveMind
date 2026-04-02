@@ -3,6 +3,9 @@ import { persist, createJSONStorage } from 'zustand/middleware'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { getDirections, type TravelMode, type RouteStep } from '../services/directionsService'
 import { navigationEngine } from '../services/navigationEngine'
+import { emitOrderAccepted, clearPendingDriverLocation } from '../services/socketService'
+import { useWalletStore } from './walletStore'
+import { playWalletCreditSound } from '../services/walletSound'
 
 export interface Order {
   id: string
@@ -217,6 +220,7 @@ export const useOrdersStore = create<OrdersState>()(
             routeSteps: route.steps.length > 0 ? route.steps : null,
             routeDurationSeconds: route.durationSecondsTotal > 0 ? route.durationSecondsTotal : null,
           })
+          emitOrderAccepted(order.id)
           console.log('[DriveMind Store]: State updated with polyline length:', route.polylinePoints.length)
           console.log('[DriveMind Nav]: pickup route ready', {
             points: route.polylinePoints.length,
@@ -255,7 +259,16 @@ export const useOrdersStore = create<OrdersState>()(
           lastOrderDropoffLng: order.dropoffLng,
         }
 
+        useWalletStore.getState().recordOrderPayout(order.id, order.earnings, {
+          pickupAddress: order.pickupAddress,
+          dropoffAddress: order.dropoffAddress,
+          distanceKm: order.distanceKm,
+        })
+        void playWalletCreditSound()
+
         if (remaining.length === 0) {
+          navigationEngine.resetLocationEmitFilter()
+          clearPendingDriverLocation()
           set({
             activeOrders: [],
             orderHistory: trimmedHistory,
@@ -358,7 +371,9 @@ export const useOrdersStore = create<OrdersState>()(
           }),
         }),
 
-      stopNavigation: () =>
+      stopNavigation: () => {
+        navigationEngine.resetLocationEmitFilter()
+        clearPendingDriverLocation()
         set({
           isNavigating: false,
           navigationOrderId: null,
@@ -371,7 +386,8 @@ export const useOrdersStore = create<OrdersState>()(
           routeSteps: null,
           routeDurationSeconds: null,
           lastNearestDistanceKm: null,
-        }),
+        })
+      },
 
       startShiftManually: () =>
         set((state) => ({
@@ -436,7 +452,7 @@ export const useOrdersStore = create<OrdersState>()(
       },
     }),
     {
-      name: 'drivemind-orders',
+      name: 'drivemind-orders-v2',
       storage: createJSONStorage(() => AsyncStorage),
       partialize: (state) => ({
         activeOrders: state.activeOrders,
@@ -445,9 +461,37 @@ export const useOrdersStore = create<OrdersState>()(
         dailyGoal: state.dailyGoal,
         lastPlatformActivity: state.lastPlatformActivity,
         pendingConfirmation: state.pendingConfirmation,
+        isNavigating: state.isNavigating,
+        navigationPhase: state.navigationPhase,
+        deliveryPhase: state.deliveryPhase,
+        navigationOrderId: state.navigationOrderId,
       }),
       onRehydrateStorage: () => (state) => {
-        if (state) {
+        if (!state) return
+        const id = state.navigationOrderId
+        const orderOk = !!(id && state.activeOrders?.some((o) => o.id === id))
+        const phase = state.deliveryPhase
+        const recover =
+          orderOk &&
+          (phase === 'EN_ROUTE_TO_PICKUP' ||
+            phase === 'AT_PICKUP' ||
+            phase === 'EN_ROUTE_TO_DROPOFF')
+
+        if (recover) {
+          state.isNavigating = true
+          state.routePolyline = null
+          state.currentStep = null
+          state.routeDistance = null
+          state.routeDuration = null
+          state.routeSteps = null
+          state.routeDurationSeconds = null
+          state.lastNearestDistanceKm = null
+          state.pendingConfirmation = null
+          console.log('[DriveMind Store]: rehydrated active navigation; route will be refetched', {
+            deliveryPhase: phase,
+            orderId: id,
+          })
+        } else {
           state.isNavigating = false
           state.navigationPhase = null
           state.deliveryPhase = 'IDLE'

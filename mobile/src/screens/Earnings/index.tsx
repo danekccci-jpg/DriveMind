@@ -1,271 +1,372 @@
-import React, { useMemo, useState } from 'react'
+import React, { useMemo, useState, useCallback } from 'react'
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  Dimensions,
+  Platform,
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useTranslation } from 'react-i18next'
-import { Feather } from '@expo/vector-icons'
-import * as Haptics from 'expo-haptics'
+import { Feather, MaterialCommunityIcons } from '@expo/vector-icons'
 
-import PlatformIcon from '../../components/PlatformIcon'
-import { useOrdersStore, CompletedOrder } from '../../store/ordersStore'
+import {
+  useWalletStore,
+  selectTodayEarnings,
+  selectWeeklyEarnings,
+  type WalletTransaction,
+} from '../../store/walletStore'
+import { formatPln } from '../../utils/formatCurrency'
 import { fonts } from '../../theme/typography'
-import { useColors, type AppColors } from '../../theme/theme'
+import { RouteSummary } from '../../components/RouteSummary'
+import { useTheme } from '../../theme/theme'
 
-type Period = 'today' | 'week' | 'month'
-type PlatformId = 'glovo' | 'uber' | 'bolt' | 'wolt'
-
-const { width: SCREEN_W } = Dimensions.get('window')
-const H_PAD = 20
-const PLATFORM_LABEL: Record<string, string> = { glovo: 'Glovo', uber: 'Uber', bolt: 'Bolt', wolt: 'Wolt' }
-
-const PEAK_RANGES: [number, number][] = [[12, 14], [18, 21]]
-function isPeakHour(h: number) { return PEAK_RANGES.some(([s, e]) => h >= s && h < e) }
-
-function periodStart(period: Period): number {
-  const now = new Date()
-  if (period === 'today') return new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
-  if (period === 'week') { const d = new Date(now); d.setDate(d.getDate() - 6); d.setHours(0, 0, 0, 0); return d.getTime() }
-  const d = new Date(now); d.setDate(d.getDate() - 29); d.setHours(0, 0, 0, 0); return d.getTime()
-}
-
-function formatGroupDate(ts: number): string {
-  const now = new Date()
-  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
-  if (ts >= todayStart) return 'today'
-  if (ts >= todayStart - 86_400_000) return 'yesterday'
-  return new Date(ts).toLocaleDateString([], { day: 'numeric', month: 'short' })
-}
-
-function dayStart(ts: number): number {
-  const d = new Date(ts)
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
-}
+const SCREEN_BG = '#F5F6FA'
+const CARD = '#FFFFFF'
+const DEEP_BLUE = '#1A5CFF'
+const AMOUNT_GREEN = '#16A34A'
 
 export default function EarningsScreen() {
   const { t } = useTranslation()
   const insets = useSafeAreaInsets()
-  const c = useColors()
-  const { orderHistory } = useOrdersStore()
-  const [period, setPeriod] = useState<Period>('today')
+  const { isDark } = useTheme()
+  const totalBalance = useWalletStore((s) => s.totalBalance)
+  const transactions = useWalletStore((s) => s.transactions)
 
-  const allOrders: CompletedOrder[] = useMemo(
-    () => orderHistory,
-    [orderHistory],
-  )
+  const todayEarnings = useMemo(() => selectTodayEarnings(transactions), [transactions])
+  const weeklyEarnings = useMemo(() => selectWeeklyEarnings(transactions), [transactions])
 
-  const filtered = useMemo(() => {
-    const start = periodStart(period)
-    return allOrders.filter((o) => o.completedAt >= start)
-  }, [allOrders, period])
+  const [expandedTxId, setExpandedTxId] = useState<string | null>(null)
+  const toggleTx = useCallback((id: string) => {
+    setExpandedTxId((prev) => (prev === id ? null : id))
+  }, [])
 
-  const total = filtered.reduce((s, o) => s + o.earnings, 0)
-  const totalOrders = filtered.length
-  const avgPerOrder = totalOrders > 0 ? total / totalOrders : 0
-  const totalMinutes = filtered.reduce((s, o) => s + o.durationMin, 0)
-  const hoursWorked = (totalMinutes / 60).toFixed(1)
-  const prevTotal = total * 0.82
-  const changePct = prevTotal > 0 ? ((total - prevTotal) / prevTotal) * 100 : 0
-  const changePositive = changePct >= 0
-
-  const breakdown = useMemo(() => {
-    const map: Record<string, { earnings: number; orders: number }> = {}
-    filtered.forEach((o) => {
-      if (!map[o.platform]) map[o.platform] = { earnings: 0, orders: 0 }
-      map[o.platform].earnings += o.earnings
-      map[o.platform].orders += 1
-    })
-    return Object.entries(map).sort((a, b) => b[1].earnings - a[1].earnings)
-  }, [filtered])
-
-  const maxPlatformEarnings = breakdown.length > 0 ? breakdown[0][1].earnings : 1
-
-  const groupedHistory = useMemo(() => {
-    const groups: { date: string; dayTs: number; orders: CompletedOrder[]; dayTotal: number }[] = []
-    const map: Record<number, CompletedOrder[]> = {}
-    filtered.forEach((o) => { const ds = dayStart(o.completedAt); if (!map[ds]) map[ds] = []; map[ds].push(o) })
-    Object.entries(map)
-      .sort((a, b) => Number(b[0]) - Number(a[0]))
-      .forEach(([ds, orders]) => {
-        groups.push({
-          date: formatGroupDate(Number(ds)),
-          dayTs: Number(ds),
-          orders: orders.sort((a, b) => b.completedAt - a.completedAt),
-          dayTotal: orders.reduce((acc, o) => acc + o.earnings, 0),
-        })
-      })
-    return groups
-  }, [filtered])
-
-  const hasData = totalOrders > 0
-  const barW = Math.max(Math.floor((SCREEN_W - H_PAD * 2 - 32) / 24) - 2, 3)
-
-  const brandAccent = (platform: string) => {
-    const map: Record<string, string> = { glovo: c.glovo, uber: c.uber, bolt: c.bolt, wolt: c.wolt }
-    return map[platform] ?? c.border
-  }
+  const hasTransactions = transactions.length > 0
 
   return (
     <ScrollView
-      style={[s.root, { backgroundColor: c.bg }]}
-      contentContainerStyle={[s.content, { paddingTop: insets.top + 12, paddingBottom: 40 }]}
+      style={[s.root, { backgroundColor: SCREEN_BG }]}
+      contentContainerStyle={[s.content, { paddingTop: insets.top + 16, paddingBottom: 40 }]}
       showsVerticalScrollIndicator={false}
     >
-      <View style={s.periodRow}>
-        {(['today', 'week', 'month'] as Period[]).map((p) => {
-          const active = period === p
-          return (
-            <TouchableOpacity
-              key={p}
-              style={[s.pill, { backgroundColor: active ? c.primary : 'transparent', borderColor: active ? c.primary : c.border }]}
-              activeOpacity={0.7}
-              onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setPeriod(p) }}
-            >
-              <Text style={[s.pillText, { color: active ? c.textInverse : c.secondary }]}>{t(p as string)}</Text>
-            </TouchableOpacity>
-          )
-        })}
+      <Text style={s.screenTitle}>{t('earnings')}</Text>
+
+      <View style={[s.balanceCard, cardShadow]}>
+        <Text style={s.balanceLabel}>{t('wallet_balance_label')}</Text>
+        <Text style={s.balanceAmount} numberOfLines={1} adjustsFontSizeToFit>
+          {formatPln(totalBalance)}
+        </Text>
       </View>
 
-      <View style={[s.mainCard, { backgroundColor: c.surface, borderColor: c.separator }]}>
-        <Text style={[s.mainAmount, { color: c.text }]}>{total.toFixed(2)} PLN</Text>
-        <View style={s.changeRow}>
-          <Text style={[s.changePct, { color: changePositive ? c.success : c.danger }]}>
-            {changePositive ? '↑' : '↓'} {Math.abs(changePct).toFixed(1)}% {t('vs_prev_period')}
-          </Text>
+      <View style={s.statsRow}>
+        <View style={[s.statCard, cardShadow]}>
+          <Text style={s.statLabel}>{t('wallet_today')}</Text>
+          <Text style={s.statValue}>{formatPln(todayEarnings)}</Text>
         </View>
-        <View style={s.statsRow}>
-          <StatCell label={t('orders_label')} value={String(totalOrders)} c={c} />
-          <View style={[s.statDiv, { backgroundColor: c.separator }]} />
-          <StatCell label={t('avg_pln_km')} value={`${avgPerOrder.toFixed(2)} PLN`} c={c} />
-          <View style={[s.statDiv, { backgroundColor: c.separator }]} />
-          <StatCell label={t('hours_online')} value={`${hoursWorked}h`} c={c} />
+        <View style={[s.statCard, cardShadow]}>
+          <Text style={s.statLabel}>{t('wallet_this_week')}</Text>
+          <Text style={s.statValue}>{formatPln(weeklyEarnings)}</Text>
         </View>
       </View>
 
-      {!hasData ? (
-        <View style={s.emptyBlock}>
-          <Feather name="package" size={48} color={c.textMuted} />
-          <Text style={[s.emptyTitle, { color: c.secondary }]}>{t('ready_first_delivery')}</Text>
-          <Text style={[s.emptySub, { color: c.textMuted }]}>{t('completed_orders_will_appear')}</Text>
+      <Text style={s.sectionTitle}>{t('wallet_transactions')}</Text>
+
+      {!hasTransactions ? (
+        <View style={[s.emptyCard, cardShadow]}>
+          <View style={s.emptyIconWrap}>
+            <Feather name="inbox" size={44} color="#9CA3AF" />
+          </View>
+          <Text style={s.emptyTitle}>{t('wallet_empty_title')}</Text>
+          <Text style={s.emptySub}>{t('wallet_empty_sub')}</Text>
         </View>
       ) : (
-        <>
-          <Text style={[s.section, { color: c.text }]}>{t('platform_breakdown')}</Text>
-          {breakdown.map(([platform, data]) => (
-            <View key={platform} style={[s.platformCard, { backgroundColor: c.surface, borderColor: c.separator }]}>
-              <View style={s.platformRow}>
-                <PlatformIcon platform={platform as PlatformId} size={24} active />
-                <View style={s.platformInfo}>
-                  <Text style={[s.platformName, { color: c.text }]}>{PLATFORM_LABEL[platform] ?? platform}</Text>
-                  <Text style={[s.platformSub, { color: c.secondary }]}>{data.orders} {t('orders')}</Text>
-                </View>
-                <Text style={[s.platformEarnings, { color: c.text }]}>{data.earnings.toFixed(2)} PLN</Text>
-              </View>
-              <View style={[s.progressTrack, { backgroundColor: c.separator }]}>
-                <View style={[s.progressFill, { width: `${((data.earnings / maxPlatformEarnings) * 100).toFixed(1)}%` as any, backgroundColor: brandAccent(platform) }]} />
-              </View>
-            </View>
+        <View style={[s.listCard, cardShadow, { backgroundColor: isDark ? '#121212' : CARD }]}>
+          {transactions.map((tx, index) => (
+            <TransactionRow
+              key={tx.id}
+              tx={tx}
+              isLast={index === transactions.length - 1}
+              expanded={expandedTxId === tx.id}
+              onToggleExpand={() => toggleTx(tx.id)}
+            />
           ))}
-
-          <Text style={[s.section, { color: c.text }]}>{t('peak_hours')}</Text>
-          <View style={[s.peakCard, { backgroundColor: c.surface, borderColor: c.separator }]}>
-            <View style={s.peakBars}>
-              {Array.from({ length: 24 }, (_, h) => {
-                const peak = isPeakHour(h)
-                return (
-                  <View key={h} style={s.peakCol}>
-                    <View style={[s.peakLine, { width: Math.max(barW, 3), backgroundColor: peak ? c.primary : c.separator }]} />
-                    {h % 6 === 0 && <Text style={[s.peakLabel, { color: c.textMuted }]}>{h}</Text>}
-                  </View>
-                )
-              })}
-            </View>
-            <Text style={[s.peakHint, { color: c.textMuted }]}>{t('peak_windows_highlighted')}</Text>
-          </View>
-
-          <Text style={[s.section, { color: c.text }]}>{t('order_history')}</Text>
-          {groupedHistory.map((group) => (
-            <View key={group.dayTs}>
-              <View style={[s.groupHeader, { borderBottomColor: c.separator }]}>
-                <Text style={[s.groupDate, { color: c.text }]}>{group.date === 'today' || group.date === 'yesterday' ? t(group.date) : group.date}</Text>
-                <Text style={[s.groupTotal, { color: c.secondary }]}>{group.dayTotal.toFixed(2)} PLN</Text>
-              </View>
-              {group.orders.map((o) => (
-                <HistoryRow key={o.id} order={o} c={c} />
-              ))}
-            </View>
-          ))}
-        </>
+        </View>
       )}
     </ScrollView>
   )
 }
 
-function StatCell({ label, value, c }: { label: string; value: string; c: AppColors }) {
+function TransactionRow({
+  tx,
+  isLast,
+  expanded,
+  onToggleExpand,
+}: {
+  tx: WalletTransaction
+  isLast: boolean
+  expanded: boolean
+  onToggleExpand: () => void
+}) {
+  const { t } = useTranslation()
+  const time = new Date(tx.date).toLocaleString(undefined, {
+    day: 'numeric',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+  const orderLabel = tx.orderId
+    ? `${t('wallet_order_prefix')} ${tx.orderId.length > 12 ? tx.orderId.slice(-10) : tx.orderId}`
+    : t('wallet_credit')
+  const hasTrip =
+    typeof tx.pickupAddress === 'string' &&
+    tx.pickupAddress.trim().length > 0 &&
+    typeof tx.dropoffAddress === 'string' &&
+    tx.dropoffAddress.trim().length > 0
+  const distKm = typeof tx.distanceKm === 'number' && Number.isFinite(tx.distanceKm) ? tx.distanceKm : 0
+
   return (
-    <View style={s.statCell}>
-      <Text style={[s.statValue, { color: c.text }]}>{value}</Text>
-      <Text style={[s.statLabel, { color: c.secondary }]}>{label}</Text>
+    <View style={[s.txWrap, !isLast && s.txRowBorder]}>
+      <TouchableOpacity
+        style={s.txRow}
+        activeOpacity={hasTrip ? 0.75 : 1}
+        onPress={hasTrip ? onToggleExpand : undefined}
+        disabled={!hasTrip}
+      >
+        <View style={s.txLeft}>
+          <View style={s.txIcon}>
+            <MaterialCommunityIcons
+              name={tx.status === 'PENDING' ? 'clock-outline' : 'cash'}
+              size={22}
+              color={tx.status === 'PENDING' ? '#F59E0B' : DEEP_BLUE}
+            />
+          </View>
+          <View style={s.txMeta}>
+            <Text style={s.txOrder} numberOfLines={1}>
+              {orderLabel}
+            </Text>
+            <Text style={s.txTime}>{time}</Text>
+            {tx.status === 'PENDING' && (
+              <View style={s.pendingPill}>
+                <Text style={s.pendingPillText}>{t('wallet_status_pending')}</Text>
+              </View>
+            )}
+          </View>
+        </View>
+        <View style={s.txRight}>
+          <Text style={[s.txAmount, tx.amount >= 0 ? s.txAmountPos : s.txAmountNeg]}>
+            {tx.amount >= 0 ? '+' : ''}
+            {formatPln(Math.abs(tx.amount))}
+          </Text>
+          {hasTrip ? (
+            <MaterialCommunityIcons
+              name={expanded ? 'chevron-up' : 'chevron-down'}
+              size={20}
+              color="#9CA3AF"
+              style={s.txChevron}
+            />
+          ) : null}
+        </View>
+      </TouchableOpacity>
+      {expanded && hasTrip ? (
+        <View style={s.txTrip}>
+          <RouteSummary
+            lightSurface
+            compact
+            pickupAddress={tx.pickupAddress!}
+            dropoffAddress={tx.dropoffAddress!}
+            distanceKm={distKm}
+          />
+        </View>
+      ) : null}
     </View>
   )
 }
 
-function HistoryRow({ order, c }: { order: CompletedOrder; c: AppColors }) {
-  const time = new Date(order.completedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-  return (
-    <View style={[s.historyRow, { borderBottomColor: c.separator }]}>
-      <PlatformIcon platform={order.platform as PlatformId} size={24} />
-      <Text style={[s.historyAddr, { color: c.secondary }]} numberOfLines={1}>{order.dropoffAddress}</Text>
-      <Text style={[s.historyTime, { color: c.secondary }]}>{time}</Text>
-      <Text style={[s.historyEarnings, { color: c.text }]}>{order.earnings.toFixed(2)} PLN</Text>
-    </View>
-  )
-}
+const cardShadow =
+  Platform.OS === 'android'
+    ? { elevation: 3 }
+    : {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.06,
+        shadowRadius: 8,
+      }
 
 const s = StyleSheet.create({
   root: { flex: 1 },
-  content: { paddingHorizontal: H_PAD },
-  periodRow: { flexDirection: 'row', gap: 8, marginBottom: 16 },
-  pill: { height: 34, paddingHorizontal: 16, borderRadius: 20, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
-  pillText: { fontSize: 13, fontFamily: fonts.medium },
-  mainCard: { borderWidth: 1, borderRadius: 16, padding: 20, marginBottom: 20 },
-  mainAmount: { fontSize: 38, fontWeight: '300', fontFamily: fonts.regular, letterSpacing: 1, marginBottom: 6 },
-  changeRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 16 },
-  changePct: { fontSize: 14, fontFamily: fonts.medium },
-  statsRow: { flexDirection: 'row', alignItems: 'center' },
-  statCell: { flex: 1, alignItems: 'center' },
-  statDiv: { width: 1, height: 28 },
-  statValue: { fontSize: 16, fontWeight: '600', fontFamily: fonts.semiBold },
-  statLabel: { fontSize: 11, fontFamily: fonts.regular, marginTop: 2 },
-  section: { fontSize: 13, fontWeight: '600', fontFamily: fonts.semiBold, marginBottom: 10, marginTop: 4 },
-  emptyBlock: { alignItems: 'center', paddingVertical: 48 },
-  emptyTitle: { fontSize: 16, fontWeight: '500', fontFamily: fonts.medium, marginTop: 16 },
-  emptySub: { fontSize: 13, fontFamily: fonts.regular, marginTop: 6 },
-  platformCard: { borderWidth: 1, borderRadius: 12, padding: 16, marginBottom: 8 },
-  platformRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 10 },
-  platformInfo: { flex: 1 },
-  platformName: { fontSize: 14, fontWeight: '500', fontFamily: fonts.medium },
-  platformSub: { fontSize: 12, fontFamily: fonts.regular, marginTop: 1 },
-  platformEarnings: { fontSize: 14, fontWeight: '700', fontFamily: fonts.bold, letterSpacing: 1 },
-  progressTrack: { height: 2, borderRadius: 1, overflow: 'hidden' },
-  progressFill: { height: 2, borderRadius: 1 },
-  peakCard: { borderWidth: 1, borderRadius: 12, padding: 16, marginBottom: 20 },
-  peakBars: { flexDirection: 'row', alignItems: 'flex-end', gap: 2, height: 48 },
-  peakCol: { alignItems: 'center' },
-  peakLine: { height: 32, borderRadius: 1 },
-  peakLabel: { fontSize: 9, fontFamily: fonts.regular, marginTop: 4 },
-  peakHint: { fontSize: 11, fontFamily: fonts.regular, marginTop: 8 },
-  groupHeader: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8, borderBottomWidth: 1, marginBottom: 4 },
-  groupDate: { fontSize: 13, fontWeight: '600', fontFamily: fonts.semiBold },
-  groupTotal: { fontSize: 13, fontFamily: fonts.regular },
-  historyRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, borderBottomWidth: 1 },
-  historyAddr: { flex: 1, fontSize: 13, fontFamily: fonts.regular },
-  historyTime: { fontSize: 12, fontFamily: fonts.regular },
-  historyEarnings: { fontSize: 14, fontWeight: '600', fontFamily: fonts.semiBold },
+  content: { paddingHorizontal: 20 },
+  screenTitle: {
+    fontSize: 13,
+    fontFamily: fonts.medium,
+    color: '#6B7280',
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+    marginBottom: 14,
+  },
+  balanceCard: {
+    backgroundColor: CARD,
+    borderRadius: 16,
+    padding: 22,
+    marginBottom: 14,
+  },
+  balanceLabel: {
+    fontSize: 13,
+    fontFamily: fonts.medium,
+    color: '#6B7280',
+    marginBottom: 8,
+  },
+  balanceAmount: {
+    fontSize: 36,
+    lineHeight: 42,
+    fontFamily: fonts.bold,
+    fontWeight: '700',
+    color: '#111827',
+    letterSpacing: -0.5,
+  },
+  statsRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 18,
+  },
+  statCard: {
+    flex: 1,
+    backgroundColor: CARD,
+    borderRadius: 14,
+    padding: 16,
+  },
+  statLabel: {
+    fontSize: 12,
+    fontFamily: fonts.medium,
+    color: '#6B7280',
+    marginBottom: 8,
+  },
+  statValue: {
+    fontSize: 17,
+    fontFamily: fonts.bold,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  sectionTitle: {
+    fontSize: 13,
+    fontFamily: fonts.semiBold,
+    fontWeight: '600',
+    color: '#374151',
+    marginBottom: 12,
+  },
+  emptyCard: {
+    backgroundColor: CARD,
+    borderRadius: 16,
+    paddingVertical: 40,
+    paddingHorizontal: 24,
+    alignItems: 'center',
+  },
+  emptyIconWrap: {
+    width: 88,
+    height: 88,
+    borderRadius: 44,
+    backgroundColor: '#F3F4F6',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+  },
+  emptyTitle: {
+    fontSize: 17,
+    fontFamily: fonts.semiBold,
+    fontWeight: '600',
+    color: '#374151',
+    marginBottom: 6,
+    textAlign: 'center',
+  },
+  emptySub: {
+    fontSize: 14,
+    fontFamily: fonts.regular,
+    color: '#9CA3AF',
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  listCard: {
+    backgroundColor: CARD,
+    borderRadius: 16,
+    overflow: 'hidden',
+  },
+  txWrap: {
+    paddingHorizontal: 0,
+  },
+  txRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+  },
+  txRight: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  txChevron: { marginLeft: 4 },
+  txTrip: {
+    paddingHorizontal: 16,
+    paddingBottom: 14,
+    paddingTop: 0,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#F3F4F6',
+  },
+  txRowBorder: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#E5E7EB',
+  },
+  txLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    minWidth: 0,
+    gap: 12,
+  },
+  txIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#EFF6FF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  txMeta: {
+    flex: 1,
+    minWidth: 0,
+  },
+  txOrder: {
+    fontSize: 15,
+    fontFamily: fonts.semiBold,
+    fontWeight: '600',
+    color: '#111827',
+  },
+  txTime: {
+    fontSize: 12,
+    fontFamily: fonts.regular,
+    color: '#9CA3AF',
+    marginTop: 2,
+  },
+  pendingPill: {
+    alignSelf: 'flex-start',
+    marginTop: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+    backgroundColor: '#FFFBEB',
+  },
+  pendingPillText: {
+    fontSize: 10,
+    fontFamily: fonts.medium,
+    color: '#D97706',
+  },
+  txAmount: {
+    fontSize: 15,
+    fontFamily: fonts.bold,
+    fontWeight: '700',
+    marginLeft: 8,
+  },
+  txAmountPos: {
+    color: AMOUNT_GREEN,
+  },
+  txAmountNeg: {
+    color: '#DC2626',
+  },
 })

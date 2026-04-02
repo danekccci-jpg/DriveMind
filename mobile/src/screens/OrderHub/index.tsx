@@ -24,7 +24,7 @@ import { MOCK_ORDERS } from '../../data/mockOrders'
 import { calculateProfitScore } from '../../engine/profitEngine'
 import { openPlatformDeepLink } from '../../utils/platformDeepLink'
 import { fonts } from '../../theme/typography'
-import { useColors, type AppColors } from '../../theme/theme'
+import { useColors } from '../../theme/theme'
 
 type PlatformId = 'glovo' | 'uber' | 'bolt' | 'wolt'
 
@@ -110,13 +110,18 @@ export default function OrderHubScreen() {
             <ProfitBadge label={result.label} />
             <Text style={[s.cardPrice, { color: c.text }]}>{item.earnings.toFixed(0)} PLN</Text>
           </View>
-          <Text style={[s.cardAddr, { color: c.textSecondary }]} numberOfLines={1}>{item.pickupAddress}</Text>
-          <View style={s.dataGrid}>
-            <DataCell label="DIST" value={`${item.distanceKm.toFixed(1)} km`} c={c} />
-            <View style={[s.dataSep, { backgroundColor: c.separator }]} />
-            <DataCell label="TIME" value={`${item.durationMin} min`} c={c} />
-            <View style={[s.dataSep, { backgroundColor: c.separator }]} />
-            <DataCell label="DEAD" value={`${item.deadrunKm.toFixed(1)} km`} c={c} />
+          <View style={[s.routeInline, { borderColor: c.separator }]}>
+            <Text style={[s.addrLabel, { color: c.textSecondary }]} numberOfLines={1}>
+              A: {item.pickupAddress}
+            </Text>
+            <View style={s.routeMid}>
+              <Text style={[s.routeArrow, { color: c.textMuted }]}>→</Text>
+              <Text style={[s.routeDist, { color: c.text }]}>{item.distanceKm.toFixed(1)} km</Text>
+              <Text style={[s.routeArrow, { color: c.textMuted }]}>→</Text>
+            </View>
+            <Text style={[s.addrLabelRight, { color: c.textSecondary }]} numberOfLines={1}>
+              B: {item.dropoffAddress}
+            </Text>
           </View>
           <View style={s.btnRow}>
             <TouchableOpacity style={[s.acceptBtn, { borderColor: a }]} activeOpacity={0.7} onPress={() => handleAccept(item)}>
@@ -189,9 +194,15 @@ export default function OrderHubScreen() {
               <>
                 <PlatformIcon platform={pendingConfirmation.platform as PlatformId} size={48} active />
                 <Text style={[s.modalTitle, { color: c.text }]}>{t('order_accepted_title')}</Text>
-                <Text style={[s.modalAddr, { color: c.textSecondary }]} numberOfLines={2}>{pendingConfirmation.pickupAddress}</Text>
-                <Text style={[s.modalArrow, { color: c.textMuted }]}>→</Text>
-                <Text style={[s.modalAddr, { color: c.textSecondary }]} numberOfLines={2}>{pendingConfirmation.dropoffAddress}</Text>
+                <ScrollView style={s.modalRoute} nestedScrollEnabled showsVerticalScrollIndicator={false}>
+                  <Text style={[s.modalAddr, { color: c.textSecondary }]} numberOfLines={2}>
+                    A: {pendingConfirmation.pickupAddress}
+                  </Text>
+                  <Text style={[s.modalArrow, { color: c.textMuted }]}>↓</Text>
+                  <Text style={[s.modalAddr, { color: c.textSecondary }]} numberOfLines={2}>
+                    B: {pendingConfirmation.dropoffAddress}
+                  </Text>
+                </ScrollView>
                 <View style={s.modalBtns}>
                   <TouchableOpacity style={[s.modalYes, { backgroundColor: c.primary }]} activeOpacity={0.8} onPress={handleConfirmYes}>
                     <Text style={[s.modalYesText, { color: c.textInverse }]}>{t('yes')}</Text>
@@ -209,15 +220,6 @@ export default function OrderHubScreen() {
   )
 }
 
-function DataCell({ label, value, c }: { label: string; value: string; c: AppColors }) {
-  return (
-    <View style={s.dataCell}>
-      <Text style={[s.dataCellLabel, { color: c.textMuted }]}>{label}</Text>
-      <Text style={[s.dataCellValue, { color: c.text }]}>{value}</Text>
-    </View>
-  )
-}
-
 const s = StyleSheet.create({
   root: { flex: 1 },
   header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 12, gap: 10 },
@@ -231,25 +233,34 @@ const s = StyleSheet.create({
   bannerLabel: { fontSize: 10, fontFamily: fonts.regular, letterSpacing: 1, marginBottom: 2 },
   bannerValue: { fontSize: 14, fontWeight: '500', fontFamily: fonts.medium },
   listPad: { paddingHorizontal: 20, paddingBottom: 20 },
-  card: { borderWidth: 1, borderLeftWidth: 2, borderRadius: 14, padding: 16, marginBottom: 10 },
-  cardHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
+  card: { borderWidth: 1, borderLeftWidth: 2, borderRadius: 12, padding: 12, marginBottom: 8 },
+  cardHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 },
   cardPlatform: { flex: 1, fontSize: 14, fontWeight: '600', fontFamily: fonts.semiBold },
-  cardPrice: { fontSize: 18, fontWeight: '700', fontFamily: fonts.bold, letterSpacing: 2 },
-  cardAddr: { fontSize: 13, fontFamily: fonts.regular, marginBottom: 12 },
-  dataGrid: { flexDirection: 'row', alignItems: 'center', marginBottom: 14 },
-  dataCell: { flex: 1, alignItems: 'center' },
-  dataCellLabel: { fontSize: 10, fontFamily: fonts.regular, letterSpacing: 1, marginBottom: 2 },
-  dataCellValue: { fontSize: 14, fontWeight: '600', fontFamily: fonts.semiBold },
-  dataSep: { width: 1, height: 24 },
+  cardPrice: { fontSize: 16, fontWeight: '700', fontFamily: fonts.bold, letterSpacing: 1 },
+  routeInline: {
+    minHeight: 36,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  addrLabel: { flex: 1, fontSize: 11, fontFamily: fonts.medium, marginRight: 6 },
+  routeMid: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  routeArrow: { fontSize: 11, fontFamily: fonts.medium },
+  routeDist: { fontSize: 12, fontWeight: '600', fontFamily: fonts.semiBold },
+  addrLabelRight: { flex: 1, fontSize: 11, fontFamily: fonts.medium, marginLeft: 6, textAlign: 'right' },
   btnRow: { flexDirection: 'row', gap: 8 },
-  acceptBtn: { flex: 1, height: 42, borderRadius: 10, borderWidth: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: 'transparent' },
+  acceptBtn: { flex: 1, height: 36, borderRadius: 9, borderWidth: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: 'transparent' },
   acceptText: { fontSize: 14, fontWeight: '600', fontFamily: fonts.semiBold },
-  skipBtn: { flex: 0.4, height: 42, alignItems: 'center', justifyContent: 'center' },
+  skipBtn: { flex: 0.35, height: 36, alignItems: 'center', justifyContent: 'center' },
   skipText: { fontSize: 13, fontFamily: fonts.regular },
   empty: { textAlign: 'center', marginTop: 60, fontSize: 15, fontFamily: fonts.regular },
   modalOverlay: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
   modalCard: { borderRadius: 16, padding: 24, width: '100%', alignItems: 'center', gap: 10 },
   modalTitle: { fontSize: 18, fontWeight: '600', fontFamily: fonts.semiBold, marginTop: 6 },
+  modalRoute: { width: '100%', maxHeight: 280, marginVertical: 6 },
   modalAddr: { fontSize: 14, fontFamily: fonts.regular, textAlign: 'center' },
   modalArrow: { fontSize: 16 },
   modalBtns: { flexDirection: 'row', gap: 12, marginTop: 8, width: '100%' },

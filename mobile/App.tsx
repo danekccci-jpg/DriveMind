@@ -12,12 +12,15 @@ import {
 } from '@expo-google-fonts/poppins'
 
 import { useRoleStore } from './src/store/roleStore'
+import { useDriverSessionStore } from './src/store/driverSessionStore'
 import { useLanguageStore } from './src/store/languageStore'
+import { useOrdersStore } from './src/store/ordersStore'
 import { useTheme } from './src/theme/theme'
 import RoleSelectionScreen from './src/screens/RoleSelection'
 import OnboardingScreen from './src/screens/Onboarding'
 import LanguageSelectionScreen from './src/screens/LanguageSelection'
 import RootNavigator from './src/navigation/RootNavigator'
+import { startLocationTracking, stopLocationTracking } from './src/services/locationTrackingService'
 import i18n from './src/i18n'
 import './src/i18n'
 
@@ -41,6 +44,26 @@ export default function App() {
   useEffect(() => {
     i18n.changeLanguage(language)
   }, [language])
+
+  useEffect(() => {
+    if (!onboardingComplete) return
+    const syncLocationTask = () => {
+      const nav = useOrdersStore.getState().isNavigating
+      const online = useDriverSessionStore.getState().isOnline
+      if (nav || online) {
+        void startLocationTracking()
+      } else {
+        void stopLocationTracking()
+      }
+    }
+    syncLocationTask()
+    const unsubOrders = useOrdersStore.subscribe(syncLocationTask)
+    const unsubDriver = useDriverSessionStore.subscribe(syncLocationTask)
+    return () => {
+      unsubOrders()
+      unsubDriver()
+    }
+  }, [onboardingComplete])
 
   useEffect(() => {
     if (onboardingComplete) {

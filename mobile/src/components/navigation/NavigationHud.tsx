@@ -62,6 +62,8 @@ type Props = {
   atPickupSubtitle?: string
   /** Safe-area aware top offset for the instruction card */
   topInset: number
+  /** Final dropoff address — always visible on the bottom bar while navigating. */
+  finalDestinationLine?: string
 }
 
 function NavigationHudInner({
@@ -79,6 +81,7 @@ function NavigationHudInner({
   atPickupTitle,
   atPickupSubtitle,
   topInset,
+  finalDestinationLine,
 }: Props) {
   const icon = maneuverToIcon(maneuver)
   const navMode = hudVariant === 'navigation'
@@ -130,31 +133,41 @@ function NavigationHudInner({
           },
         ]}
       >
-        <View style={styles.bottomMeta}>
-          <Text style={[styles.metaLabel, { color: c.textMuted }]}>{timeLeftLabel}</Text>
-          <Text style={[styles.metaValue, { color: c.text }]}>
-            {navMode ? formatTimeLeft(timeLeftSeconds) : '—'}
-          </Text>
+        {!!finalDestinationLine?.trim() && (
+          <View style={[styles.destRow, { borderBottomColor: c.separator }]}>
+            <MaterialCommunityIcons name="flag-checkered" size={14} color={c.textMuted} style={styles.destIcon} />
+            <Text style={[styles.destText, { color: c.textSecondary }]} numberOfLines={2}>
+              {finalDestinationLine.trim()}
+            </Text>
+          </View>
+        )}
+        <View style={styles.bottomRow}>
+          <View style={styles.bottomMeta}>
+            <Text style={[styles.metaLabel, { color: c.textMuted }]}>{timeLeftLabel}</Text>
+            <Text style={[styles.metaValue, { color: c.text }]}>
+              {navMode ? formatTimeLeft(timeLeftSeconds) : '—'}
+            </Text>
+          </View>
+          <View style={[styles.bottomDivider, { backgroundColor: c.separator }]} />
+          <View style={styles.bottomMeta}>
+            <Text style={[styles.metaLabel, { color: c.textMuted }]}>{arrivalLabel}</Text>
+            <Text style={[styles.metaValue, { color: c.text }]}>
+              {navMode ? formatArrival(timeLeftSeconds) : '—'}
+            </Text>
+          </View>
+          <TouchableOpacity
+            style={[
+              styles.finishBtn,
+              { backgroundColor: ROUTE_STROKE_MAIN },
+              primaryDisabled && styles.finishBtnDisabled,
+            ]}
+            activeOpacity={primaryDisabled ? 1 : 0.75}
+            onPress={onPrimary}
+            disabled={primaryDisabled}
+          >
+            <Text style={[styles.finishBtnText, { color: '#FFFFFF' }]}>{primaryLabel}</Text>
+          </TouchableOpacity>
         </View>
-        <View style={[styles.bottomDivider, { backgroundColor: c.separator }]} />
-        <View style={styles.bottomMeta}>
-          <Text style={[styles.metaLabel, { color: c.textMuted }]}>{arrivalLabel}</Text>
-          <Text style={[styles.metaValue, { color: c.text }]}>
-            {navMode ? formatArrival(timeLeftSeconds) : '—'}
-          </Text>
-        </View>
-        <TouchableOpacity
-          style={[
-            styles.finishBtn,
-            { backgroundColor: ROUTE_STROKE_MAIN },
-            primaryDisabled && styles.finishBtnDisabled,
-          ]}
-          activeOpacity={primaryDisabled ? 1 : 0.75}
-          onPress={onPrimary}
-          disabled={primaryDisabled}
-        >
-          <Text style={[styles.finishBtnText, { color: '#FFFFFF' }]}>{primaryLabel}</Text>
-        </TouchableOpacity>
       </View>
     </>
   )
@@ -208,14 +221,37 @@ const styles = StyleSheet.create({
     bottom: 80,
     alignSelf: 'center',
     maxWidth: 480,
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: 'column',
+    alignItems: 'stretch',
     borderRadius: 14,
     borderWidth: StyleSheet.hairlineWidth,
     paddingVertical: 10,
     paddingHorizontal: 12,
     gap: 8,
     elevation: 3,
+  },
+  destRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    paddingBottom: 6,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    marginHorizontal: -4,
+    paddingHorizontal: 4,
+    marginBottom: 2,
+  },
+  destIcon: { marginTop: 2 },
+  destText: {
+    flex: 1,
+    fontSize: 12,
+    fontFamily: fonts.medium,
+    lineHeight: 16,
+    minWidth: 0,
+  },
+  bottomRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   bottomMeta: { flex: 1, minWidth: 0 },
   metaLabel: { fontSize: 10, fontFamily: fonts.medium, letterSpacing: 0.4, marginBottom: 2 },

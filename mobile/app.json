@@ -12,7 +12,10 @@
       "backgroundColor": "#000000"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "UIBackgroundModes": ["location"]
+      }
     },
     "android": {
       "package": "com.drivemind.app",
@@ -23,6 +26,10 @@
       "permissions": [
         "ACCESS_FINE_LOCATION",
         "ACCESS_COARSE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_LOCATION",
+        "POST_NOTIFICATIONS",
         "VIBRATE"
       ]
     },
@@ -33,7 +40,9 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "DriveMind needs your location."
+          "locationWhenInUsePermission": "DriveMind needs your location for navigation and dispatch.",
+          "locationAlwaysAndWhenInUsePermission": "DriveMind uses your location in the background during active navigation.",
+          "isAndroidBackgroundLocationEnabled": true
         }
       ],
       "expo-font"

@@ -15,6 +15,13 @@ export function haversineMeters(a: LatLng, b: LatLng): number {
   return 2 * EARTH_M * Math.asin(Math.min(1, Math.sqrt(s)))
 }
 
+/** Smallest angle between two compass headings in [0, 180]. */
+export function smallestHeadingDeltaDeg(a: number, b: number): number {
+  let d = Math.abs(a - b) % 360
+  if (d > 180) d = 360 - d
+  return d
+}
+
 function projectOnSegment(p: LatLng, a: LatLng, b: LatLng): { dist: number; t: number; proj: LatLng } {
   const abx = b.longitude - a.longitude
   const aby = b.latitude - a.latitude

@@ -249,3 +249,43 @@ export async function getDirections(
     steps,
   }
 }
+
+function formatCoordFallback(lat: number, lng: number): string {
+  return `${lat.toFixed(5)}, ${lng.toFixed(5)}`
+}
+
+/**
+ * Reverse-geocode a point to a formatted address (Google Geocoding API).
+ * Falls back to compact lat,lng when the key is missing or the request fails.
+ */
+export async function reverseGeocode(lat: number, lng: number): Promise<string> {
+  assertValidCoord(lat, lng, 'geocode')
+
+  const lang = useLanguageStore.getState().language === 'pl' ? 'pl' : 'en'
+
+  if (!GMAPS_API_KEY || GMAPS_API_KEY === 'your_key_here') {
+    return formatCoordFallback(lat, lng)
+  }
+
+  const url = new URL('https://maps.googleapis.com/maps/api/geocode/json')
+  url.searchParams.set('latlng', `${coordToken(lat)},${coordToken(lng)}`)
+  url.searchParams.set('key', GMAPS_API_KEY)
+  url.searchParams.set('language', lang)
+
+  try {
+    const response = await fetch(url.toString(), { headers: { Accept: 'application/json' } })
+    const text = await response.text()
+    let json: { status?: string; results?: { formatted_address?: string }[] }
+    try {
+      json = JSON.parse(text) as typeof json
+    } catch {
+      return formatCoordFallback(lat, lng)
+    }
+    if (json.status === 'OK' && json.results?.[0]?.formatted_address) {
+      return json.results[0].formatted_address as string
+    }
+  } catch (e) {
+    console.warn('[DriveMind] reverseGeocode failed', e)
+  }
+  return formatCoordFallback(lat, lng)
+}
