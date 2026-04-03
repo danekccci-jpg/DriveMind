@@ -1,7 +1,6 @@
 import { useNavigationSettingsStore } from '../store/navigationSettingsStore'
 import { useLanguageStore } from '../store/languageStore'
-
-const GMAPS_API_KEY = (process.env.EXPO_PUBLIC_GOOGLE_MAPS_KEY ?? '').trim()
+import { getGoogleMapsApiKey } from '../utils/googleMapsConfig'
 const DIRECTIONS_PROXY_URL = (process.env.EXPO_PUBLIC_DIRECTIONS_PROXY_URL ?? '').trim()
 
 /** Google requires origin/destination as "lat,lng" with no spaces after the comma. */
@@ -159,13 +158,16 @@ export async function getDirections(
     }
   }
 
-  if (!GMAPS_API_KEY || GMAPS_API_KEY === 'your_key_here') {
-    throw new Error('[DriveMind] Directions API is not configured. Set EXPO_PUBLIC_DIRECTIONS_PROXY_URL or EXPO_PUBLIC_GOOGLE_MAPS_KEY.')
+  const key = getGoogleMapsApiKey()
+  if (!key || key === 'your_key_here') {
+    throw new Error(
+      '[DriveMind] Directions API is not configured. Set EXPO_PUBLIC_DIRECTIONS_PROXY_URL or EXPO_PUBLIC_GOOGLE_MAPS_API_KEY (or legacy EXPO_PUBLIC_GOOGLE_MAPS_KEY).',
+    )
   }
   console.warn('[DriveMind] Using client-side Directions API key. Prefer EXPO_PUBLIC_DIRECTIONS_PROXY_URL to avoid key exposure.')
   console.log(
     '[DriveMind] Using Key ending in:',
-    GMAPS_API_KEY.length >= 4 ? GMAPS_API_KEY.slice(-4) : `(len ${GMAPS_API_KEY.length})`,
+    key.length >= 4 ? key.slice(-4) : `(len ${key.length})`,
   )
 
   const url = new URL('https://maps.googleapis.com/maps/api/directions/json')
@@ -179,7 +181,7 @@ export async function getDirections(
   if (nav.trafficAware && mode === 'driving') {
     url.searchParams.set('departure_time', String(Math.floor(Date.now() / 1000)))
   }
-  url.searchParams.set('key', GMAPS_API_KEY)
+  url.searchParams.set('key', key)
 
   const sanitized =
     `${url.origin}${url.pathname}?` +
@@ -263,13 +265,14 @@ export async function reverseGeocode(lat: number, lng: number): Promise<string> 
 
   const lang = useLanguageStore.getState().language === 'pl' ? 'pl' : 'en'
 
-  if (!GMAPS_API_KEY || GMAPS_API_KEY === 'your_key_here') {
+  const geoKey = getGoogleMapsApiKey()
+  if (!geoKey || geoKey === 'your_key_here') {
     return formatCoordFallback(lat, lng)
   }
 
   const url = new URL('https://maps.googleapis.com/maps/api/geocode/json')
   url.searchParams.set('latlng', `${coordToken(lat)},${coordToken(lng)}`)
-  url.searchParams.set('key', GMAPS_API_KEY)
+  url.searchParams.set('key', geoKey)
   url.searchParams.set('language', lang)
 
   try {

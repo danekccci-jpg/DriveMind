@@ -15,6 +15,9 @@
       "supportsTablet": true,
       "infoPlist": {
         "UIBackgroundModes": ["location"]
+      },
+      "config": {
+        "googleMapsApiKey": "REDACTED_LEGACY_MAPS_KEY"
       }
     },
     "android": {
@@ -22,6 +25,11 @@
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#000000"
+      },
+      "config": {
+        "googleMaps": {
+          "apiKey": "REDACTED_LEGACY_MAPS_KEY"
+        }
       },
       "permissions": [
         "ACCESS_FINE_LOCATION",
@@ -45,7 +53,13 @@
           "isAndroidBackgroundLocationEnabled": true
         }
       ],
-      "expo-font"
+      "expo-font",
+      [
+        "@react-native-google-signin/google-signin",
+        {
+          "iosUrlScheme": "com.googleusercontent.apps.1042575792605-04pgdgjmv7ulc3rjff4sc8qv8lphlnhr"
+        }
+      ]
     ]
   }
 }

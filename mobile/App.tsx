@@ -1,5 +1,5 @@
-import React, { useEffect, useRef } from 'react'
-import { Animated } from 'react-native'
+import React, { useEffect, useRef, useState } from 'react'
+import { Animated, Platform, ActivityIndicator, View } from 'react-native'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 import { NavigationContainer, DefaultTheme, DarkTheme } from '@react-navigation/native'
 import { StatusBar } from 'expo-status-bar'
@@ -15,7 +15,10 @@ import { useRoleStore } from './src/store/roleStore'
 import { useDriverSessionStore } from './src/store/driverSessionStore'
 import { useLanguageStore } from './src/store/languageStore'
 import { useOrdersStore } from './src/store/ordersStore'
+import { useAuthStore } from './src/store/authStore'
 import { useTheme } from './src/theme/theme'
+import { configureGoogleSignIn } from './src/services/googleAuth'
+import LoginScreen from './src/screens/Login'
 import RoleSelectionScreen from './src/screens/RoleSelection'
 import OnboardingScreen from './src/screens/Onboarding'
 import LanguageSelectionScreen from './src/screens/LanguageSelection'
@@ -40,6 +43,21 @@ export default function App() {
   const { colors: c, isDark } = useTheme()
 
   const fadeAnim = useRef(new Animated.Value(0)).current
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
+  const needsNativeGoogleAuth = Platform.OS === 'android' || Platform.OS === 'ios'
+  const [authHydrated, setAuthHydrated] = useState(!needsNativeGoogleAuth)
+
+  useEffect(() => {
+    if (needsNativeGoogleAuth) {
+      configureGoogleSignIn()
+      const p = useAuthStore.persist.rehydrate?.()
+      if (p && typeof (p as Promise<void>).finally === 'function') {
+        void (p as Promise<void>).finally(() => setAuthHydrated(true))
+      } else {
+        setAuthHydrated(true)
+      }
+    }
+  }, [needsNativeGoogleAuth])
 
   useEffect(() => {
     i18n.changeLanguage(language)
@@ -113,6 +131,26 @@ export default function App() {
       <SafeAreaProvider>
         <StatusBar style={isDark ? 'light' : 'dark'} backgroundColor={c.bg} />
         <OnboardingScreen />
+      </SafeAreaProvider>
+    )
+  }
+
+  if (needsNativeGoogleAuth && authHydrated && !isAuthenticated) {
+    return (
+      <SafeAreaProvider>
+        <StatusBar style={isDark ? 'light' : 'dark'} backgroundColor={c.bg} />
+        <LoginScreen />
+      </SafeAreaProvider>
+    )
+  }
+
+  if (needsNativeGoogleAuth && !authHydrated) {
+    return (
+      <SafeAreaProvider>
+        <StatusBar style={isDark ? 'light' : 'dark'} backgroundColor={c.bg} />
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: c.bg }}>
+          <ActivityIndicator size="large" color={c.primary} />
+        </View>
       </SafeAreaProvider>
     )
   }

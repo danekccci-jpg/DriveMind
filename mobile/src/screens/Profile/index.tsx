@@ -17,6 +17,8 @@ import * as Haptics from 'expo-haptics'
 
 import { useRoleStore } from '../../store/roleStore'
 import { useDriverSessionStore } from '../../store/driverSessionStore'
+import { useAuthStore } from '../../store/authStore'
+import { signOutGoogle } from '../../services/googleAuth'
 import { useThemeStore } from '../../store/themeStore'
 import { useLanguageStore } from '../../store/languageStore'
 import { useColors, type AppColors } from '../../theme/theme'
@@ -75,6 +77,10 @@ export default function ProfileScreen() {
   const toggleTheme = useThemeStore((s) => s.toggleTheme)
   const { language, setLanguage } = useLanguageStore()
 
+  const userName = useAuthStore((s) => s.userName)
+  const userEmail = useAuthStore((s) => s.userEmail)
+  const authSignOut = useAuthStore((s) => s.signOut)
+
   const [fuelInput, setFuelInput] = useState(String(fuelConsumption))
 
   const handleFuelChange = (val: string) => {
@@ -104,12 +110,16 @@ export default function ProfileScreen() {
           </View>
           <View style={s.userInfo}>
             <View style={s.userNameRow}>
-              <Text style={[s.userName, { color: c.text }]}>Damian K.</Text>
+              <Text style={[s.userName, { color: c.text }]} numberOfLines={1}>
+                {userName?.trim() || 'DriveMind'}
+              </Text>
               <View style={[s.rolePill, { backgroundColor: c.surfaceAlt }]}>
                 <Text style={[s.rolePillText, { color: c.textSecondary }]}>{role ?? 'courier'}</Text>
               </View>
             </View>
-            <Text style={[s.memberSince, { color: c.textSecondary }]}>Member since March 2026</Text>
+            <Text style={[s.memberSince, { color: c.textSecondary }]} numberOfLines={1}>
+              {userEmail?.trim() || '—'}
+            </Text>
           </View>
         </View>
       </View>
@@ -292,8 +302,16 @@ export default function ProfileScreen() {
         />
       </View>
 
-      <TouchableOpacity style={s.signOutBtn} activeOpacity={0.7}>
-        <Text style={[s.signOutText, { color: c.danger }]}>Sign out</Text>
+      <TouchableOpacity
+        style={s.signOutBtn}
+        activeOpacity={0.7}
+        onPress={async () => {
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+          await signOutGoogle()
+          authSignOut()
+        }}
+      >
+        <Text style={[s.signOutText, { color: c.danger }]}>{t('sign_out')}</Text>
       </TouchableOpacity>
     </ScrollView>
   )

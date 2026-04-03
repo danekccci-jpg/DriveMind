@@ -1,12 +1,5 @@
 import React, { useMemo, useState, useCallback } from 'react'
-import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  TouchableOpacity,
-  Platform,
-} from 'react-native'
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Platform } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useTranslation } from 'react-i18next'
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons'
@@ -22,15 +15,15 @@ import { fonts } from '../../theme/typography'
 import { RouteSummary } from '../../components/RouteSummary'
 import { useTheme } from '../../theme/theme'
 
-const SCREEN_BG = '#F5F6FA'
-const CARD = '#FFFFFF'
-const DEEP_BLUE = '#1A5CFF'
+const LIGHT_CARD = '#FFFFFF'
 const AMOUNT_GREEN = '#16A34A'
+const TX_LIST_DARK = '#121212'
+const TX_LIST_DARK_ALT = 'rgba(255,255,255,0.05)'
 
 export default function EarningsScreen() {
   const { t } = useTranslation()
   const insets = useSafeAreaInsets()
-  const { isDark } = useTheme()
+  const { isDark, colors: c } = useTheme()
   const totalBalance = useWalletStore((s) => s.totalBalance)
   const transactions = useWalletStore((s) => s.transactions)
 
@@ -43,45 +36,57 @@ export default function EarningsScreen() {
   }, [])
 
   const hasTransactions = transactions.length > 0
+  const cardBg = isDark ? c.surface : LIGHT_CARD
+  const txListBg = isDark ? TX_LIST_DARK : LIGHT_CARD
 
   return (
     <ScrollView
-      style={[s.root, { backgroundColor: SCREEN_BG }]}
+      style={[s.root, { backgroundColor: c.bg }]}
       contentContainerStyle={[s.content, { paddingTop: insets.top + 16, paddingBottom: 40 }]}
       showsVerticalScrollIndicator={false}
     >
-      <Text style={s.screenTitle}>{t('earnings')}</Text>
+      <Text style={[s.screenTitle, { color: c.textMuted }]}>{t('earnings')}</Text>
 
-      <View style={[s.balanceCard, cardShadow]}>
-        <Text style={s.balanceLabel}>{t('wallet_balance_label')}</Text>
-        <Text style={s.balanceAmount} numberOfLines={1} adjustsFontSizeToFit>
+      <View style={[s.balanceCard, cardShadow, { backgroundColor: cardBg }]}>
+        <Text style={[s.balanceLabel, { color: c.textSecondary }]}>{t('wallet_balance_label')}</Text>
+        <Text style={[s.balanceAmount, { color: c.text }]} numberOfLines={1} adjustsFontSizeToFit>
           {formatPln(totalBalance)}
         </Text>
       </View>
 
       <View style={s.statsRow}>
-        <View style={[s.statCard, cardShadow]}>
-          <Text style={s.statLabel}>{t('wallet_today')}</Text>
-          <Text style={s.statValue}>{formatPln(todayEarnings)}</Text>
+        <View style={[s.statCard, cardShadow, { backgroundColor: cardBg }]}>
+          <Text style={[s.statLabel, { color: c.textSecondary }]}>{t('wallet_today')}</Text>
+          <Text style={[s.statValue, { color: c.text }]}>{formatPln(todayEarnings)}</Text>
         </View>
-        <View style={[s.statCard, cardShadow]}>
-          <Text style={s.statLabel}>{t('wallet_this_week')}</Text>
-          <Text style={s.statValue}>{formatPln(weeklyEarnings)}</Text>
+        <View style={[s.statCard, cardShadow, { backgroundColor: cardBg }]}>
+          <Text style={[s.statLabel, { color: c.textSecondary }]}>{t('wallet_this_week')}</Text>
+          <Text style={[s.statValue, { color: c.text }]}>{formatPln(weeklyEarnings)}</Text>
         </View>
       </View>
 
-      <Text style={s.sectionTitle}>{t('wallet_transactions')}</Text>
+      <Text style={[s.sectionTitle, { color: c.textSecondary }]}>{t('wallet_transactions')}</Text>
 
       {!hasTransactions ? (
-        <View style={[s.emptyCard, cardShadow]}>
-          <View style={s.emptyIconWrap}>
-            <Feather name="inbox" size={44} color="#9CA3AF" />
+        <View style={[s.emptyCard, cardShadow, { backgroundColor: cardBg }]}>
+          <View style={[s.emptyIconWrap, { backgroundColor: isDark ? c.surfaceAlt : '#F3F4F6' }]}>
+            <Feather name="inbox" size={44} color={c.textMuted} />
           </View>
-          <Text style={s.emptyTitle}>{t('wallet_empty_title')}</Text>
-          <Text style={s.emptySub}>{t('wallet_empty_sub')}</Text>
+          <Text style={[s.emptyTitle, { color: c.text }]}>{t('wallet_empty_title')}</Text>
+          <Text style={[s.emptySub, { color: c.textSecondary }]}>{t('wallet_empty_sub')}</Text>
         </View>
       ) : (
-        <View style={[s.listCard, cardShadow, { backgroundColor: isDark ? '#121212' : CARD }]}>
+        <View
+          style={[
+            s.listCard,
+            cardShadow,
+            {
+              backgroundColor: isDark ? txListBg : LIGHT_CARD,
+              borderWidth: isDark ? StyleSheet.hairlineWidth : 0,
+              borderColor: isDark ? c.border : 'transparent',
+            },
+          ]}
+        >
           {transactions.map((tx, index) => (
             <TransactionRow
               key={tx.id}
@@ -109,6 +114,7 @@ function TransactionRow({
   onToggleExpand: () => void
 }) {
   const { t } = useTranslation()
+  const { isDark, colors: c } = useTheme()
   const time = new Date(tx.date).toLocaleString(undefined, {
     day: 'numeric',
     month: 'short',
@@ -126,7 +132,7 @@ function TransactionRow({
   const distKm = typeof tx.distanceKm === 'number' && Number.isFinite(tx.distanceKm) ? tx.distanceKm : 0
 
   return (
-    <View style={[s.txWrap, !isLast && s.txRowBorder]}>
+    <View style={[s.txWrap, !isLast && [s.txRowBorder, { borderBottomColor: c.separator }]]}>
       <TouchableOpacity
         style={s.txRow}
         activeOpacity={hasTrip ? 0.75 : 1}
@@ -134,18 +140,18 @@ function TransactionRow({
         disabled={!hasTrip}
       >
         <View style={s.txLeft}>
-          <View style={s.txIcon}>
+          <View style={[s.txIcon, { backgroundColor: isDark ? TX_LIST_DARK_ALT : '#EFF6FF' }]}>
             <MaterialCommunityIcons
               name={tx.status === 'PENDING' ? 'clock-outline' : 'cash'}
               size={22}
-              color={tx.status === 'PENDING' ? '#F59E0B' : DEEP_BLUE}
+              color={tx.status === 'PENDING' ? '#F59E0B' : c.primary}
             />
           </View>
           <View style={s.txMeta}>
-            <Text style={s.txOrder} numberOfLines={1}>
+            <Text style={[s.txOrder, { color: c.text }]} numberOfLines={1}>
               {orderLabel}
             </Text>
-            <Text style={s.txTime}>{time}</Text>
+            <Text style={[s.txTime, { color: c.textMuted }]}>{time}</Text>
             {tx.status === 'PENDING' && (
               <View style={s.pendingPill}>
                 <Text style={s.pendingPillText}>{t('wallet_status_pending')}</Text>
@@ -154,7 +160,7 @@ function TransactionRow({
           </View>
         </View>
         <View style={s.txRight}>
-          <Text style={[s.txAmount, tx.amount >= 0 ? s.txAmountPos : s.txAmountNeg]}>
+          <Text style={[s.txAmount, tx.amount >= 0 ? { color: AMOUNT_GREEN } : { color: '#DC2626' }]}>
             {tx.amount >= 0 ? '+' : ''}
             {formatPln(Math.abs(tx.amount))}
           </Text>
@@ -162,16 +168,16 @@ function TransactionRow({
             <MaterialCommunityIcons
               name={expanded ? 'chevron-up' : 'chevron-down'}
               size={20}
-              color="#9CA3AF"
+              color={c.textMuted}
               style={s.txChevron}
             />
           ) : null}
         </View>
       </TouchableOpacity>
       {expanded && hasTrip ? (
-        <View style={s.txTrip}>
+        <View style={[s.txTrip, { borderTopColor: c.separator }]}>
           <RouteSummary
-            lightSurface
+            lightSurface={!isDark}
             compact
             pickupAddress={tx.pickupAddress!}
             dropoffAddress={tx.dropoffAddress!}
@@ -199,13 +205,11 @@ const s = StyleSheet.create({
   screenTitle: {
     fontSize: 13,
     fontFamily: fonts.medium,
-    color: '#6B7280',
     letterSpacing: 0.6,
     textTransform: 'uppercase',
     marginBottom: 14,
   },
   balanceCard: {
-    backgroundColor: CARD,
     borderRadius: 16,
     padding: 22,
     marginBottom: 14,
@@ -213,7 +217,6 @@ const s = StyleSheet.create({
   balanceLabel: {
     fontSize: 13,
     fontFamily: fonts.medium,
-    color: '#6B7280',
     marginBottom: 8,
   },
   balanceAmount: {
@@ -221,7 +224,6 @@ const s = StyleSheet.create({
     lineHeight: 42,
     fontFamily: fonts.bold,
     fontWeight: '700',
-    color: '#111827',
     letterSpacing: -0.5,
   },
   statsRow: {
@@ -231,31 +233,26 @@ const s = StyleSheet.create({
   },
   statCard: {
     flex: 1,
-    backgroundColor: CARD,
     borderRadius: 14,
     padding: 16,
   },
   statLabel: {
     fontSize: 12,
     fontFamily: fonts.medium,
-    color: '#6B7280',
     marginBottom: 8,
   },
   statValue: {
     fontSize: 17,
     fontFamily: fonts.bold,
     fontWeight: '700',
-    color: '#111827',
   },
   sectionTitle: {
     fontSize: 13,
     fontFamily: fonts.semiBold,
     fontWeight: '600',
-    color: '#374151',
     marginBottom: 12,
   },
   emptyCard: {
-    backgroundColor: CARD,
     borderRadius: 16,
     paddingVertical: 40,
     paddingHorizontal: 24,
@@ -265,7 +262,6 @@ const s = StyleSheet.create({
     width: 88,
     height: 88,
     borderRadius: 44,
-    backgroundColor: '#F3F4F6',
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 16,
@@ -274,19 +270,16 @@ const s = StyleSheet.create({
     fontSize: 17,
     fontFamily: fonts.semiBold,
     fontWeight: '600',
-    color: '#374151',
     marginBottom: 6,
     textAlign: 'center',
   },
   emptySub: {
     fontSize: 14,
     fontFamily: fonts.regular,
-    color: '#9CA3AF',
     textAlign: 'center',
     lineHeight: 20,
   },
   listCard: {
-    backgroundColor: CARD,
     borderRadius: 16,
     overflow: 'hidden',
   },
@@ -307,11 +300,9 @@ const s = StyleSheet.create({
     paddingBottom: 14,
     paddingTop: 0,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: '#F3F4F6',
   },
   txRowBorder: {
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#E5E7EB',
   },
   txLeft: {
     flexDirection: 'row',
@@ -324,7 +315,6 @@ const s = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#EFF6FF',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -336,12 +326,10 @@ const s = StyleSheet.create({
     fontSize: 15,
     fontFamily: fonts.semiBold,
     fontWeight: '600',
-    color: '#111827',
   },
   txTime: {
     fontSize: 12,
     fontFamily: fonts.regular,
-    color: '#9CA3AF',
     marginTop: 2,
   },
   pendingPill: {
@@ -362,11 +350,5 @@ const s = StyleSheet.create({
     fontFamily: fonts.bold,
     fontWeight: '700',
     marginLeft: 8,
-  },
-  txAmountPos: {
-    color: AMOUNT_GREEN,
-  },
-  txAmountNeg: {
-    color: '#DC2626',
   },
 })
