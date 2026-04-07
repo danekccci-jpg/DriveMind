@@ -1,5 +1,10 @@
 // app.config.js reads environment variables and merges them into the Expo
 // config at prebuild / EAS build time. The static app.json is the base.
+//
+// @expo/env: Metro/Gradle must run with NODE_ENV set (development | production | test).
+// If NODE_ENV is unset, only .env and .env.local load — not .env.production — and
+// EXPO_PUBLIC_* keys may be missing during release bundles. Use EAS env or
+// `npm run android:release` / `cross-env NODE_ENV=production ...` for local APK builds.
 const base = require('./app.json')
 
 module.exports = ({ config }) => {

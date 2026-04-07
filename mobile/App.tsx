@@ -43,7 +43,7 @@ export default function App() {
   const { colors: c, isDark } = useTheme()
 
   const fadeAnim = useRef(new Animated.Value(0)).current
-  const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated || s.isLoggedIn)
   const needsNativeGoogleAuth = Platform.OS === 'android' || Platform.OS === 'ios'
   const [authHydrated, setAuthHydrated] = useState(!needsNativeGoogleAuth)
 

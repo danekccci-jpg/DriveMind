@@ -13,8 +13,15 @@ import { useTranslation } from 'react-i18next'
 
 import { useTheme } from '../../theme/theme'
 import { fonts } from '../../theme/typography'
+import i18n from '../../i18n'
 import { useAuthStore } from '../../store/authStore'
-import { signInWithGoogle } from '../../services/googleAuth'
+import { useLanguageStore } from '../../store/languageStore'
+import { useRoleStore } from '../../store/roleStore'
+import {
+  signInWithGoogle,
+  isGoogleSignInDeveloperError,
+  formatGoogleSignInErrorDebug,
+} from '../../services/googleAuth'
 
 export default function LoginScreen() {
   const { t } = useTranslation()
@@ -32,15 +39,21 @@ export default function LoginScreen() {
     setLoading(true)
     try {
       const result = await signInWithGoogle()
-      if (result?.email) {
+      if (result.kind === 'success') {
         setUser(result.name || result.email.split('@')[0], result.email)
+      } else if (result.kind === 'cancelled') {
+        // User closed the picker — no message.
       } else {
-        Alert.alert('', t('login_failed'))
+        const devErr = isGoogleSignInDeveloperError(result.error)
+        const body =
+          (devErr ? t('login_developer_error') : t('login_failed')) +
+          formatGoogleSignInErrorDebug(result.error)
+        Alert.alert(t('login_error_title'), body)
+        console.warn('[DriveMind] Google sign-in failed', result.error)
       }
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
-      console.warn('[DriveMind] Google sign-in', e)
-      Alert.alert(t('login_error_title'), msg)
+      Alert.alert(t('login_error_title'), t('login_failed'))
+      console.warn('[DriveMind] Google sign-in failed', e)
     } finally {
       setLoading(false)
     }
@@ -68,6 +81,22 @@ export default function LoginScreen() {
           </>
         )}
       </TouchableOpacity>
+
+      <TouchableOpacity
+        style={[styles.laterBtn, { borderColor: c.border }]}
+        onPress={() => {
+          const lang = useLanguageStore.getState()
+          if (!lang.hasChosenLanguage) lang.confirmLanguageChoice(lang.language)
+          const rs = useRoleStore.getState()
+          if (!rs.role) rs.setRole('courier')
+          if (!rs.onboardingComplete) rs.setOnboardingComplete(true)
+          setUser(i18n.t('guest_user'), 'guest@drivemind.local')
+        }}
+        activeOpacity={0.85}
+        disabled={loading}
+      >
+        <Text style={[styles.laterLabel, { color: c.textSecondary }]}>{t('login_later')}</Text>
+      </TouchableOpacity>
     </View>
   )
 }
@@ -93,4 +122,13 @@ const styles = StyleSheet.create({
     color: '#4285F4',
   },
   googleLabel: { fontSize: 16, fontFamily: fonts.semiBold, fontWeight: '600' },
+  laterBtn: {
+    marginTop: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  laterLabel: { fontSize: 15, fontFamily: fonts.regular },
 })

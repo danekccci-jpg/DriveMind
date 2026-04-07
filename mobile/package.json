@@ -5,6 +5,9 @@
   "scripts": {
     "start": "expo start",
     "android": "expo run:android",
+    "android:release": "cross-env NODE_ENV=production expo run:android --variant release",
+    "android:release:fresh": "node ./scripts/clean-android-artifacts.js && cross-env NODE_ENV=production expo run:android --variant release --no-build-cache",
+    "android:clean:artifacts": "node ./scripts/clean-android-artifacts.js",
     "ios": "expo run:ios",
     "web": "expo start --web"
   },
@@ -44,6 +47,7 @@
   },
   "devDependencies": {
     "@types/react": "~19.2.10",
+    "cross-env": "^7.0.3",
     "typescript": "~5.9.2"
   },
   "private": true

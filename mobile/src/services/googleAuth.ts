@@ -1,6 +1,13 @@
 import { Platform } from 'react-native'
 
-const WEB_CLIENT_ID = '1042575792605-04pgdgjmv7ulc3rjff4sc8qv8lphlnhr.apps.googleusercontent.com'
+/**
+ * Web application OAuth 2.0 client ID (Google Cloud Console → APIs & Services →
+ * Credentials → OAuth 2.0 Client IDs → type **Web application**).
+ * Do not use the Android/iOS client id here — `@react-native-google-signin/google-signin`
+ * expects the Web client id for `webClientId` on Android.
+ */
+const WEB_CLIENT_ID =
+  '981872670341-f22vp7pvntj3k96sdgtd6jhr5dbqdf8g.apps.googleusercontent.com'
 
 let configured = false
 
@@ -10,29 +17,80 @@ function getNativeModule() {
   return require('@react-native-google-signin/google-signin') as typeof import('@react-native-google-signin/google-signin')
 }
 
-/** Call once at app startup (native). Uses webClientId for server-side token verification on Android. */
+/** Call once at app startup (native). `webClientId` must be the OAuth "Web application" client id. */
 export function configureGoogleSignIn(): void {
   if (Platform.OS === 'web') return
   const { GoogleSignin } = getNativeModule()
   if (configured) return
   GoogleSignin.configure({
     webClientId: WEB_CLIENT_ID,
+    // No backend token exchange in this app — avoids extra serverAuthCode requirements.
     offlineAccess: false,
   })
   configured = true
 }
 
-export async function signInWithGoogle(): Promise<{ name: string; email: string } | null> {
-  if (Platform.OS === 'web') return null
-  const { GoogleSignin, isSuccessResponse } = getNativeModule()
-  configureGoogleSignIn()
-  await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true })
-  const response = await GoogleSignin.signIn()
-  if (isSuccessResponse(response)) {
-    const u = response.data.user
-    return { name: u.name ?? '', email: u.email ?? '' }
+function logGoogleSignInError(e: unknown): void {
+  if (e && typeof e === 'object') {
+    const o = e as Record<string, unknown>
+    console.log('[DriveMind] GoogleSignIn error.code:', o.code)
+    console.log('[DriveMind] GoogleSignIn error.message:', o.message)
+    try {
+      console.log('[DriveMind] GoogleSignIn error (JSON):', JSON.stringify(e, Object.getOwnPropertyNames(e as object)))
+    } catch {
+      console.log('[DriveMind] GoogleSignIn error (object):', e)
+    }
+  } else {
+    console.log('[DriveMind] GoogleSignIn error:', e)
   }
-  return null
+}
+
+/** Result of `signInWithGoogle` — use `kind` so UI can ignore cancel vs show errors. */
+export type GoogleSignInResult =
+  | { kind: 'success'; name: string; email: string }
+  | { kind: 'cancelled' }
+  | { kind: 'error'; error: unknown }
+
+export async function signInWithGoogle(): Promise<GoogleSignInResult> {
+  if (Platform.OS === 'web') {
+    return { kind: 'error', error: new Error('Google sign-in is not available on web') }
+  }
+  const { GoogleSignin, isSuccessResponse, isCancelledResponse } = getNativeModule()
+  configureGoogleSignIn()
+  try {
+    await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true })
+    const response = await GoogleSignin.signIn()
+    if (isCancelledResponse(response)) {
+      return { kind: 'cancelled' }
+    }
+    if (isSuccessResponse(response)) {
+      const u = response.data.user
+      const email = (u.email ?? '').trim()
+      if (!email) {
+        console.warn('[DriveMind] Google sign-in: empty email in profile')
+        return { kind: 'error', error: new Error('No email in Google profile') }
+      }
+      return { kind: 'success', name: u.name ?? '', email }
+    }
+    console.warn('[DriveMind] Google sign-in: unexpected response shape', response)
+    return { kind: 'error', error: new Error('Unexpected Google sign-in response') }
+  } catch (e) {
+    const serialized =
+      e && typeof e === 'object'
+        ? JSON.stringify(e, Object.getOwnPropertyNames(e as object))
+        : String(e)
+    console.error(
+      `[DriveMind] GoogleSignIn full error: ${serialized} | String(e): ${String(e)}`,
+    )
+    if (e && typeof e === 'object' && 'code' in e) {
+      const code = (e as { code: unknown }).code
+      if (code === 10 || code === '10' || code === 12500 || code === '12500') {
+        // SHA-1 mismatch or Developer Console propagation delay.
+      }
+    }
+    logGoogleSignInError(e)
+    return { kind: 'error', error: e }
+  }
 }
 
 export async function signOutGoogle(): Promise<void> {
@@ -46,3 +104,23 @@ export async function signOutGoogle(): Promise<void> {
 }
 
 export { WEB_CLIENT_ID }
+
+/** Android often surfaces misconfigured SHA-1 / OAuth client as DEVELOPER_ERROR (code 10). */
+export function isGoogleSignInDeveloperError(e: unknown): boolean {
+  if (e && typeof e === 'object' && 'code' in e) {
+    const code = (e as { code: unknown }).code
+    if (code === 'DEVELOPER_ERROR' || code === 10 || code === '10') return true
+  }
+  const s = e instanceof Error ? e.message : String(e)
+  return s.includes('DEVELOPER_ERROR')
+}
+
+/** Append to Alert in __DEV__ so you can match adb / Console (code 10 = SHA-1 or OAuth client). */
+export function formatGoogleSignInErrorDebug(e: unknown): string {
+  if (!__DEV__) return ''
+  if (!e || typeof e !== 'object') return `\n\n[debug] ${String(e)}`
+  const o = e as Record<string, unknown>
+  const code = o.code
+  const message = o.message
+  return `\n\n[debug] code=${String(code)} ${String(message ?? '')}`.trimEnd()
+}

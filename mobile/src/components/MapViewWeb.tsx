@@ -26,6 +26,8 @@ if (Platform.OS === 'web') {
   }
   PROVIDER_GOOGLE_VALUE = 'google'
 } else {
+  // Native: use Google Maps on Android/iOS when MapView gets provider={PROVIDER_GOOGLE}.
+  // Android needs Maps SDK + API key (Expo android.config.googleMaps / prebuild); iOS uses ios.config.googleMapsApiKey.
   const RNMaps = require('react-native-maps')
   MapViewComponent = RNMaps.default
   MarkerComponent = RNMaps.Marker

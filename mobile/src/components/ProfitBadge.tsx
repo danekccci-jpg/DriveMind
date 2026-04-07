@@ -7,9 +7,11 @@ interface Props {
   label: ProfitLabel
   score?: number
   showScore?: boolean
+  /** Smaller padding/font for dense rows (e.g. OrderCard). */
+  compact?: boolean
 }
 
-export default function ProfitBadge({ label, score, showScore = false }: Props) {
+export default function ProfitBadge({ label, score, showScore = false, compact = false }: Props) {
   const c = useColors()
   const colorMap: Record<ProfitLabel, { color: string; bg: string }> = {
     GREAT: { color: c.profitGreat, bg: c.profitGreatBg },
@@ -27,13 +29,14 @@ export default function ProfitBadge({ label, score, showScore = false }: Props) 
     <View
       style={[
         styles.badge,
+        compact && styles.badgeCompact,
         {
           backgroundColor: tone.bg,
           borderColor: tone.color,
         },
       ]}
     >
-      <Text style={[styles.text, { color: tone.color }]}>{text}</Text>
+      <Text style={[styles.text, compact && styles.textCompact, { color: tone.color }]}>{text}</Text>
     </View>
   )
 }
@@ -46,8 +49,18 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     paddingHorizontal: 10,
   },
+  badgeCompact: {
+    paddingVertical: 2,
+    paddingHorizontal: 6,
+    borderRadius: 4,
+  },
   text: {
     fontSize: 12,
+    fontWeight: '600',
+    fontFamily: 'Poppins_600SemiBold',
+  },
+  textCompact: {
+    fontSize: 9,
     fontWeight: '600',
     fontFamily: 'Poppins_600SemiBold',
   },

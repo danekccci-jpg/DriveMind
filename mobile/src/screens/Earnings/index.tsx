@@ -37,7 +37,6 @@ export default function EarningsScreen() {
 
   const hasTransactions = transactions.length > 0
   const cardBg = isDark ? c.surface : LIGHT_CARD
-  const txListBg = isDark ? TX_LIST_DARK : LIGHT_CARD
 
   return (
     <ScrollView
@@ -68,7 +67,7 @@ export default function EarningsScreen() {
       <Text style={[s.sectionTitle, { color: c.textSecondary }]}>{t('wallet_transactions')}</Text>
 
       {!hasTransactions ? (
-        <View style={[s.emptyCard, cardShadow, { backgroundColor: cardBg }]}>
+        <View style={[s.emptyCard, cardShadow, { backgroundColor: isDark ? TX_LIST_DARK : cardBg }]}>
           <View style={[s.emptyIconWrap, { backgroundColor: isDark ? c.surfaceAlt : '#F3F4F6' }]}>
             <Feather name="inbox" size={44} color={c.textMuted} />
           </View>
@@ -81,9 +80,9 @@ export default function EarningsScreen() {
             s.listCard,
             cardShadow,
             {
-              backgroundColor: isDark ? txListBg : LIGHT_CARD,
+              backgroundColor: isDark ? TX_LIST_DARK : LIGHT_CARD,
               borderWidth: isDark ? StyleSheet.hairlineWidth : 0,
-              borderColor: isDark ? c.border : 'transparent',
+              borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'transparent',
             },
           ]}
         >
@@ -131,10 +130,14 @@ function TransactionRow({
     tx.dropoffAddress.trim().length > 0
   const distKm = typeof tx.distanceKm === 'number' && Number.isFinite(tx.distanceKm) ? tx.distanceKm : 0
 
+  const rowBg = isDark ? TX_LIST_DARK : undefined
+
   return (
-    <View style={[s.txWrap, !isLast && [s.txRowBorder, { borderBottomColor: c.separator }]]}>
+    <View
+      style={[s.txWrap, !isLast && [s.txRowBorder, { borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : c.separator }]]}
+    >
       <TouchableOpacity
-        style={s.txRow}
+        style={[s.txRow, rowBg != null && { backgroundColor: rowBg }]}
         activeOpacity={hasTrip ? 0.75 : 1}
         onPress={hasTrip ? onToggleExpand : undefined}
         disabled={!hasTrip}
@@ -153,8 +156,8 @@ function TransactionRow({
             </Text>
             <Text style={[s.txTime, { color: c.textMuted }]}>{time}</Text>
             {tx.status === 'PENDING' && (
-              <View style={s.pendingPill}>
-                <Text style={s.pendingPillText}>{t('wallet_status_pending')}</Text>
+              <View style={[s.pendingPill, isDark && s.pendingPillDark]}>
+                <Text style={[s.pendingPillText, isDark && s.pendingPillTextDark]}>{t('wallet_status_pending')}</Text>
               </View>
             )}
           </View>
@@ -175,7 +178,12 @@ function TransactionRow({
         </View>
       </TouchableOpacity>
       {expanded && hasTrip ? (
-        <View style={[s.txTrip, { borderTopColor: c.separator }]}>
+        <View
+          style={[
+            s.txTrip,
+            { borderTopColor: isDark ? 'rgba(255,255,255,0.06)' : c.separator, backgroundColor: isDark ? TX_LIST_DARK : undefined },
+          ]}
+        >
           <RouteSummary
             lightSurface={!isDark}
             compact
@@ -340,10 +348,16 @@ const s = StyleSheet.create({
     borderRadius: 6,
     backgroundColor: '#FFFBEB',
   },
+  pendingPillDark: {
+    backgroundColor: 'rgba(245, 158, 11, 0.12)',
+  },
   pendingPillText: {
     fontSize: 10,
     fontFamily: fonts.medium,
     color: '#D97706',
+  },
+  pendingPillTextDark: {
+    color: '#FBBF24',
   },
   txAmount: {
     fontSize: 15,

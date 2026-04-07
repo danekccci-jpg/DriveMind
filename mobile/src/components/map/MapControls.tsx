@@ -6,19 +6,24 @@ import * as Haptics from 'expo-haptics'
 import { fonts } from '../../theme/typography'
 import { useNavigationSettingsStore } from '../../store/navigationSettingsStore'
 
-const ACCENT = '#1A5CFF'
-const STACK_W = 52
+const BTN = 44
+const GAP = 8
+const BG = 'rgba(0,0,0,0.6)'
+const ICON = '#FFFFFF'
 
 type Props = {
   mapRef: React.RefObject<any>
   userLocation: { latitude: number; longitude: number } | null
   smoothHeading: number
   isDark: boolean
-  /** Pixels from screen bottom for the floating stack */
+  /** Distance from screen bottom to the bottom edge of this stack (keeps controls above the sheet / order card). */
   bottomOffset: number
   onPerspectiveToggle: (perspective3d: boolean) => void
 }
 
+/**
+ * Bottom-right stack: zoom +, zoom −, 2D/3D toggle, compass — stays above the order sheet via `bottomOffset`.
+ */
 export function MapControls({
   mapRef,
   userLocation,
@@ -27,13 +32,10 @@ export function MapControls({
   bottomOffset,
   onPerspectiveToggle,
 }: Props) {
-  const navMuted = useNavigationSettingsStore((s) => s.navMuted)
-  const setNavMuted = useNavigationSettingsStore((s) => s.setNavMuted)
   const mapPerspective3d = useNavigationSettingsStore((s) => s.mapPerspective3d)
   const setMapPerspective3d = useNavigationSettingsStore((s) => s.setMapPerspective3d)
 
   const tint: 'light' | 'dark' = isDark ? 'dark' : 'light'
-  const frostedBg = isDark ? 'rgba(28,28,30,0.88)' : 'rgba(255,255,255,0.92)'
 
   const runZoom = (delta: number) => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
@@ -61,11 +63,6 @@ export function MapControls({
     )
   }
 
-  const toggleMute = () => {
-    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
-    setNavMuted(!navMuted)
-  }
-
   const toggle3d = () => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
     const next = !mapPerspective3d
@@ -73,50 +70,41 @@ export function MapControls({
     onPerspectiveToggle(next)
   }
 
-  const wrap = (children: React.ReactNode, extra: object) =>
+  const circle = (child: React.ReactNode) =>
     Platform.OS === 'ios' ? (
-      <BlurView intensity={85} tint={tint} style={[styles.blurBox, extra]}>
-        {children}
+      <BlurView intensity={48} tint={tint} style={styles.blurCircle}>
+        <View style={styles.circleBlurInner}>{child}</View>
       </BlurView>
     ) : (
-      <View style={[styles.blurBox, { backgroundColor: frostedBg }, extra]}>{children}</View>
+      <View style={styles.circleSolid}>{child}</View>
     )
 
   return (
     <View style={[styles.stack, { bottom: bottomOffset }]} pointerEvents="box-none">
-      {wrap(
-        <TouchableOpacity style={styles.circleBtn} onPress={recenter} activeOpacity={0.75}>
-          <View style={[styles.bearingCircle, { borderColor: ACCENT }]}>
-            <Feather name="arrow-up" size={22} color={ACCENT} style={{ transform: [{ rotate: `${smoothHeading}deg` }] }} />
-          </View>
+      {circle(
+        <TouchableOpacity style={styles.hit} onPress={() => runZoom(1)} activeOpacity={0.75}>
+          <Feather name="plus" size={22} color={ICON} />
         </TouchableOpacity>,
-        {},
       )}
-
-      {wrap(
-        <>
-          <TouchableOpacity style={styles.zoomHit} onPress={() => runZoom(1)} activeOpacity={0.7}>
-            <Text style={styles.zoomGlyph}>+</Text>
-          </TouchableOpacity>
-          <View style={styles.zoomDivider} />
-          <TouchableOpacity style={styles.zoomHit} onPress={() => runZoom(-1)} activeOpacity={0.7}>
-            <Text style={styles.zoomGlyph}>−</Text>
-          </TouchableOpacity>
-        </>,
-        styles.zoomCol,
+      {circle(
+        <TouchableOpacity style={styles.hit} onPress={() => runZoom(-1)} activeOpacity={0.75}>
+          <Feather name="minus" size={22} color={ICON} />
+        </TouchableOpacity>,
       )}
-
-      {wrap(
-        <>
-          <TouchableOpacity style={styles.iconHit} onPress={toggleMute} activeOpacity={0.7}>
-            <Feather name={navMuted ? 'volume-x' : 'volume-2'} size={20} color={ACCENT} />
-          </TouchableOpacity>
-          <View style={styles.vdiv} />
-          <TouchableOpacity style={styles.iconHit} onPress={toggle3d} activeOpacity={0.7}>
-            <Feather name={mapPerspective3d ? 'box' : 'square'} size={20} color={ACCENT} />
-          </TouchableOpacity>
-        </>,
-        styles.rowPair,
+      {circle(
+        <TouchableOpacity style={styles.hit} onPress={toggle3d} activeOpacity={0.75}>
+          <Text style={styles.dim3d}>{mapPerspective3d ? '2D' : '3D'}</Text>
+        </TouchableOpacity>,
+      )}
+      {circle(
+        <TouchableOpacity style={styles.hit} onPress={recenter} activeOpacity={0.75}>
+          <Feather
+            name="arrow-up"
+            size={22}
+            color={ICON}
+            style={{ transform: [{ rotate: `${smoothHeading}deg` }] }}
+          />
+        </TouchableOpacity>,
       )}
     </View>
   )
@@ -125,73 +113,45 @@ export function MapControls({
 const styles = StyleSheet.create({
   stack: {
     position: 'absolute',
-    right: 14,
-    width: STACK_W,
+    right: 16,
     alignItems: 'center',
-    gap: 10,
-    zIndex: 200,
+    gap: GAP,
+    zIndex: 260,
+    elevation: 12,
   },
-  blurBox: {
-    borderRadius: 14,
+  blurCircle: {
+    width: BTN,
+    height: BTN,
+    borderRadius: BTN / 2,
     overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.18,
-    shadowRadius: 10,
-    elevation: 8,
   },
-  circleBtn: {
-    width: STACK_W,
-    height: STACK_W,
+  circleSolid: {
+    width: BTN,
+    height: BTN,
+    borderRadius: BTN / 2,
+    backgroundColor: BG,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  bearingCircle: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    borderWidth: 2,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.65)',
-  },
-  zoomCol: {
-    width: STACK_W,
-    paddingVertical: 4,
-  },
-  zoomHit: {
-    height: 40,
+  circleBlurInner: {
+    width: BTN,
+    height: BTN,
+    borderRadius: BTN / 2,
+    backgroundColor: 'rgba(0,0,0,0.45)',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  zoomGlyph: {
-    fontSize: 22,
-    fontFamily: fonts.bold,
+  hit: {
+    width: BTN,
+    height: BTN,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dim3d: {
+    fontSize: 12,
+    fontFamily: fonts.semiBold,
     fontWeight: '700',
-    color: ACCENT,
-    lineHeight: 26,
-  },
-  zoomDivider: {
-    height: 1,
-    backgroundColor: 'rgba(26,92,255,0.2)',
-    marginHorizontal: 8,
-  },
-  rowPair: {
-    flexDirection: 'row',
-    width: STACK_W + 4,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingVertical: 6,
-  },
-  iconHit: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 8,
-  },
-  vdiv: {
-    width: 1,
-    height: 28,
-    backgroundColor: 'rgba(26,92,255,0.2)',
+    color: ICON,
+    letterSpacing: 0.4,
   },
 })

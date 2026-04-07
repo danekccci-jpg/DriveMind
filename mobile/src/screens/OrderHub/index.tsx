@@ -16,8 +16,8 @@ import { useTranslation } from 'react-i18next'
 import * as Haptics from 'expo-haptics'
 
 import PlatformIcon from '../../components/PlatformIcon'
+import ProfitBadge from '../../components/ProfitBadge'
 import SkeletonCard from '../../components/SkeletonCard'
-import { OrderCard } from '../../components/OrderCard'
 import { useOrdersStore, Order } from '../../store/ordersStore'
 import { useRoleStore } from '../../store/roleStore'
 import { MOCK_ORDERS } from '../../data/mockOrders'
@@ -103,17 +103,38 @@ export default function OrderHubScreen() {
       const a = accent(item.platform)
 
       return (
-        <OrderCard
-          order={item}
-          platformLabel={PLATFORM_LABEL[item.platform] ?? item.platform}
-          profitLabel={result.label}
-          accent={a}
-          c={c}
-          onAccept={() => handleAccept(item)}
-        />
+        <View style={[s.card, { backgroundColor: c.surface, borderColor: c.separator, borderLeftColor: a }]}>
+          <View style={s.cardHeader}>
+            <PlatformIcon platform={item.platform as PlatformId} size={24} />
+            <Text style={[s.cardPlatform, { color: c.text }]}>{PLATFORM_LABEL[item.platform] ?? item.platform}</Text>
+            <ProfitBadge label={result.label} />
+            <Text style={[s.cardPrice, { color: c.text }]}>{item.earnings.toFixed(0)} PLN</Text>
+          </View>
+          <View style={[s.routeInline, { borderColor: c.separator }]}>
+            <Text style={[s.addrLabel, { color: c.textSecondary }]} numberOfLines={1}>
+              A: {item.pickupAddress}
+            </Text>
+            <View style={s.routeMid}>
+              <Text style={[s.routeArrow, { color: c.textMuted }]}>→</Text>
+              <Text style={[s.routeDist, { color: c.text }]}>{item.distanceKm.toFixed(1)} km</Text>
+              <Text style={[s.routeArrow, { color: c.textMuted }]}>→</Text>
+            </View>
+            <Text style={[s.addrLabelRight, { color: c.textSecondary }]} numberOfLines={1}>
+              B: {item.dropoffAddress}
+            </Text>
+          </View>
+          <View style={s.btnRow}>
+            <TouchableOpacity style={[s.acceptBtn, { borderColor: a }]} activeOpacity={0.7} onPress={() => handleAccept(item)}>
+              <Text style={[s.acceptText, { color: a }]}>{t('accept')}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={s.skipBtn} activeOpacity={0.7}>
+              <Text style={[s.skipText, { color: c.textMuted }]}>{t('skip_btn')}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
       )
     },
-    [shiftStats, role, fuelConsumption, lastPlatformActivity, handleAccept, c, accent],
+    [shiftStats, role, fuelConsumption, lastPlatformActivity, handleAccept, t, c, accent],
   )
 
   return (
@@ -125,7 +146,12 @@ export default function OrderHubScreen() {
         </View>
       </View>
 
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.pillsRow}>
+      <ScrollView
+        style={s.pillsScroll}
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={s.pillsRow}
+      >
         {(['all', ...platforms] as const).map((p) => {
           const active = selectedPlatform === p
           return (
@@ -148,23 +174,34 @@ export default function OrderHubScreen() {
         <Text style={[s.bannerValue, { color: c.text }]}>{t('best_zone_now')}: Stare Miasto</Text>
       </View>
 
-      {isLoading ? (
-        <ScrollView contentContainerStyle={s.listPad} showsVerticalScrollIndicator={false}>
-          <SkeletonCard /><SkeletonCard /><SkeletonCard />
-        </ScrollView>
-      ) : (
-        <FlatList
-          data={filteredOrders}
-          keyExtractor={(item) => item.id}
-          renderItem={renderOrder}
-          contentContainerStyle={s.listPad}
-          scrollEventThrottle={1}
-          removeClippedSubviews
-          maxToRenderPerBatch={8}
-          showsVerticalScrollIndicator={false}
-          ListEmptyComponent={<Text style={[s.empty, { color: c.textMuted }]}>{t('no_orders_yet')}</Text>}
-        />
-      )}
+      <View style={s.listWrap}>
+        {isLoading ? (
+          <ScrollView
+            style={s.listFlex}
+            contentContainerStyle={s.listPad}
+            showsVerticalScrollIndicator={false}
+          >
+            <SkeletonCard /><SkeletonCard /><SkeletonCard />
+          </ScrollView>
+        ) : (
+          <FlatList
+            style={s.listFlex}
+            data={filteredOrders}
+            keyExtractor={(item) => item.id}
+            renderItem={renderOrder}
+            contentContainerStyle={s.listPad}
+            scrollEventThrottle={1}
+            removeClippedSubviews
+            maxToRenderPerBatch={8}
+            showsVerticalScrollIndicator={false}
+            ListEmptyComponent={
+              <View style={s.emptyWrap}>
+                <Text style={[s.empty, { color: c.textMuted }]}>{t('no_orders_yet')}</Text>
+              </View>
+            }
+          />
+        )}
+      </View>
 
       <Modal visible={!!pendingConfirmation} transparent animationType="fade">
         <View style={[s.modalOverlay, { backgroundColor: c.overlay }]}>
@@ -200,19 +237,76 @@ export default function OrderHubScreen() {
 }
 
 const s = StyleSheet.create({
-  root: { flex: 1 },
-  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 12, gap: 10 },
+  root: { flex: 1, alignSelf: 'stretch', width: '100%', minHeight: 0 },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    gap: 10,
+    flexShrink: 0,
+  },
+  pillsScroll: { flexGrow: 0, flexShrink: 0 },
   title: { fontSize: 22, fontWeight: '700', fontFamily: fonts.bold },
   countBadge: { borderRadius: 10, paddingHorizontal: 8, paddingVertical: 2 },
   countText: { fontSize: 13, fontFamily: fonts.medium },
-  pillsRow: { paddingHorizontal: 20, gap: 8, paddingBottom: 12 },
+  pillsRow: { paddingHorizontal: 20, gap: 8, paddingBottom: 8 },
   pill: { height: 34, paddingHorizontal: 16, borderRadius: 20, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
   pillText: { fontSize: 13, fontFamily: fonts.medium },
-  banner: { marginHorizontal: 20, marginBottom: 14, borderLeftWidth: 2, borderRadius: 10, paddingVertical: 12, paddingHorizontal: 16 },
+  /** No extra top margin — keeps orders list close under filters */
+  banner: {
+    marginHorizontal: 20,
+    marginTop: 0,
+    marginBottom: 10,
+    borderLeftWidth: 2,
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    flexShrink: 0,
+  },
   bannerLabel: { fontSize: 10, fontFamily: fonts.regular, letterSpacing: 1, marginBottom: 2 },
   bannerValue: { fontSize: 14, fontWeight: '500', fontFamily: fonts.medium },
-  listPad: { paddingHorizontal: 20, paddingBottom: 20 },
-  empty: { textAlign: 'center', marginTop: 60, fontSize: 15, fontFamily: fonts.regular },
+  listWrap: { flex: 1, alignSelf: 'stretch', width: '100%', minHeight: 0 },
+  listFlex: { flex: 1, alignSelf: 'stretch', width: '100%', minHeight: 0 },
+  /** Top-aligned scroll content (no vertical centering) */
+  listPad: {
+    flexGrow: 1,
+    justifyContent: 'flex-start',
+    alignItems: 'stretch',
+    paddingHorizontal: 20,
+    paddingTop: 0,
+    paddingBottom: 20,
+  },
+  emptyWrap: {
+    flexGrow: 1,
+    justifyContent: 'flex-start',
+    alignSelf: 'stretch',
+    paddingTop: 8,
+  },
+  card: { borderWidth: 1, borderLeftWidth: 2, borderRadius: 12, padding: 12, marginBottom: 8 },
+  cardHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 },
+  cardPlatform: { flex: 1, fontSize: 14, fontWeight: '600', fontFamily: fonts.semiBold },
+  cardPrice: { fontSize: 16, fontWeight: '700', fontFamily: fonts.bold, letterSpacing: 1 },
+  routeInline: {
+    minHeight: 36,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  addrLabel: { flex: 1, fontSize: 11, fontFamily: fonts.medium, marginRight: 6 },
+  routeMid: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  routeArrow: { fontSize: 11, fontFamily: fonts.medium },
+  routeDist: { fontSize: 12, fontWeight: '600', fontFamily: fonts.semiBold },
+  addrLabelRight: { flex: 1, fontSize: 11, fontFamily: fonts.medium, marginLeft: 6, textAlign: 'right' },
+  btnRow: { flexDirection: 'row', gap: 8 },
+  acceptBtn: { flex: 1, height: 36, borderRadius: 9, borderWidth: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: 'transparent' },
+  acceptText: { fontSize: 14, fontWeight: '600', fontFamily: fonts.semiBold },
+  skipBtn: { flex: 0.35, height: 36, alignItems: 'center', justifyContent: 'center' },
+  skipText: { fontSize: 13, fontFamily: fonts.regular },
+  empty: { textAlign: 'center', fontSize: 15, fontFamily: fonts.regular },
   modalOverlay: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
   modalCard: { borderRadius: 16, padding: 24, width: '100%', alignItems: 'center', gap: 10 },
   modalTitle: { fontSize: 18, fontWeight: '600', fontFamily: fonts.semiBold, marginTop: 6 },

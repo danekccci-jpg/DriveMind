@@ -14,21 +14,23 @@
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
-        "UIBackgroundModes": ["location"]
+        "UIBackgroundModes": [
+          "location"
+        ]
       },
       "config": {
-        "googleMapsApiKey": "REDACTED_LEGACY_MAPS_KEY"
+        "googleMapsApiKey": "REDACTED_GOOGLE_MAPS_KEY"
       }
     },
     "android": {
-      "package": "com.drivemind.app",
+      "package": "com.guessxx.drivemind",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#000000"
       },
       "config": {
         "googleMaps": {
-          "apiKey": "REDACTED_LEGACY_MAPS_KEY"
+          "apiKey": "REDACTED_GOOGLE_MAPS_KEY"
         }
       },
       "permissions": [
@@ -57,9 +59,16 @@
       [
         "@react-native-google-signin/google-signin",
         {
-          "iosUrlScheme": "com.googleusercontent.apps.1042575792605-04pgdgjmv7ulc3rjff4sc8qv8lphlnhr"
+          "iosUrlScheme": "com.googleusercontent.apps.981872670341-ddggrmam043qm34b1rqgtahn38bpbual"
         }
       ]
-    ]
+    ],
+    "extra": {
+      "backendUrl": "",
+      "googleMapsApiKey": "REDACTED_GOOGLE_MAPS_KEY",
+      "eas": {
+        "projectId": "0e7f5b9f-e8df-4452-9734-a1389b746d94"
+      }
+    }
   }
 }

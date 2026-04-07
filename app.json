@@ -1,0 +1,10 @@
+{
+  "android": {
+    "package": "com.guessxx.drivemind"
+  },
+  "extra": {
+    "eas": {
+      "projectId": "0e7f5b9f-e8df-4452-9734-a1389b746d94"
+    }
+  }
+}

@@ -164,89 +164,110 @@ export async function getDirections(
       '[DriveMind] Directions API is not configured. Set EXPO_PUBLIC_DIRECTIONS_PROXY_URL or EXPO_PUBLIC_GOOGLE_MAPS_API_KEY (or legacy EXPO_PUBLIC_GOOGLE_MAPS_KEY).',
     )
   }
-  console.warn('[DriveMind] Using client-side Directions API key. Prefer EXPO_PUBLIC_DIRECTIONS_PROXY_URL to avoid key exposure.')
-  console.log(
-    '[DriveMind] Using Key ending in:',
-    key.length >= 4 ? key.slice(-4) : `(len ${key.length})`,
-  )
+  console.warn('[DriveMind] Using client-side Routes API key. Prefer EXPO_PUBLIC_DIRECTIONS_PROXY_URL to avoid key exposure.')
 
-  const url = new URL('https://maps.googleapis.com/maps/api/directions/json')
-  url.searchParams.set('origin', `${coordToken(originLat)},${coordToken(originLng)}`)
-  url.searchParams.set('destination', `${coordToken(destLat)},${coordToken(destLng)}`)
-  url.searchParams.set('mode', mode)
-  url.searchParams.set('language', lang)
-  if (nav.avoidTolls) {
-    url.searchParams.set('avoid', 'tolls')
+  // ── Routes API v2 (POST) ──────────────────────────────────────────────────
+  // Replaces the legacy Directions GET API.  The field mask intentionally omits
+  // step-level detail because Routes v2 step instructions require the
+  // routes.legs.steps.navigationInstruction field which has a separate billing
+  // SKU.  We decode the overview polyline and surface a single progress step.
+  const routesApiMode = mode === 'bicycling' ? 'BICYCLE' : 'DRIVE'
+  const routingPreference = (nav.trafficAware && mode !== 'bicycling')
+    ? 'TRAFFIC_AWARE'
+    : 'TRAFFIC_UNAWARE'
+
+  const body = {
+    origin: {
+      location: { latLng: { latitude: originLat, longitude: originLng } },
+    },
+    destination: {
+      location: { latLng: { latitude: destLat, longitude: destLng } },
+    },
+    travelMode: routesApiMode,
+    routingPreference,
+    ...(nav.avoidTolls ? { routeModifiers: { avoidTolls: true } } : {}),
+    languageCode: lang,
+    computeAlternativeRoutes: false,
   }
-  if (nav.trafficAware && mode === 'driving') {
-    url.searchParams.set('departure_time', String(Math.floor(Date.now() / 1000)))
-  }
-  url.searchParams.set('key', key)
 
-  const sanitized =
-    `${url.origin}${url.pathname}?` +
-    [...url.searchParams.entries()]
-      .map(([k, v]) => (k === 'key' ? `${k}=***` : `${k}=${v}`))
-      .join('&')
-  console.log('[DriveMind] Directions GET (sanitized):', sanitized)
+  console.log('[DriveMind] Routes API POST body:', JSON.stringify(body).slice(0, 400))
 
-  const response = await fetch(url.toString(), {
-    headers: { Accept: 'application/json' },
+  const response = await fetch('https://routes.googleapis.com/directions/v2:computeRoutes', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Goog-Api-Key': key,
+      'X-Goog-FieldMask': 'routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline',
+    },
+    body: JSON.stringify(body),
   })
 
   const responseText = await response.text()
-  console.log('[DriveMind] RAW GOOGLE RESPONSE:', responseText.slice(0, 4000))
+  console.log('[DriveMind] RAW ROUTES API RESPONSE:', responseText.slice(0, 4000))
 
-  let json: { status?: string; error_message?: string; routes?: any[] }
+  let json: { routes?: any[]; error?: { message?: string; status?: string } }
   try {
     json = JSON.parse(responseText) as typeof json
   } catch (e) {
-    throw new Error(`[DriveMind] Directions API returned non-JSON (${String(e)}). First bytes: ${responseText.slice(0, 200)}`)
+    throw new Error(`[DriveMind] Routes API returned non-JSON (${String(e)}). First bytes: ${responseText.slice(0, 200)}`)
   }
 
   if (!response.ok) {
     throw new Error(
-      `[DriveMind] Directions API HTTP ${response.status} — ${json.error_message ?? responseText.slice(0, 500)}`,
+      `[DriveMind] Routes API HTTP ${response.status} — ${json.error?.message ?? responseText.slice(0, 500)}`,
     )
   }
 
-  if (json.status !== 'OK') {
-    throw new Error(`[DriveMind] Directions API error: ${json.status} — ${json.error_message ?? ''}`)
-  }
-
   const route = json.routes?.[0]
-  const leg = route?.legs?.[0]
-  const encoded = route?.overview_polyline?.points
-  if (!leg) {
-    throw new Error('[DriveMind] Directions API: missing legs in response')
+  if (!route) {
+    throw new Error('[DriveMind] Routes API: no route returned')
   }
 
+  const encoded: string | undefined = route.polyline?.encodedPolyline
   const polylinePoints = decodePolyline(encoded)
   if (polylinePoints.length === 0) {
-    console.warn('[DriveMind] overview_polyline decoded to 0 points; map may not show a route')
+    console.warn('[DriveMind] Routes API: encodedPolyline decoded to 0 points; map may not show a route')
   }
 
-  const rawSteps = (leg.steps as any[]) ?? []
-  const steps: RouteStep[] = rawSteps.map((step) => {
-    const pts = step.polyline?.points ? decodePolyline(step.polyline.points) : undefined
-    return {
-      instruction: stripHtml(step.html_instructions ?? ''),
-      distanceText: step.distance?.text ?? '',
-      durationText: step.duration?.text ?? '',
-      distanceMeters: typeof step.distance?.value === 'number' ? step.distance.value : 0,
-      durationSeconds: typeof step.duration?.value === 'number' ? step.duration.value : 0,
-      maneuver: typeof step.maneuver === 'string' ? step.maneuver : undefined,
-      polylinePoints: pts && pts.length > 0 ? pts : undefined,
-    }
-  })
+  // Routes v2 returns duration as a string like "123s"
+  const rawDuration: string | undefined = route.duration
+  const durationSecondsTotal = rawDuration
+    ? parseInt(rawDuration.replace(/[^0-9]/g, ''), 10) || 0
+    : 0
+  const distanceMeters: number = typeof route.distanceMeters === 'number' ? route.distanceMeters : 0
 
-  const durationSecondsTotal =
-    typeof leg.duration?.value === 'number' ? leg.duration.value : 0
+  // Format human-readable strings (Routes v2 does not return text labels in the
+  // minimal field mask — we compute them locally to avoid billing extra fields).
+  const distanceKmVal = distanceMeters / 1000
+  const distanceText =
+    distanceKmVal >= 1
+      ? `${distanceKmVal.toFixed(1)} km`
+      : `${distanceMeters} m`
+
+  const totalMin = Math.round(durationSecondsTotal / 60)
+  const durationText =
+    totalMin >= 60
+      ? `${Math.floor(totalMin / 60)} h ${totalMin % 60} min`
+      : `${totalMin} min`
+
+  // Routes v2 step instructions require an extra field mask SKU — we surface a
+  // single synthetic step from the route summary so HUD distance/ETA still work.
+  const steps: RouteStep[] = [
+    {
+      instruction: '',
+      distanceText,
+      durationText,
+      distanceMeters,
+      durationSeconds: durationSecondsTotal,
+      maneuver: undefined,
+      polylinePoints: polylinePoints.length > 0 ? polylinePoints : undefined,
+    },
+  ]
 
   return {
     polylinePoints,
-    distanceText: leg.distance?.text ?? '',
-    durationText: leg.duration?.text ?? '',
+    distanceText,
+    durationText,
     durationSecondsTotal,
     steps,
   }

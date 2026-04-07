@@ -16,9 +16,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useTranslation } from 'react-i18next'
 import * as Location from 'expo-location'
 import * as Haptics from 'expo-haptics'
-import { MaterialCommunityIcons } from '@expo/vector-icons'
+import { MaterialCommunityIcons, Feather } from '@expo/vector-icons'
 
-import MapView, { Marker, MarkerAnimated, AnimatedRegion, PROVIDER_GOOGLE } from '../../components/MapViewWeb'
+import MapView, { Marker, MarkerAnimated, AnimatedRegion } from '../../components/MapViewWeb'
 import { NavigationMapLayers } from '../../components/navigation/NavigationMapLayers'
 import { NavigationHud } from '../../components/navigation/NavigationHud'
 import { PlayerNavMarker } from '../../components/navigation/PlayerNavMarker'
@@ -48,42 +48,25 @@ import { useDriverSessionStore } from '../../store/driverSessionStore'
 import { fonts } from '../../theme/typography'
 import { useTheme, type AppColors } from '../../theme/theme'
 import { ProfitLabel } from '../../engine/profitEngine'
+import { PROVIDER_GOOGLE } from 'react-native-maps'
+import { MAP_STYLE_DARK, MAP_STYLE_LIGHT } from '../../map/mapStyles'
 
 const TAB_BAR_HEIGHT = 60
-
-const DARK_MAP_STYLE = [
-  { elementType: 'geometry', stylers: [{ color: '#0A0A0A' }] },
-  { elementType: 'labels.text.fill', stylers: [{ color: '#EFEFEF' }] },
-  { elementType: 'labels.text.stroke', stylers: [{ color: '#0A0A0A' }] },
-  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#1A1A1A' }] },
-  { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#2A2A2A' }] },
-  { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#202020' }] },
-  { featureType: 'road.highway', elementType: 'geometry.stroke', stylers: [{ color: '#FFFFFF' }] },
-  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#050505' }] },
-  { featureType: 'poi', elementType: 'geometry', stylers: [{ color: '#111111' }] },
-  { featureType: 'transit', stylers: [{ visibility: 'off' }] },
-  { featureType: 'poi', elementType: 'labels', stylers: [{ visibility: 'off' }] },
-]
-
-const LIGHT_MAP_STYLE = [
-  { elementType: 'geometry', stylers: [{ color: '#FFFFFF' }] },
-  { elementType: 'labels.text.fill', stylers: [{ color: '#666666' }] },
-  { elementType: 'labels.text.stroke', stylers: [{ color: '#FFFFFF' }] },
-  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#EDEDED' }] },
-  { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#D8D8D8' }] },
-  { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#E3E3E3' }] },
-  { featureType: 'road.highway', elementType: 'geometry.stroke', stylers: [{ color: '#CFCFCF' }] },
-  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#F3F3F3' }] },
-  { featureType: 'poi', elementType: 'geometry', stylers: [{ color: '#F5F5F5' }] },
-  { featureType: 'transit', stylers: [{ visibility: 'off' }] },
-  { featureType: 'poi', elementType: 'labels', stylers: [{ visibility: 'off' }] },
-]
+/** Vertical gap between map controls and the order window. */
+const MAP_CONTROLS_SHEET_GAP = 20
 
 const KRAKOW_REGION = {
   latitude: 50.0614,
   longitude: 19.9366,
   latitudeDelta: 0.06,
   longitudeDelta: 0.06,
+}
+
+/** Short street line for compact Ride card (first segment before comma). */
+function rideStreetLine(full: string): string {
+  const s = full?.trim() || '—'
+  const i = s.indexOf(',')
+  return i > 0 ? s.slice(0, i).trim() : s
 }
 
 function Pill({ label, c }: { label: string; c: AppColors }) {
@@ -99,7 +82,6 @@ export default function DashboardScreen() {
   const insets = useSafeAreaInsets()
   const { colors: c, isDark } = useTheme()
 
-  const mapAppearance = useNavigationSettingsStore((s) => s.mapAppearance)
   const markerStyle = useNavigationSettingsStore((s) => s.markerStyle)
   const units = useNavigationSettingsStore((s) => s.units)
   const mapPerspective3d = useNavigationSettingsStore((s) => s.mapPerspective3d)
@@ -135,6 +117,9 @@ export default function DashboardScreen() {
   const userLocationRef = useRef<LatLng | null>(null)
   const smoothHeadingRef = useRef(0)
 
+  /** Full height of the order window (stats + card) — drives map controls anchor above the sheet. */
+  const [orderWindowHeight, setOrderWindowHeight] = useState(0)
+
   const animatedCoord = useRef(
     new AnimatedRegion({
       latitude: KRAKOW_REGION.latitude,
@@ -151,12 +136,8 @@ export default function DashboardScreen() {
   const routePolylineSafe = routePolyline ?? []
   const suggestion = activeOrder ?? getDashboardSuggestionOrder(role as 'courier' | 'taxi')
 
-  const mapControlsBottomOffset = useMemo(() => {
-    const base = insets.bottom + 168
-    const extra =
-      isNavigating && activeOrder?.dropoffAddress?.trim() ? 48 : 0
-    return base + extra
-  }, [insets.bottom, isNavigating, activeOrder?.dropoffAddress])
+  /** Zoom / compass stack floats above the order window: measured height + gap. */
+  const mapControlsBottomOffset = orderWindowHeight + MAP_CONTROLS_SHEET_GAP
 
   const destCoordNav: LatLng | null = useMemo(() => {
     if (!isNavigating || !activeOrder) return null
@@ -387,13 +368,31 @@ export default function DashboardScreen() {
     [userLocation, smoothHeading],
   )
 
-  const mapStyleForMap = useMemo(() => {
-    if (mapAppearance === 'light') return LIGHT_MAP_STYLE
-    if (mapAppearance === 'dark') return DARK_MAP_STYLE
-    return isDark ? DARK_MAP_STYLE : LIGHT_MAP_STYLE
-  }, [mapAppearance, isDark])
+  const mapStyleForMap = useMemo(
+    () => (isDark ? MAP_STYLE_DARK : MAP_STYLE_LIGHT),
+    [isDark],
+  )
 
-  const mapRemountKey = `${mapAppearance}-${markerStyle}-${isDark}`
+  /**
+   * Two-step style application (Android Fabric / LEGACY renderer):
+   *   1. key prop forces a full native remount on theme change.
+   *   2. customMapStyle is withheld until onMapReady fires.
+   *   3. 150 ms timeout pushes the style after the native surface is fully settled,
+   *      preventing GMS from overwriting it during its own init sequence.
+   */
+  const [isMapReady, setIsMapReady] = useState(false)
+  useEffect(() => {
+    setIsMapReady(false)
+  }, [isDark])
+
+  const onMapReady = useCallback(() => {
+    const id = setTimeout(() => setIsMapReady(true), 150)
+    return () => clearTimeout(id)
+  }, [])
+
+  useEffect(() => {
+    if (Platform.OS === 'web') setIsMapReady(true)
+  }, [])
 
   useEffect(() => {
     if (!isNavigating || !userLocation) return
@@ -634,11 +633,20 @@ export default function DashboardScreen() {
     <View style={[s.root, { backgroundColor: c.tabBar }]}>
       <View style={s.mapFill}>
       <MapView
-        key={mapRemountKey}
+        key={isDark ? 'map-dark' : 'map-light'}
         ref={mapRef}
         style={StyleSheet.absoluteFill}
         provider={PROVIDER_GOOGLE}
-        customMapStyle={mapStyleForMap}
+        mapType="standard"
+        googleRenderer={Platform.OS === 'android' ? 'LEGACY' : undefined}
+        userInterfaceStyle="light"
+        customMapStyle={isMapReady ? mapStyleForMap : undefined}
+        onMapReady={onMapReady}
+        showsScale={false}
+        showsPointsOfInterests={false}
+        showsBuildings={false}
+        showsIndoors={false}
+        showsTraffic={false}
         showsUserLocation={!isNavigating}
         showsMyLocationButton={false}
         initialRegion={userLocation ? { ...userLocation, latitudeDelta: 0.02, longitudeDelta: 0.02 } : KRAKOW_REGION}
@@ -667,14 +675,6 @@ export default function DashboardScreen() {
 
       {isNavigating && activeOrder && (
         <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
-          <MapControls
-            mapRef={mapRef}
-            userLocation={userLocation}
-            smoothHeading={smoothHeading}
-            isDark={isDark}
-            bottomOffset={mapControlsBottomOffset}
-            onPerspectiveToggle={onPerspectiveToggle}
-          />
           <NavigationHud
             maneuver={routeSteps?.[0]?.maneuver}
             distanceLine={distanceLine}
@@ -708,35 +708,56 @@ export default function DashboardScreen() {
         </View>
       )}
 
-      {/* Bottom sheet */}
-      <View style={[s.sheet, { paddingBottom: insets.bottom + 6, backgroundColor: c.tabBar, borderTopColor: c.tabBarBorder }]}>
-        <View style={[s.pullBar, { backgroundColor: c.border, marginBottom: 10 }]} />
+      {/* Bottom sheet — order window */}
+      <View
+        onLayout={(event) => {
+          const { height } = event.nativeEvent.layout
+          setOrderWindowHeight(height)
+        }}
+        style={[s.sheet, { paddingBottom: insets.bottom + 5, backgroundColor: c.tabBar, borderTopColor: c.tabBarBorder }]}
+      >
+        <View>
+          <View style={[s.pullBar, { backgroundColor: c.border, marginBottom: 10 }]} />
 
-        <View style={s.statsRow}>
-          <StatCol label={t('earnings_label')} value={`${shiftStats.totalEarnings.toFixed(0)} PLN`} c={c} compact />
-          <View style={[s.statDivider, { backgroundColor: c.separator }]} />
-          <StatCol label={t('orders_label')} value={String(shiftStats.completedOrders)} c={c} compact />
-          <View style={[s.statDivider, { backgroundColor: c.separator }]} />
-          <StatCol label={t('hours_online')} value={`${hoursOnline.toFixed(1)}h`} c={c} compact />
+          <View style={s.statsRow}>
+            <StatCol label={t('earnings_label')} value={`${shiftStats.totalEarnings.toFixed(0)} PLN`} c={c} compact />
+            <View style={[s.statDivider, { backgroundColor: c.separator }]} />
+            <StatCol label={t('orders_label')} value={String(shiftStats.completedOrders)} c={c} compact />
+            <View style={[s.statDivider, { backgroundColor: c.separator }]} />
+            <StatCol label={t('hours_online')} value={`${hoursOnline.toFixed(1)}h`} c={c} compact />
+          </View>
         </View>
 
         {isNavigating && activeOrder ? (
           <View style={{ height: 8 }} />
         ) : (
-          <View style={[s.suggCard, { backgroundColor: c.card, borderColor: c.separator }]}>
+          <View
+            style={[s.suggCard, { backgroundColor: c.card, borderColor: c.separator }]}
+          >
             <View style={s.suggHeader}>
-              <PlatformIcon platform={suggestion.platform as any} size={32} active />
-              <Text style={[s.suggPlatform, { color: c.text }]}>{platformName}</Text>
+              <PlatformIcon platform={suggestion.platform as any} size={26} active />
+              <Text style={[s.suggPlatform, { color: c.text }]} numberOfLines={1}>
+                {platformName}
+              </Text>
               <ProfitBadge label={suggestion.profitLabel as ProfitLabel} />
               <Text style={[s.suggPrice, { color: c.text }]}>{suggestion.earnings.toFixed(0)} PLN</Text>
             </View>
-            <View style={s.suggRoute}>
-              <RouteSummary
-                compact
-                pickupAddress={suggestion.pickupAddress}
-                dropoffAddress={suggestion.dropoffAddress}
-                distanceKm={suggestion.distanceKm}
-              />
+            <View style={[s.suggAddrRow, { borderColor: c.separator }]}>
+              <Text
+                style={[s.suggAddrText, { color: c.text }]}
+                numberOfLines={1}
+                ellipsizeMode="tail"
+              >
+                {rideStreetLine(suggestion.pickupAddress)}
+              </Text>
+              <Feather name="arrow-right" size={14} color={c.textMuted} style={s.suggAddrSep} />
+              <Text
+                style={[s.suggAddrText, s.suggAddrTextRight, { color: c.text }]}
+                numberOfLines={1}
+                ellipsizeMode="tail"
+              >
+                {rideStreetLine(suggestion.dropoffAddress)}
+              </Text>
             </View>
             <View style={s.pillRow}>
               <Pill label={`${suggestion.distanceKm.toFixed(1)} km`} c={c} />
@@ -749,6 +770,17 @@ export default function DashboardScreen() {
           </View>
         )}
       </View>
+
+      {Platform.OS !== 'web' && (
+        <MapControls
+          mapRef={mapRef}
+          userLocation={userLocation}
+          smoothHeading={smoothHeading}
+          isDark={isDark}
+          bottomOffset={mapControlsBottomOffset}
+          onPerspectiveToggle={onPerspectiveToggle}
+        />
+      )}
 
       {/* Confirmation modal */}
       <Modal visible={!!pendingConfirmation} transparent animationType="fade">
@@ -792,32 +824,70 @@ function StatCol({ label, value, c, compact = false }: { label: string; value: s
 }
 
 const s = StyleSheet.create({
-  root: { flex: 1 },
-  mapFill: { flex: 1, width: '100%' },
+  root: { flex: 1, alignSelf: 'stretch', width: '100%' },
+  mapFill: { flex: 1, width: '100%', alignSelf: 'stretch' },
   header: { position: 'absolute', left: 20, right: 20, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   headerTitle: { fontSize: 17, fontWeight: '600', fontFamily: fonts.semiBold },
   rolePill: { flexDirection: 'row', alignItems: 'center', gap: 6, borderWidth: 1, borderRadius: 20, paddingHorizontal: 12, paddingVertical: 5 },
   rolePillText: { fontSize: 12, fontFamily: fonts.medium, textTransform: 'capitalize' },
-  sheet: { position: 'absolute', left: 0, right: 0, bottom: 0, borderTopLeftRadius: 18, borderTopRightRadius: 18, borderTopWidth: 0.5, paddingHorizontal: 16, paddingTop: 8, paddingBottom: TAB_BAR_HEIGHT },
-  pullBar: { width: 36, height: 4, borderRadius: 2, alignSelf: 'center', marginBottom: 16 },
-  statsRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
+  sheet: {
+    position: 'absolute',
+    left: -1,
+    right: -1,
+    bottom: -1,
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
+    borderTopWidth: 0.5,
+    paddingHorizontal: 15,
+    paddingTop: 6,
+    paddingBottom: TAB_BAR_HEIGHT,
+  },
+  pullBar: { width: 36, height: 4, borderRadius: 2, alignSelf: 'center', marginBottom: 8 },
+  statsRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 6 },
   statCol: { flex: 1, alignItems: 'center' },
   statDivider: { width: 1, height: 24 },
   statLabel: { fontSize: 11, fontFamily: fonts.regular, letterSpacing: 0.5, marginBottom: 2 },
   statValue: { fontSize: 26, fontWeight: '700', fontFamily: fonts.bold },
   statValueCompact: { fontSize: 20, fontWeight: '700', fontFamily: fonts.bold },
-  suggCard: { borderWidth: 1, borderRadius: 12, padding: 12, marginBottom: 6 },
-  suggHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 },
-  suggRoute: { width: '100%', marginBottom: 4 },
-  suggPlatform: { flex: 1, fontSize: 15, fontWeight: '600', fontFamily: fonts.semiBold },
-  suggPrice: { fontSize: 18, fontWeight: '700', fontFamily: fonts.bold },
+  suggCard: {
+    borderWidth: 1,
+    borderRadius: 6,
+    paddingVertical: 5,
+    paddingHorizontal: 8,
+    marginBottom: 0,
+    marginHorizontal: -1,
+  },
+  suggHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 },
+  suggAddrRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    minHeight: 36,
+    maxHeight: 110,
+    paddingVertical: 4,
+    marginBottom: 4,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingTop: 5,
+    gap: 0,
+  },
+  suggAddrText: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: 11,
+    lineHeight: 14,
+    fontFamily: fonts.medium,
+    fontWeight: '500',
+  },
+  suggAddrTextRight: { textAlign: 'right' },
+  suggAddrSep: { paddingHorizontal: 4, flexShrink: 0 },
+  suggPlatform: { flex: 1, fontSize: 14, fontWeight: '600', fontFamily: fonts.semiBold, minWidth: 0 },
+  suggPrice: { fontSize: 16, fontWeight: '700', fontFamily: fonts.bold, flexShrink: 0 },
   addressLabel: { fontSize: 11, fontFamily: fonts.regular, letterSpacing: 0.5, marginBottom: 3 },
   addressValue: { fontSize: 13, fontFamily: fonts.regular, marginBottom: 8 },
-  pillRow: { flexDirection: 'row', gap: 6, marginBottom: 8 },
+  pillRow: { flexDirection: 'row', gap: 5, marginBottom: 5 },
   pill: { borderRadius: 6, paddingHorizontal: 8, paddingVertical: 5 },
   pillText: { fontSize: 12, fontFamily: fonts.regular },
-  acceptBtn: { height: 42, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  acceptBtn: { height: 38, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
   acceptBtnText: { fontSize: 15, fontWeight: '600', fontFamily: fonts.semiBold },
   modalOverlay: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
   modalCard: { borderRadius: 16, padding: 24, width: '100%', alignItems: 'center', gap: 10 },
