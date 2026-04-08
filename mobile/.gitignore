@@ -2,66 +2,53 @@
 node_modules/
 .pnp
 *.pnp.js
-mobile/node_modules/
+package-lock.json
 
-# --- ANDROID (CRITICAL: Source is kept, Junk is ignored) ---
-mobile/android/.gradle/
-mobile/android/build/
-mobile/android/app/build/
-mobile/android/.idea/
-mobile/android/local.properties
-mobile/android/*.iml
-mobile/android/GeneratedPluginRegistrant.java
-mobile/android/.cxx/
-mobile/android/.externalNativeBuild/
+# --- ANDROID (Native Source is kept, Build/Cache ignored) ---
+android/.gradle/
+android/build/
+android/app/build/
+android/.idea/
+android/local.properties
+android/*.iml
+android/GeneratedPluginRegistrant.java
+android/.cxx/
 
-# --- IOS ---
-mobile/ios/build/
-mobile/ios/Pods/
-mobile/ios/DerivedData/
-mobile/ios/*.xcworkspace/xcuserdata/
-mobile/ios/*.xcodeproj/xcuserdata/
-mobile/ios/*.xcodeproj/project.xcworkspace/
-mobile/ios/.lsan/
+# --- IOS (If exists) ---
+ios/build/
+ios/Pods/
 
-# --- SECURITY & KEYS (NEVER COMMIT THESE) ---
-*.jks
-*.keystore
-*.p12
-*.key
-*.pem
-*.p8
-*.mobileprovision
-.env
-.env.local
-.env.production
-.env.staging
-mobile/.env*
-
-# --- METRO & BUNDLERS ---
+# --- EXPO & METRO ---
 .expo/
 dist/
 web-build/
 .metro-health-check*
 *.tsbuildinfo
 
-# --- SYSTEM FILES ---
+# --- SECURITY (Keystore and Env) ---
+*.jks
+*.keystore
+*.p12
+*.key
+*.pem
+.env*
+eas.json
+
+# --- SYSTEM & MEDIA ---
 .DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
+.cursor/
+.vscode/
+*.png
+*.jpg
+*.jpeg
+*.svg
 
 # --- DEBUG & LOGS ---
 npm-debug.*
 yarn-debug.*
 yarn-error.*
 *.log
-.pnpm-debug.log*
 
-# --- NEXT.JS / WEB (If applicable) ---
-.next/
-out/
-.vercel
+# --- PROJECT SPECIFIC ---
+backend/node_modules/
+mobile/node_modules/
