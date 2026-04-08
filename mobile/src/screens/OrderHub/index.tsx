@@ -10,6 +10,7 @@ import {
   AppState,
   AppStateStatus,
   Alert,
+  Platform,
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useTranslation } from 'react-i18next'
@@ -23,6 +24,8 @@ import { useRoleStore } from '../../store/roleStore'
 import { MOCK_ORDERS } from '../../data/mockOrders'
 import { calculateProfitScore } from '../../engine/profitEngine'
 import { openPlatformDeepLink } from '../../utils/platformDeepLink'
+import { triggerScraperWindow } from '../../services/driverIngestBridge'
+import { useDriverIngestStore, type IngestedOffer } from '../../store/driverIngestStore'
 import { fonts } from '../../theme/typography'
 import { useColors } from '../../theme/theme'
 
@@ -42,6 +45,10 @@ export default function OrderHubScreen() {
     shiftStats, lastPlatformActivity, pendingConfirmation,
     setPendingConfirmation, confirmOrder, rejectOrder,
   } = useOrdersStore()
+
+  const activeIngestSlot = useDriverIngestStore((s) => s.activeRide)
+  const backgroundIngest = useDriverIngestStore((s) => s.backgroundOrders)
+  const dismissActiveIngest = useDriverIngestStore((s) => s.dismissActiveRide)
 
   const [selectedPlatform, setSelectedPlatform] = useState<PlatformId | 'all'>('all')
   const [isLoading, setIsLoading] = useState(true)
@@ -72,6 +79,7 @@ export default function OrderHubScreen() {
 
   const handleAccept = useCallback(async (order: Order) => {
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
+    if (Platform.OS === 'android') triggerScraperWindow()
     pendingOrderRef.current = order
     openPlatformDeepLink(order.platform)
   }, [])
@@ -137,6 +145,34 @@ export default function OrderHubScreen() {
     [shiftStats, role, fuelConsumption, lastPlatformActivity, handleAccept, t, c, accent],
   )
 
+  const ingestHeader = useMemo(() => {
+    if (Platform.OS !== 'android') return null
+    if (!activeIngestSlot && backgroundIngest.length === 0) return null
+    const row = (label: string, o: IngestedOffer, keyId: string) => (
+      <View key={keyId} style={[s.ingestCard, { backgroundColor: c.surface, borderColor: c.border }]}>
+        <Text style={[s.ingestBadge, { color: c.primary }]}>{label}</Text>
+        <Text style={[s.ingestPlatform, { color: c.text }]}>{o.platform.toUpperCase()}</Text>
+        {o.price ? <Text style={[s.ingestLine, { color: c.text }]}>{o.price}</Text> : null}
+        {o.destination ? <Text style={[s.ingestLine, { color: c.textSecondary }]} numberOfLines={2}>{o.destination}</Text> : null}
+        <Text style={[s.ingestLine, { color: c.textMuted }]} numberOfLines={2}>{o.title}: {o.text}</Text>
+      </View>
+    )
+    return (
+      <View style={s.ingestBlock}>
+        <Text style={[s.ingestTitle, { color: c.textMuted }]}>{t('driver_ingest_section')}</Text>
+        {activeIngestSlot ? (
+          <View>
+            {row(t('driver_ingest_active'), activeIngestSlot, 'ingest-active')}
+            <TouchableOpacity onPress={() => dismissActiveIngest()} style={s.ingestDismiss}>
+              <Text style={{ color: c.textMuted, fontSize: 12 }}>{t('driver_ingest_dismiss')}</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
+        {backgroundIngest.map((o) => row(t('driver_ingest_queued'), o, o.id))}
+      </View>
+    )
+  }, [activeIngestSlot, backgroundIngest, c, dismissActiveIngest, t])
+
   return (
     <View style={[s.root, { paddingTop: insets.top, backgroundColor: c.bg }]}>
       <View style={s.header}>
@@ -194,6 +230,7 @@ export default function OrderHubScreen() {
             removeClippedSubviews
             maxToRenderPerBatch={8}
             showsVerticalScrollIndicator={false}
+            ListHeaderComponent={ingestHeader}
             ListEmptyComponent={
               <View style={s.emptyWrap}>
                 <Text style={[s.empty, { color: c.textMuted }]}>{t('no_orders_yet')}</Text>
@@ -307,6 +344,24 @@ const s = StyleSheet.create({
   skipBtn: { flex: 0.35, height: 36, alignItems: 'center', justifyContent: 'center' },
   skipText: { fontSize: 13, fontFamily: fonts.regular },
   empty: { textAlign: 'center', fontSize: 15, fontFamily: fonts.regular },
+  ingestBlock: { marginBottom: 12, alignSelf: 'stretch' },
+  ingestTitle: {
+    fontSize: 11,
+    fontFamily: fonts.medium,
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+    marginBottom: 8,
+  },
+  ingestCard: {
+    borderWidth: 1,
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 8,
+  },
+  ingestBadge: { fontSize: 10, fontFamily: fonts.semiBold, marginBottom: 4 },
+  ingestPlatform: { fontSize: 13, fontFamily: fonts.semiBold, marginBottom: 4 },
+  ingestLine: { fontSize: 12, fontFamily: fonts.regular, marginTop: 2 },
+  ingestDismiss: { alignSelf: 'flex-start', marginBottom: 8, paddingVertical: 4 },
   modalOverlay: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
   modalCard: { borderRadius: 16, padding: 24, width: '100%', alignItems: 'center', gap: 10 },
   modalTitle: { fontSize: 18, fontWeight: '600', fontFamily: fonts.semiBold, marginTop: 6 },

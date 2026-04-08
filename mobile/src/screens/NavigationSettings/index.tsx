@@ -22,6 +22,7 @@ import {
   type DirectionsMode,
 } from '../../store/navigationSettingsStore'
 import { useLanguageStore } from '../../store/languageStore'
+import { IntegrationHealthCard } from '../../components/IntegrationHealthCard'
 
 const MARKER_OPTIONS: { id: MarkerStyleId; labelKey: string }[] = [
   { id: 'classic', labelKey: 'nav_marker_classic' },
@@ -204,6 +205,8 @@ export default function NavigationSettingsScreen() {
           )
         })}
       </View>
+
+      {Platform.OS === 'android' ? <IntegrationHealthCard /> : null}
 
       <Text style={[styles.hint, { color: c.textMuted }]}>{t('nav_settings_hint')}</Text>
     </ScrollView>

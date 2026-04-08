@@ -10,12 +10,14 @@ import ShiftModeScreen from '../screens/ShiftMode'
 import EarningsScreen from '../screens/Earnings'
 import ProfileScreen from '../screens/Profile'
 import { useColors } from '../theme/theme'
+import { useDriverIngestStore } from '../store/driverIngestStore'
 
 const Tab = createBottomTabNavigator()
 
 export default function AppTabs() {
   const { t } = useTranslation()
   const c = useColors()
+  const ordersBadge = useDriverIngestStore((s) => s.backgroundOrders.length)
 
   return (
     <Tab.Navigator
@@ -57,6 +59,7 @@ export default function AppTabs() {
         component={OrderHubScreen}
         options={{
           tabBarLabel: t('orders'),
+          tabBarBadge: ordersBadge > 0 ? ordersBadge : undefined,
           tabBarIcon: ({ color, size }) => (
             <Feather name="list" size={size ?? 22} color={color} />
           ),

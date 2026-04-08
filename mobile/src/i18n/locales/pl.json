@@ -152,5 +152,14 @@
   "delivery": "Dostawa",
   "ui_pickup_loc": "Miejsce odbioru",
   "ui_dropoff_loc": "Miejsce dostawy",
-  "ui_total_dist": "łącznie"
+  "ui_total_dist": "łącznie",
+  "driver_ingest_section": "Przechwytywanie Uber / Bolt",
+  "driver_ingest_active": "Aktywne",
+  "driver_ingest_queued": "Kolejka",
+  "driver_ingest_dismiss": "Zwolnij slot",
+  "driver_assistant_title": "Asystent kierowcy (Android)",
+  "driver_assistant_sound": "Dźwięk powiadomień o ofercie",
+  "driver_assistant_notif_settings": "Dostęp do powiadomień",
+  "driver_assistant_a11y_settings": "Ułatwienia dostępu (odczyt ekranu)",
+  "driver_assistant_hint": "Włącz dostęp w ustawieniach systemu, aby DriveMind mógł czytać powiadomienia Uber/Bolt i informacje o kursie na ekranie. Bez automatycznych kliknięć."
 }

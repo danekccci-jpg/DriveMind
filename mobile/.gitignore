@@ -1,41 +1,67 @@
-# Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
-
-# dependencies
+# --- DEPENDENCIES ---
 node_modules/
+.pnp
+*.pnp.js
+mobile/node_modules/
 
-# Expo
+# --- ANDROID (CRITICAL: Source is kept, Junk is ignored) ---
+mobile/android/.gradle/
+mobile/android/build/
+mobile/android/app/build/
+mobile/android/.idea/
+mobile/android/local.properties
+mobile/android/*.iml
+mobile/android/GeneratedPluginRegistrant.java
+mobile/android/.cxx/
+mobile/android/.externalNativeBuild/
+
+# --- IOS ---
+mobile/ios/build/
+mobile/ios/Pods/
+mobile/ios/DerivedData/
+mobile/ios/*.xcworkspace/xcuserdata/
+mobile/ios/*.xcodeproj/xcuserdata/
+mobile/ios/*.xcodeproj/project.xcworkspace/
+mobile/ios/.lsan/
+
+# --- SECURITY & KEYS (NEVER COMMIT THESE) ---
+*.jks
+*.keystore
+*.p12
+*.key
+*.pem
+*.p8
+*.mobileprovision
+.env
+.env.local
+.env.production
+.env.staging
+mobile/.env*
+
+# --- METRO & BUNDLERS ---
 .expo/
 dist/
 web-build/
-expo-env.d.ts
-
-# Native
-.kotlin/
-*.orig.*
-*.jks
-*.p8
-*.p12
-*.key
-*.mobileprovision
-
-# Metro
 .metro-health-check*
+*.tsbuildinfo
 
-# debug
+# --- SYSTEM FILES ---
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# --- DEBUG & LOGS ---
 npm-debug.*
 yarn-debug.*
 yarn-error.*
+*.log
+.pnpm-debug.log*
 
-# macOS
-.DS_Store
-*.pem
-
-# local env files
-.env*.local
-
-# typescript
-*.tsbuildinfo
-
-# generated native folders
-/ios
-/android
+# --- NEXT.JS / WEB (If applicable) ---
+.next/
+out/
+.vercel

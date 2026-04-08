@@ -44,6 +44,7 @@ import { getDashboardSuggestionOrder } from '../../data/mockOrders'
 import { openPlatformDeepLink } from '../../utils/platformDeepLink'
 import { getTravelModeByVehicle } from '../../services/directionsService'
 import { navigationEngine } from '../../services/navigationEngine'
+import { triggerScraperWindow } from '../../services/driverIngestBridge'
 import { useDriverSessionStore } from '../../store/driverSessionStore'
 import { fonts } from '../../theme/typography'
 import { useTheme, type AppColors } from '../../theme/theme'
@@ -265,6 +266,7 @@ export default function DashboardScreen() {
   const handleAcceptSuggestion = useCallback(() => {
     console.log('[DriveMind Nav]: accept tapped', { orderId: suggestion.id })
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+    if (Platform.OS === 'android') triggerScraperWindow()
     pendingOrderRef.current = suggestion
     openPlatformDeepLink(suggestion.platform)
   }, [suggestion])

@@ -152,5 +152,14 @@
   "delivery": "Delivery",
   "ui_pickup_loc": "Pickup",
   "ui_dropoff_loc": "Dropoff",
-  "ui_total_dist": "total"
+  "ui_total_dist": "total",
+  "driver_ingest_section": "Uber / Bolt capture",
+  "driver_ingest_active": "Active",
+  "driver_ingest_queued": "Queued",
+  "driver_ingest_dismiss": "Dismiss slot",
+  "driver_assistant_title": "Driver assistant (Android)",
+  "driver_assistant_sound": "Offer notification sound",
+  "driver_assistant_notif_settings": "Notification access",
+  "driver_assistant_a11y_settings": "Accessibility (screen read)",
+  "driver_assistant_hint": "Enable system access so DriveMind can read Uber/Bolt notifications and on-screen trip info. No auto-taps."
 }

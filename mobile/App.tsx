@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { Animated, Platform, ActivityIndicator, View } from 'react-native'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
-import { NavigationContainer, DefaultTheme, DarkTheme } from '@react-navigation/native'
+import { NavigationContainer, DefaultTheme, DarkTheme, type Theme } from '@react-navigation/native'
 import { StatusBar } from 'expo-status-bar'
 import {
   useFonts,
@@ -23,6 +23,8 @@ import RoleSelectionScreen from './src/screens/RoleSelection'
 import OnboardingScreen from './src/screens/Onboarding'
 import LanguageSelectionScreen from './src/screens/LanguageSelection'
 import RootNavigator from './src/navigation/RootNavigator'
+import { DriverIngestToast } from './src/components/DriverIngestToast'
+import { useDriverIngestBridge } from './src/services/driverIngestBridge'
 import { startLocationTracking, stopLocationTracking } from './src/services/locationTrackingService'
 import i18n from './src/i18n'
 import './src/i18n'
@@ -159,10 +161,20 @@ export default function App() {
     <SafeAreaProvider>
       <StatusBar style={isDark ? 'light' : 'dark'} backgroundColor={c.tabBar} />
       <Animated.View style={{ flex: 1, opacity: fadeAnim }}>
-        <NavigationContainer theme={navTheme}>
-          <RootNavigator />
-        </NavigationContainer>
+        <MainAppWithDriverIngest navTheme={navTheme} />
       </Animated.View>
     </SafeAreaProvider>
+  )
+}
+
+function MainAppWithDriverIngest({ navTheme }: { navTheme: Theme }) {
+  useDriverIngestBridge()
+  return (
+    <>
+      <DriverIngestToast />
+      <NavigationContainer theme={navTheme}>
+        <RootNavigator />
+      </NavigationContainer>
+    </>
   )
 }
