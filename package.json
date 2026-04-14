@@ -28,6 +28,7 @@
     "react-native": "0.83.4",
     "react-native-web": "^0.21.0"
   },
+  "main": "mobile/index.js",
   "overrides": {},
   "version": "1.0.0"
 }

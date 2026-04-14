@@ -1,16 +1,27 @@
 import { Order, ShiftStats } from '../store/ordersStore'
 import { computeProfitability } from '@drivemind/shared'
+import type { ProfitTier } from '@drivemind/shared'
 
 export type Role = 'courier' | 'taxi'
 export type ProfitLabel = 'GREAT' | 'GOOD' | 'OK' | 'SKIP'
+
+export type { ProfitTier }
 
 export interface ProfitScoreResult {
   score: number
   label: ProfitLabel
   color: string
+  /** Kraków 2026 tier for the primary profit badge. */
+  profitTier: ProfitTier
+  /** Emoji shorthand matching the tier for quick display. */
+  tierEmoji: '🔴' | '🟡' | '🟢'
+  /** True when a 30 % out-of-city penalty was applied. */
+  isOutOfCity: boolean
 }
 
 const PEAK_HOURS: [number, number][] = [[12, 14], [18, 21]]
+const NIGHT_START = 22
+const NIGHT_END = 6
 
 const DEG_TO_RAD = Math.PI / 180
 const EARTH_RADIUS_KM = 6371
@@ -27,6 +38,22 @@ export function haversineDistance(
     Math.sin(dLat / 2) ** 2 +
     Math.cos(lat1 * DEG_TO_RAD) * Math.cos(lat2 * DEG_TO_RAD) * Math.sin(dLng / 2) ** 2
   return 2 * EARTH_RADIUS_KM * Math.asin(Math.sqrt(a))
+}
+
+/** Returns true on Sat/Sun or between 22:00–06:00 (night hours). */
+function isWeekendOrNight(): boolean {
+  const now = new Date()
+  const day = now.getDay() // 0 = Sun, 6 = Sat
+  const hour = now.getHours()
+  const isWeekend = day === 0 || day === 6
+  const isNight = hour >= NIGHT_START || hour < NIGHT_END
+  return isWeekend || isNight
+}
+
+function tierEmoji(tier: ProfitTier): '🔴' | '🟡' | '🟢' {
+  if (tier === 'TRASH') return '🔴'
+  if (tier === 'OKAY') return '🟡'
+  return '🟢'
 }
 
 function labelFromScore(score: number): { label: ProfitLabel; color: string } {
@@ -52,17 +79,27 @@ export function calculateProfitScore(
     pricePLN: order.earnings,
     distanceKm: order.distanceKm + order.deadrunKm,
     etaMin: Math.max(order.durationMin, 1),
+    dropoffLabel: order.dropoffAddress,
+    isWeekendOrNight: isWeekendOrNight(),
     trafficFactor,
     demandFactor: 1,
   })
 
-  // Keep backward-compatible score range expected by existing badges/thresholds.
   const normalizedScore = profitability.score0to100 / 100
+
   let label: ProfitLabel = 'OK'
   if (profitability.recommendation === 'SKIP') label = 'SKIP'
   if (profitability.recommendation === 'TAKE') {
     label = profitability.score0to100 >= 80 ? 'GREAT' : 'GOOD'
   }
   if (profitability.recommendation === 'WAIT') label = 'OK'
-  return { score: normalizedScore, ...labelFromScore(normalizedScore), label }
+
+  return {
+    score: normalizedScore,
+    ...labelFromScore(normalizedScore),
+    label,
+    profitTier: profitability.profitTier,
+    tierEmoji: tierEmoji(profitability.profitTier),
+    isOutOfCity: profitability.isOutOfCity,
+  }
 }

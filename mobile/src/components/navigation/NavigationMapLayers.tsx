@@ -3,9 +3,12 @@ import { View, StyleSheet, Animated } from 'react-native'
 import { Marker, Polyline } from '../MapViewWeb'
 import type { LatLng } from '../../navigation/navigationGeometry'
 
-/** Brand blue — main stroke + soft glow layer */
-export const ROUTE_STROKE_MAIN = '#1A5CFF'
-const ROUTE_GLOW = 'rgba(26, 92, 255, 0.1)'
+/** High-contrast route colors tuned for dark map styling. */
+export const ROUTE_STROKE_MAIN = '#5CC8FF'
+const ROUTE_GLOW_DARK = 'rgba(92, 200, 255, 0.38)'
+const ROUTE_GLOW_LIGHT = 'rgba(26, 92, 255, 0.16)'
+const ROUTE_CASING_DARK = 'rgba(10, 14, 28, 0.96)'
+const ROUTE_CASING_LIGHT = 'rgba(255, 255, 255, 0.96)'
 
 type Props = {
   trimmedPolyline: LatLng[]
@@ -13,6 +16,7 @@ type Props = {
   navigationPhase: 'pickup' | 'dropoff' | null
   destPulse: Animated.Value
   nearDestination: boolean
+  isDark: boolean
 }
 
 function NavigationMapLayersInner({
@@ -21,16 +25,27 @@ function NavigationMapLayersInner({
   navigationPhase,
   destPulse,
   nearDestination,
+  isDark,
 }: Props) {
   const pickup = navigationPhase === 'pickup'
+  const casingColor = isDark ? ROUTE_CASING_DARK : ROUTE_CASING_LIGHT
+  const glowColor = isDark ? ROUTE_GLOW_DARK : ROUTE_GLOW_LIGHT
   return (
     <>
       {trimmedPolyline.length > 1 && (
         <>
           <Polyline
             coordinates={trimmedPolyline}
-            strokeColor={ROUTE_GLOW}
-            strokeWidth={10}
+            strokeColor={glowColor}
+            strokeWidth={20}
+            zIndex={98}
+            lineCap="round"
+            lineJoin="round"
+          />
+          <Polyline
+            coordinates={trimmedPolyline}
+            strokeColor={casingColor}
+            strokeWidth={13}
             zIndex={99}
             lineCap="round"
             lineJoin="round"
@@ -38,7 +53,7 @@ function NavigationMapLayersInner({
           <Polyline
             coordinates={trimmedPolyline}
             strokeColor={ROUTE_STROKE_MAIN}
-            strokeWidth={8}
+            strokeWidth={9}
             zIndex={100}
             lineCap="round"
             lineJoin="round"

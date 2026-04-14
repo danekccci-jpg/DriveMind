@@ -110,6 +110,12 @@ interface OrdersState {
   navigationOrderId: string | null
   lastNearestDistanceKm: number | null
 
+  /**
+   * Earnings still required to reach today's daily goal.
+   * Returns 0 once the goal is met.
+   */
+  remainingToGoal: number
+
   setPendingConfirmation: (order: Order | null) => void
   confirmOrder: (
     order: Order,
@@ -149,7 +155,8 @@ export const useOrdersStore = create<OrdersState>()(
       pendingConfirmation: null,
       orderHistory: [],
       shiftStats: DEFAULT_SHIFT_STATS,
-      dailyGoal: 300,
+      dailyGoal: 500,
+      remainingToGoal: 500,
       lastPlatformActivity: {},
       isNavigating: false,
       navigationPhase: null,
@@ -258,6 +265,7 @@ export const useOrdersStore = create<OrdersState>()(
           lastOrderDropoffLat: order.dropoffLat,
           lastOrderDropoffLng: order.dropoffLng,
         }
+        const remainingToGoal = Math.max(0, get().dailyGoal - nextStats.totalEarnings)
 
         useWalletStore.getState().recordOrderPayout(order.id, order.earnings, {
           pickupAddress: order.pickupAddress,
@@ -273,6 +281,7 @@ export const useOrdersStore = create<OrdersState>()(
             activeOrders: [],
             orderHistory: trimmedHistory,
             shiftStats: nextStats,
+            remainingToGoal,
             isNavigating: false,
             navigationOrderId: null,
             navigationPhase: null,
@@ -288,6 +297,7 @@ export const useOrdersStore = create<OrdersState>()(
           activeOrders: remaining,
           orderHistory: trimmedHistory,
           shiftStats: nextStats,
+          remainingToGoal,
           navigationOrderId: next.id,
           navigationPhase: next.status === 'dropoff' ? 'dropoff' : 'pickup',
           deliveryPhase: next.status === 'dropoff' ? 'EN_ROUTE_TO_DROPOFF' : 'EN_ROUTE_TO_PICKUP',
@@ -301,7 +311,11 @@ export const useOrdersStore = create<OrdersState>()(
           activeOrders: state.activeOrders.map((o) => (o.id === orderId ? { ...o, status } : o)),
         })),
 
-      setDailyGoal: (dailyGoal) => set({ dailyGoal }),
+      setDailyGoal: (dailyGoal) =>
+        set((state) => ({
+          dailyGoal,
+          remainingToGoal: Math.max(0, dailyGoal - state.shiftStats.totalEarnings),
+        })),
 
       startNavigation: (order) =>
         set({
@@ -459,6 +473,7 @@ export const useOrdersStore = create<OrdersState>()(
         orderHistory: state.orderHistory,
         shiftStats: state.shiftStats,
         dailyGoal: state.dailyGoal,
+        remainingToGoal: state.remainingToGoal,
         lastPlatformActivity: state.lastPlatformActivity,
         pendingConfirmation: state.pendingConfirmation,
         isNavigating: state.isNavigating,
@@ -508,3 +523,17 @@ export const useOrdersStore = create<OrdersState>()(
     },
   ),
 )
+
+// ---------------------------------------------------------------------------
+// Selectors
+// ---------------------------------------------------------------------------
+
+/**
+ * Derived selector: earnings still needed to reach today's daily goal.
+ * Returns 0 once the goal has been met or exceeded.
+ *
+ * Usage: `const remaining = useOrdersStore(selectRemainingToGoal)`
+ */
+export function selectRemainingToGoal(state: OrdersState): number {
+  return Math.max(0, state.dailyGoal - state.shiftStats.totalEarnings)
+}

@@ -17,12 +17,12 @@ import { useTranslation } from 'react-i18next'
 import * as Location from 'expo-location'
 import * as Haptics from 'expo-haptics'
 import { MaterialCommunityIcons, Feather } from '@expo/vector-icons'
+import Svg, { Circle } from 'react-native-svg'
 
 import MapView, { Marker, MarkerAnimated, AnimatedRegion } from '../../components/MapViewWeb'
 import { NavigationMapLayers } from '../../components/navigation/NavigationMapLayers'
-import { NavigationHud } from '../../components/navigation/NavigationHud'
+import { DirectionCard } from '../../components/navigation/DirectionCard'
 import { PlayerNavMarker } from '../../components/navigation/PlayerNavMarker'
-import { MapControls } from '../../components/map/MapControls'
 import { RouteSummary } from '../../components/RouteSummary'
 import { formatNavDistanceLine } from '../../navigation/navigationFormatting'
 import { useNavigationSettingsStore } from '../../store/navigationSettingsStore'
@@ -53,8 +53,8 @@ import { PROVIDER_GOOGLE } from 'react-native-maps'
 import { MAP_STYLE_DARK, MAP_STYLE_LIGHT } from '../../map/mapStyles'
 
 const TAB_BAR_HEIGHT = 60
-/** Vertical gap between map controls and the order window. */
-const MAP_CONTROLS_SHEET_GAP = 20
+const GOAL_RING_SIZE = 54
+const GOAL_RING_STROKE = 5
 
 const KRAKOW_REGION = {
   latitude: 50.0614,
@@ -78,6 +78,21 @@ function Pill({ label, c }: { label: string; c: AppColors }) {
   )
 }
 
+function speedKmh(speedMps: number | null): number {
+  return speedMps != null && Number.isFinite(speedMps) ? Math.max(0, Math.round(speedMps * 3.6)) : 0
+}
+
+function dynamicNavZoom(speedMps: number | null, distToManeuverM: number, perspective3d: boolean): number {
+  const sp = speedMps ?? 0
+  let zoom = sp < 2 ? 18.2 : sp < 7 ? 17.6 : sp < 12 ? 17.1 : sp < 18 ? 16.4 : 15.8
+  if (distToManeuverM > 0 && distToManeuverM < 260) {
+    const approachBoost = Math.min(1.1, (260 - distToManeuverM) / 220)
+    zoom += approachBoost
+  }
+  if (perspective3d) zoom -= 0.25
+  return Math.max(14.8, Math.min(19, zoom))
+}
+
 export default function DashboardScreen() {
   const { t } = useTranslation()
   const insets = useSafeAreaInsets()
@@ -91,9 +106,9 @@ export default function DashboardScreen() {
   const vehicleType = useRoleStore((st) => st.vehicleType)
   const {
     shiftStats, dailyGoal, isNavigating, navigationPhase, deliveryPhase, routePolyline,
-    currentStep, routeDistance, routeDuration, routeSteps, routeDurationSeconds, pendingConfirmation,
+    currentStep, routeSteps, pendingConfirmation,
     activeOrders, setPendingConfirmation,
-    confirmOrder, rejectOrder, completeOrder, arriveAtPickup, startDeliveryToDropoff,
+    confirmOrder, rejectOrder,
     updateNavigationPhase, stopNavigation, recomputeNavigationTarget, updateNavigationRoute,
   } = useOrdersStore()
   const navigationOrderId = useOrdersStore((s) => s.navigationOrderId)
@@ -118,9 +133,6 @@ export default function DashboardScreen() {
   const userLocationRef = useRef<LatLng | null>(null)
   const smoothHeadingRef = useRef(0)
 
-  /** Full height of the order window (stats + card) — drives map controls anchor above the sheet. */
-  const [orderWindowHeight, setOrderWindowHeight] = useState(0)
-
   const animatedCoord = useRef(
     new AnimatedRegion({
       latitude: KRAKOW_REGION.latitude,
@@ -136,9 +148,6 @@ export default function DashboardScreen() {
   )
   const routePolylineSafe = routePolyline ?? []
   const suggestion = activeOrder ?? getDashboardSuggestionOrder(role as 'courier' | 'taxi')
-
-  /** Zoom / compass stack floats above the order window: measured height + gap. */
-  const mapControlsBottomOffset = orderWindowHeight + MAP_CONTROLS_SHEET_GAP
 
   const destCoordNav: LatLng | null = useMemo(() => {
     if (!isNavigating || !activeOrder) return null
@@ -170,15 +179,18 @@ export default function DashboardScreen() {
     [hudDistanceM, units],
   )
   const streetTitle = extractStreetName(routeSteps?.[0]?.instruction ?? currentStep ?? '')
-  const timeLeftSeconds = routeDurationSeconds ?? 0
-
-  const hudVariant = deliveryPhase === 'AT_PICKUP' ? 'atPickup' : 'navigation'
-  const navPrimaryLabel = useMemo(() => {
-    if (deliveryPhase === 'EN_ROUTE_TO_PICKUP') return t('reached_pickup')
-    if (deliveryPhase === 'AT_PICKUP') return t('nav_start_delivery')
-    return t('nav_finish')
-  }, [deliveryPhase, t])
-  const navPrimaryDisabled = deliveryPhase === 'EN_ROUTE_TO_PICKUP' && !nearDestination
+  const speedLabelKmh = useMemo(() => speedKmh(userSpeedMps), [userSpeedMps])
+  const goalRing = useMemo(() => {
+    const radius = (GOAL_RING_SIZE - GOAL_RING_STROKE) / 2
+    const circumference = 2 * Math.PI * radius
+    const progress = Math.min(Math.max(goalProgress, 0), 1)
+    return {
+      radius,
+      circumference,
+      dashOffset: circumference * (1 - progress),
+      pct: Math.round(progress * 100),
+    }
+  }, [goalProgress])
 
   useEffect(() => {
     userLocationRef.current = userLocation
@@ -301,74 +313,6 @@ export default function DashboardScreen() {
   }, [pendingConfirmation, confirmOrder, userLocation, vehicleType, role])
 
   const handleConfirmNo = useCallback(() => { rejectOrder() }, [rejectOrder])
-
-  const handleCompleteOrder = useCallback(() => {
-    if (!activeOrder) return
-    console.log('[DriveMind Nav]: destination reached; completing order', { orderId: activeOrder.id })
-    completeOrder(activeOrder.id)
-  }, [activeOrder, completeOrder])
-
-  const onNavPrimary = useCallback(() => {
-    if (!activeOrder) return
-    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
-
-    if (deliveryPhase === 'EN_ROUTE_TO_PICKUP') {
-      if (!nearDestination) return
-      arriveAtPickup(activeOrder.id)
-      return
-    }
-    if (deliveryPhase === 'AT_PICKUP') {
-      if (!userLocation) {
-        Alert.alert('', t('nav_need_location'))
-        return
-      }
-      const mode = getTravelModeByVehicle(vehicleType, role)
-      void (async () => {
-        try {
-          await startDeliveryToDropoff(activeOrder.id, {
-            originLat: userLocation.latitude,
-            originLng: userLocation.longitude,
-            mode,
-          })
-          skipEngineAfterDropoffRouteRef.current = true
-        } catch (e) {
-          const message = e instanceof Error ? e.message : String(e)
-          Alert.alert('Directions', message)
-        }
-      })()
-      return
-    }
-    if (deliveryPhase === 'EN_ROUTE_TO_DROPOFF') {
-      handleCompleteOrder()
-    }
-  }, [
-    activeOrder,
-    deliveryPhase,
-    nearDestination,
-    userLocation,
-    vehicleType,
-    role,
-    arriveAtPickup,
-    startDeliveryToDropoff,
-    handleCompleteOrder,
-    t,
-  ])
-
-  const onPerspectiveToggle = useCallback(
-    (perspective3d: boolean) => {
-      if (!mapRef.current || !userLocation) return
-      mapRef.current.animateCamera(
-        {
-          center: { latitude: userLocation.latitude, longitude: userLocation.longitude },
-          pitch: perspective3d ? 60 : 0,
-          heading: smoothHeading,
-          zoom: 17.5,
-        },
-        { duration: 450 },
-      )
-    },
-    [userLocation, smoothHeading],
-  )
 
   const mapStyleForMap = useMemo(
     () => (isDark ? MAP_STYLE_DARK : MAP_STYLE_LIGHT),
@@ -616,8 +560,7 @@ export default function DashboardScreen() {
 
   useEffect(() => {
     if (!isNavigating || !navFollowReady || !mapRef.current || !userLocation) return
-    const sp = userSpeedMps ?? 0
-    const zoom = sp < 2 ? 17.5 : sp < 8 ? 17 : sp < 15 ? 16.5 : 16
+    const zoom = dynamicNavZoom(userSpeedMps, hudDistanceM, mapPerspective3d)
     mapRef.current.animateCamera(
       {
         center: { latitude: userLocation.latitude, longitude: userLocation.longitude },
@@ -627,7 +570,7 @@ export default function DashboardScreen() {
       },
       { duration: 1000 },
     )
-  }, [isNavigating, navFollowReady, userLocation, smoothHeading, userSpeedMps, mapPerspective3d])
+  }, [isNavigating, navFollowReady, userLocation, smoothHeading, userSpeedMps, hudDistanceM, mapPerspective3d])
 
   const platformName = suggestion.platform.charAt(0).toUpperCase() + suggestion.platform.slice(1)
 
@@ -648,9 +591,13 @@ export default function DashboardScreen() {
         showsPointsOfInterests={false}
         showsBuildings={false}
         showsIndoors={false}
-        showsTraffic={false}
+        showsTraffic
         showsUserLocation={!isNavigating}
         showsMyLocationButton={false}
+        compassEnabled={false}
+        zoomControlEnabled={false}
+        toolbarEnabled={false}
+        mapToolbarEnabled={false}
         initialRegion={userLocation ? { ...userLocation, latitudeDelta: 0.02, longitudeDelta: 0.02 } : KRAKOW_REGION}
       >
         {isNavigating && (
@@ -660,6 +607,7 @@ export default function DashboardScreen() {
             navigationPhase={navigationPhase}
             destPulse={destPulse}
             nearDestination={nearDestination}
+            isDark={isDark}
           />
         )}
         {isNavigating && Platform.OS !== 'web' && (
@@ -677,22 +625,12 @@ export default function DashboardScreen() {
 
       {isNavigating && activeOrder && (
         <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
-          <NavigationHud
+          <DirectionCard
             maneuver={routeSteps?.[0]?.maneuver}
             distanceLine={distanceLine}
             streetName={streetTitle}
-            timeLeftSeconds={timeLeftSeconds}
             c={c}
-            hudVariant={hudVariant}
-            onPrimary={onNavPrimary}
-            timeLeftLabel={t('nav_time_left')}
-            arrivalLabel={t('nav_arrival')}
-            primaryLabel={navPrimaryLabel}
-            primaryDisabled={navPrimaryDisabled}
-            atPickupTitle={t('nav_at_pickup_banner')}
-            atPickupSubtitle={activeOrder.pickupAddress}
             topInset={insets.top + 28}
-            finalDestinationLine={activeOrder.dropoffAddress?.trim() || undefined}
           />
         </View>
       )}
@@ -712,10 +650,6 @@ export default function DashboardScreen() {
 
       {/* Bottom sheet — order window */}
       <View
-        onLayout={(event) => {
-          const { height } = event.nativeEvent.layout
-          setOrderWindowHeight(height)
-        }}
         style={[s.sheet, { paddingBottom: insets.bottom + 5, backgroundColor: c.tabBar, borderTopColor: c.tabBarBorder }]}
       >
         <View>
@@ -772,17 +706,40 @@ export default function DashboardScreen() {
           </View>
         )}
       </View>
-
-      {Platform.OS !== 'web' && (
-        <MapControls
-          mapRef={mapRef}
-          userLocation={userLocation}
-          smoothHeading={smoothHeading}
-          isDark={isDark}
-          bottomOffset={mapControlsBottomOffset}
-          onPerspectiveToggle={onPerspectiveToggle}
-        />
-      )}
+      <View pointerEvents="none" style={[s.minimalHudWrap, { top: insets.top + 18 }]}>
+        <View style={[s.speedChip, { backgroundColor: c.surface, borderColor: c.separator }]}>
+          <Text style={[s.speedValue, { color: c.text }]}>{speedLabelKmh}</Text>
+          <Text style={[s.speedUnit, { color: c.textMuted }]}>km/h</Text>
+        </View>
+        <View style={[s.goalRingCard, { backgroundColor: c.surface, borderColor: c.separator }]}>
+          <Svg width={GOAL_RING_SIZE} height={GOAL_RING_SIZE}>
+            <Circle
+              cx={GOAL_RING_SIZE / 2}
+              cy={GOAL_RING_SIZE / 2}
+              r={goalRing.radius}
+              stroke={c.separator}
+              strokeWidth={GOAL_RING_STROKE}
+              fill="none"
+            />
+            <Circle
+              cx={GOAL_RING_SIZE / 2}
+              cy={GOAL_RING_SIZE / 2}
+              r={goalRing.radius}
+              stroke={c.primary}
+              strokeWidth={GOAL_RING_STROKE}
+              fill="none"
+              strokeDasharray={`${goalRing.circumference} ${goalRing.circumference}`}
+              strokeDashoffset={goalRing.dashOffset}
+              strokeLinecap="round"
+              transform={`rotate(-90 ${GOAL_RING_SIZE / 2} ${GOAL_RING_SIZE / 2})`}
+            />
+          </Svg>
+          <View style={s.goalRingCenter}>
+            <Text style={[s.goalRingPct, { color: c.text }]}>{goalRing.pct}%</Text>
+            <Text style={[s.goalRingLabel, { color: c.textMuted }]}>Goal</Text>
+          </View>
+        </View>
+      </View>
 
       {/* Confirmation modal */}
       <Modal visible={!!pendingConfirmation} transparent animationType="fade">
@@ -902,4 +859,35 @@ const s = StyleSheet.create({
   modalBtnYesText: { fontSize: 15, fontWeight: '600', fontFamily: fonts.semiBold },
   modalBtnNo: { flex: 1, height: 50, borderWidth: 1, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   modalBtnNoText: { fontSize: 15, fontWeight: '600', fontFamily: fonts.semiBold },
+  minimalHudWrap: {
+    position: 'absolute',
+    right: 12,
+    alignItems: 'center',
+    gap: 10,
+  },
+  speedChip: {
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    alignItems: 'center',
+    minWidth: 70,
+  },
+  speedValue: { fontSize: 22, lineHeight: 24, fontFamily: fonts.bold, fontWeight: '700' },
+  speedUnit: { fontSize: 11, fontFamily: fonts.medium, marginTop: 1 },
+  goalRingCard: {
+    width: 66,
+    height: 66,
+    borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  goalRingCenter: {
+    position: 'absolute',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  goalRingPct: { fontSize: 11, fontFamily: fonts.bold, fontWeight: '700' },
+  goalRingLabel: { fontSize: 9, fontFamily: fonts.medium, marginTop: -1 },
 })
