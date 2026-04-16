@@ -30,6 +30,7 @@ import i18n from './src/i18n'
 import './src/i18n'
 
 export default function App() {
+  const NUCLEAR_DISABLE_GOOGLE_NATIVE_CALLS = false
   const [fontsLoaded] = useFonts({
     Poppins_400Regular,
     Poppins_500Medium,
@@ -50,7 +51,7 @@ export default function App() {
   const [authHydrated, setAuthHydrated] = useState(!needsNativeGoogleAuth)
 
   useEffect(() => {
-    if (needsNativeGoogleAuth) {
+    if (!NUCLEAR_DISABLE_GOOGLE_NATIVE_CALLS && needsNativeGoogleAuth) {
       configureGoogleSignIn()
       const p = useAuthStore.persist.rehydrate?.()
       if (p && typeof (p as Promise<void>).finally === 'function') {
@@ -58,8 +59,10 @@ export default function App() {
       } else {
         setAuthHydrated(true)
       }
+    } else {
+      setAuthHydrated(true)
     }
-  }, [needsNativeGoogleAuth])
+  }, [needsNativeGoogleAuth, NUCLEAR_DISABLE_GOOGLE_NATIVE_CALLS])
 
   useEffect(() => {
     i18n.changeLanguage(language)
@@ -67,7 +70,14 @@ export default function App() {
 
   useEffect(() => {
     if (!onboardingComplete) return
+    // Emergency switch: keep background TaskManager location tracking disabled
+    // while investigating AppOps MONITOR_LOCATION crashes in release builds.
+    const ENABLE_BACKGROUND_TRACKING = false
     const syncLocationTask = () => {
+      if (!ENABLE_BACKGROUND_TRACKING) {
+        void stopLocationTracking()
+        return
+      }
       const nav = useOrdersStore.getState().isNavigating
       const online = useDriverSessionStore.getState().isOnline
       if (nav || online) {
@@ -137,15 +147,9 @@ export default function App() {
     )
   }
 
-  if (needsNativeGoogleAuth && authHydrated && !isAuthenticated) {
-    return (
-      <SafeAreaProvider>
-        <StatusBar style={isDark ? 'light' : 'dark'} backgroundColor={c.bg} />
-        <LoginScreen />
-      </SafeAreaProvider>
-    )
-  }
-
+  // Show spinner until the Zustand/AsyncStorage auth state has been rehydrated.
+  // This guard must come BEFORE the authenticated render path so we never mount
+  // the main navigator on stale pre-hydration state.
   if (needsNativeGoogleAuth && !authHydrated) {
     return (
       <SafeAreaProvider>
@@ -153,6 +157,15 @@ export default function App() {
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: c.bg }}>
           <ActivityIndicator size="large" color={c.primary} />
         </View>
+      </SafeAreaProvider>
+    )
+  }
+
+  if (needsNativeGoogleAuth && !isAuthenticated) {
+    return (
+      <SafeAreaProvider>
+        <StatusBar style={isDark ? 'light' : 'dark'} backgroundColor={c.bg} />
+        <LoginScreen />
       </SafeAreaProvider>
     )
   }
@@ -168,7 +181,8 @@ export default function App() {
 }
 
 function MainAppWithDriverIngest({ navTheme }: { navTheme: Theme }) {
-  useDriverIngestBridge()
+  const NUCLEAR_DISABLE_GOOGLE_NATIVE_CALLS = true
+  useDriverIngestBridge(!NUCLEAR_DISABLE_GOOGLE_NATIVE_CALLS)
   return (
     <>
       <DriverIngestToast />

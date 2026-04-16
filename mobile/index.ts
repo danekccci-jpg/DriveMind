@@ -1,4 +1,3 @@
-import './src/tasks/locationTrackingTask'
 import { registerRootComponent } from 'expo'
 
 import App from './App'

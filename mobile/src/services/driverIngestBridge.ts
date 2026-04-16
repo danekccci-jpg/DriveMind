@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { DeviceEventEmitter, NativeModules, Platform } from 'react-native'
+import { AppState, DeviceEventEmitter, NativeModules, Platform } from 'react-native'
 import NetInfo from '@react-native-community/netinfo'
 import { useDriverIngestStore } from '../store/driverIngestStore'
 import { useOrdersStore } from '../store/ordersStore'
@@ -96,7 +96,7 @@ function isWeekendOrNightNow(): boolean {
  * Subscribes to native notification + scrape events, TTL sweep, NetInfo sync.
  * Mount once under App.
  */
-export function useDriverIngestBridge(): void {
+export function useDriverIngestBridge(enabled = true): void {
   const ingestNotification = useDriverIngestStore((s) => s.ingestFromNotification)
   const ingestScrape = useDriverIngestStore((s) => s.ingestFromScrape)
   const removeExpired = useDriverIngestStore((s) => s.removeExpiredFromQueue)
@@ -110,6 +110,7 @@ export function useDriverIngestBridge(): void {
   handlersRef.current = { ingestNotification, ingestScrape, removeExpired, showToast }
 
   useEffect(() => {
+    if (!enabled) return
     if (Platform.OS !== 'android') return
 
     const native = getNative()
@@ -172,9 +173,10 @@ export function useDriverIngestBridge(): void {
       clearInterval(ttl)
       unsubNet()
     }
-  }, [setSoundEnabled])
+  }, [setSoundEnabled, enabled])
 
   useEffect(() => {
+    if (!enabled) return
     if (Platform.OS !== 'android') return
     const native = getNative()
     if (!native) return
@@ -184,16 +186,32 @@ export function useDriverIngestBridge(): void {
         ([overlayGranted, usageGranted]) => {
           if (isShiftOn && !overlayGranted) {
             if (!overlayPermissionPromptedRef.current) {
-              native.requestOverlayPermission()
               overlayPermissionPromptedRef.current = true
+              if (AppState.currentState === 'active') {
+                setTimeout(() => {
+                  try {
+                    if (AppState.currentState === 'active') native.requestOverlayPermission()
+                  } catch {
+                    /* noop */
+                  }
+                }, 500)
+              }
             }
             native.setOverlayShiftActive(false)
             return
           }
           if (isShiftOn && !usageGranted) {
             if (!usagePermissionPromptedRef.current) {
-              native.requestUsageAccess()
               usagePermissionPromptedRef.current = true
+              if (AppState.currentState === 'active') {
+                setTimeout(() => {
+                  try {
+                    if (AppState.currentState === 'active') native.requestUsageAccess()
+                  } catch {
+                    /* noop */
+                  }
+                }, 500)
+              }
             }
             native.setOverlayShiftActive(false)
             return
@@ -214,9 +232,10 @@ export function useDriverIngestBridge(): void {
         /* noop */
       }
     }
-  }, [])
+  }, [enabled])
 
   useEffect(() => {
+    if (!enabled) return
     if (Platform.OS !== 'android') return
     const n = getNative()
     if (!n) return
@@ -225,5 +244,5 @@ export function useDriverIngestBridge(): void {
     } catch {
       /* noop */
     }
-  }, [soundEnabled])
+  }, [soundEnabled, enabled])
 }

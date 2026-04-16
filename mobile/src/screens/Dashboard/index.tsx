@@ -19,7 +19,7 @@ import * as Haptics from 'expo-haptics'
 import { MaterialCommunityIcons, Feather } from '@expo/vector-icons'
 import Svg, { Circle } from 'react-native-svg'
 
-import MapView, { Marker, MarkerAnimated, AnimatedRegion } from '../../components/MapViewWeb'
+import MapView, { Marker, MarkerAnimated, AnimatedRegion, PROVIDER_GOOGLE } from '../../components/MapViewWeb'
 import { NavigationMapLayers } from '../../components/navigation/NavigationMapLayers'
 import { DirectionCard } from '../../components/navigation/DirectionCard'
 import { PlayerNavMarker } from '../../components/navigation/PlayerNavMarker'
@@ -49,7 +49,7 @@ import { useDriverSessionStore } from '../../store/driverSessionStore'
 import { fonts } from '../../theme/typography'
 import { useTheme, type AppColors } from '../../theme/theme'
 import { ProfitLabel } from '../../engine/profitEngine'
-import { PROVIDER_GOOGLE } from 'react-native-maps'
+// NUCLEAR DEBUG: direct react-native-maps import disabled for this build.
 import { MAP_STYLE_DARK, MAP_STYLE_LIGHT } from '../../map/mapStyles'
 
 const TAB_BAR_HEIGHT = 60
@@ -82,21 +82,66 @@ function speedKmh(speedMps: number | null): number {
   return speedMps != null && Number.isFinite(speedMps) ? Math.max(0, Math.round(speedMps * 3.6)) : 0
 }
 
+/**
+ * Waze-style dynamic zoom:
+ *  • Speed-based baseline: zooms out progressively from ~18 (stopped) to ~15.5 (highway)
+ *  • Maneuver approach: within 200 m of the next turn, ramps zoom linearly from 18 → 19
+ *    so the junction is crystal-clear by the time the driver arrives.
+ *  • 3-D mode subtracts 0.25 to compensate for the perspective field-of-view change.
+ */
 function dynamicNavZoom(speedMps: number | null, distToManeuverM: number, perspective3d: boolean): number {
   const sp = speedMps ?? 0
-  let zoom = sp < 2 ? 18.2 : sp < 7 ? 17.6 : sp < 12 ? 17.1 : sp < 18 ? 16.4 : 15.8
-  if (distToManeuverM > 0 && distToManeuverM < 260) {
-    const approachBoost = Math.min(1.1, (260 - distToManeuverM) / 220)
-    zoom += approachBoost
+
+  // Speed baseline — four smooth tiers
+  let zoom: number
+  if      (sp <  2) zoom = 18.0
+  else if (sp <  8) zoom = 17.5
+  else if (sp < 14) zoom = 16.8
+  else if (sp < 22) zoom = 16.2
+  else              zoom = 15.5
+
+  // Maneuver approach: 200 m → zoom 18, 0 m → zoom 19
+  if (distToManeuverM > 0 && distToManeuverM < 200) {
+    const t = (200 - distToManeuverM) / 200   // 0.0 at 200 m, 1.0 at destination
+    const maneuverZoom = 18.0 + t * 1.0       // 18 → 19
+    zoom = Math.max(zoom, maneuverZoom)        // only zoom IN, never force zoom out
   }
+
   if (perspective3d) zoom -= 0.25
-  return Math.max(14.8, Math.min(19, zoom))
+  return Math.max(14.8, Math.min(19.0, zoom))
 }
 
 export default function DashboardScreen() {
   const { t } = useTranslation()
   const insets = useSafeAreaInsets()
   const { colors: c, isDark } = useTheme()
+  const DASHBOARD_ISOLATION_MODE = false
+  const NUCLEAR_DISABLE_NATIVE_MAPS = false
+
+  if (DASHBOARD_ISOLATION_MODE) {
+    return (
+      <View
+        style={{
+          flex: 1,
+          backgroundColor: c.tabBar,
+          paddingTop: insets.top + 24,
+          paddingHorizontal: 16,
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
+        <Text style={{ color: c.text, fontSize: 20, fontFamily: fonts.semiBold, marginBottom: 8 }}>
+          Dashboard Isolation Mode
+        </Text>
+        <Text style={{ color: c.textSecondary, fontSize: 14, textAlign: 'center' }}>
+          Map Hidden. Complex Animated and navigation map layers are temporarily disabled.
+        </Text>
+        <Text style={{ color: c.textMuted, fontSize: 12, textAlign: 'center', marginTop: 12 }}>
+          {t('ride')}
+        </Text>
+      </View>
+    )
+  }
 
   const markerStyle = useNavigationSettingsStore((s) => s.markerStyle)
   const units = useNavigationSettingsStore((s) => s.units)
@@ -113,6 +158,13 @@ export default function DashboardScreen() {
   } = useOrdersStore()
   const navigationOrderId = useOrdersStore((s) => s.navigationOrderId)
   const isDriverOnline = useDriverSessionStore((s) => s.isOnline)
+
+  // Derived shift values — declared HERE so they are in scope for all useMemo/useCallback
+  // hooks below. Declaring them after useMemo calls puts them in the TDZ (temporal dead zone)
+  // for `const`, which Hermes enforces in release builds and causes a crash.
+  const isShiftActive = shiftStats.startTime !== null
+  const hoursOnline = shiftStats.startTime ? (Date.now() - shiftStats.startTime) / 3_600_000 : 0
+  const goalProgress = dailyGoal > 0 ? Math.min(shiftStats.totalEarnings / dailyGoal, 1) : 0
 
   const [userLocation, setUserLocation] = useState<LatLng | null>(null)
   const [userSpeedMps, setUserSpeedMps] = useState<number | null>(null)
@@ -205,8 +257,16 @@ export default function DashboardScreen() {
     let headingSub: { remove: () => void } | null = null
     ;(async () => {
       try {
+        const NUCLEAR_DISABLE_GOOGLE_LOCATION_CALLS = true
+        if (NUCLEAR_DISABLE_GOOGLE_LOCATION_CALLS) return
+        await new Promise((resolve) => setTimeout(resolve, 500))
+        if (AppState.currentState !== 'active') return
+        // NUCLEAR DEBUG: disabled native location permission path.
+        // const { status } = await Location.requestForegroundPermissionsAsync()
         const { status } = await Location.requestForegroundPermissionsAsync()
         if (status !== 'granted') return
+        // NUCLEAR DEBUG: disabled native location reads.
+        // const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced })
         const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced })
         const first: LatLng = { latitude: loc.coords.latitude, longitude: loc.coords.longitude }
         setUserLocation(first)
@@ -214,6 +274,8 @@ export default function DashboardScreen() {
         setUserSpeedMps(loc.coords.speed ?? null)
         const h = loc.coords.heading
         if (h != null && h >= 0) setUserHeadingDeg(h)
+        // NUCLEAR DEBUG: disabled native location subscription.
+        // sub = await Location.watchPositionAsync(...)
         sub = await Location.watchPositionAsync(
           {
             accuracy: Location.Accuracy.Balanced,
@@ -272,20 +334,18 @@ export default function DashboardScreen() {
     return () => sub.remove()
   }, [setPendingConfirmation])
 
-  const hoursOnline = shiftStats.startTime ? (Date.now() - shiftStats.startTime) / 3_600_000 : 0
-  const goalProgress = Math.min(shiftStats.totalEarnings / dailyGoal, 1)
-
   const handleAcceptSuggestion = useCallback(() => {
+    if (!suggestion) return
     console.log('[DriveMind Nav]: accept tapped', { orderId: suggestion.id })
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
     if (Platform.OS === 'android') triggerScraperWindow()
     pendingOrderRef.current = suggestion
-    openPlatformDeepLink(suggestion.platform)
+    openPlatformDeepLink(suggestion?.platform ?? '')
   }, [suggestion])
 
   const handleConfirmYes = useCallback(() => {
     if (!pendingConfirmation) return
-    const mode = getTravelModeByVehicle(vehicleType, role)
+    const mode = getTravelModeByVehicle(vehicleType ?? null, role)
     const order = pendingConfirmation
     console.log('[DriveMind Nav]: confirm accepted order', {
       orderId: order.id,
@@ -307,7 +367,9 @@ export default function DashboardScreen() {
       } catch (e) {
         const message = e instanceof Error ? e.message : String(e)
         console.error('[DriveMind Nav]: confirmOrder / getDirections failed', e)
-        Alert.alert('Directions', message)
+        if (AppState.currentState === 'active') {
+          Alert.alert('Directions', message)
+        }
       }
     })()
   }, [pendingConfirmation, confirmOrder, userLocation, vehicleType, role])
@@ -326,18 +388,25 @@ export default function DashboardScreen() {
    *   3. 150 ms timeout pushes the style after the native surface is fully settled,
    *      preventing GMS from overwriting it during its own init sequence.
    */
+  // Mount guard: delay native map attach on device boot/login transitions.
   const [isMapReady, setIsMapReady] = useState(false)
+  const [isMapStyleReady, setIsMapStyleReady] = useState(false)
+  const SHOWS_USER_LOCATION = false
   useEffect(() => {
-    setIsMapReady(false)
+    const id = setTimeout(() => setIsMapReady(true), 1000)
+    return () => clearTimeout(id)
+  }, [])
+  useEffect(() => {
+    setIsMapStyleReady(false)
   }, [isDark])
 
   const onMapReady = useCallback(() => {
-    const id = setTimeout(() => setIsMapReady(true), 150)
+    const id = setTimeout(() => setIsMapStyleReady(true), 150)
     return () => clearTimeout(id)
   }, [])
 
   useEffect(() => {
-    if (Platform.OS === 'web') setIsMapReady(true)
+    if (Platform.OS === 'web') setIsMapStyleReady(true)
   }, [])
 
   useEffect(() => {
@@ -505,8 +574,17 @@ export default function DashboardScreen() {
 
   useEffect(() => {
     if (!mapRef.current || !userLocation) return
+    const map = mapRef.current as {
+      animateToRegion?: (region: {
+        latitude: number
+        longitude: number
+        latitudeDelta: number
+        longitudeDelta: number
+      }, duration?: number) => void
+    }
+    if (typeof map.animateToRegion !== 'function') return
     if (!isNavigating) {
-      mapRef.current.animateToRegion(
+      map.animateToRegion(
         {
           latitude: userLocation.latitude,
           longitude: userLocation.longitude,
@@ -520,6 +598,18 @@ export default function DashboardScreen() {
 
   useEffect(() => {
     if (!isNavigating || !mapRef.current) return
+    const map = mapRef.current as {
+      fitToCoordinates?: (coords: LatLng[], opts?: {
+        edgePadding?: { top: number; right: number; bottom: number; left: number }
+        animated?: boolean
+      }) => void
+      animateCamera?: (camera: {
+        center?: { latitude: number; longitude: number }
+        pitch?: number
+        zoom?: number
+        heading?: number
+      }, opts?: { duration?: number }) => void
+    }
     const len = routePolylineSafe.length
     const crossedIntoRoute = prevRouteLenRef.current < 2 && len >= 2
     prevRouteLenRef.current = len
@@ -531,10 +621,12 @@ export default function DashboardScreen() {
     const coords = [...routePolylineSafe]
     if (destCoordNav) coords.push(destCoordNav)
 
-    mapRef.current.fitToCoordinates(coords, {
+    if (typeof map.fitToCoordinates === 'function') {
+      map.fitToCoordinates(coords, {
       edgePadding: { top: 150, right: 150, bottom: 150, left: 150 },
       animated: true,
-    })
+      })
+    }
 
     clearTimeout(introTimersRef.current.t1)
     clearTimeout(introTimersRef.current.t2)
@@ -545,7 +637,11 @@ export default function DashboardScreen() {
         setNavFollowReady(true)
         return
       }
-      mapRef.current.animateCamera(
+      if (typeof map.animateCamera !== 'function') {
+        setNavFollowReady(true)
+        return
+      }
+      map.animateCamera(
         {
           center: { latitude: loc.latitude, longitude: loc.longitude },
           pitch: useNavigationSettingsStore.getState().mapPerspective3d ? 60 : 0,
@@ -560,8 +656,17 @@ export default function DashboardScreen() {
 
   useEffect(() => {
     if (!isNavigating || !navFollowReady || !mapRef.current || !userLocation) return
+    const map = mapRef.current as {
+      animateCamera?: (camera: {
+        center?: { latitude: number; longitude: number }
+        pitch?: number
+        heading?: number
+        zoom?: number
+      }, opts?: { duration?: number }) => void
+    }
+    if (typeof map.animateCamera !== 'function') return
     const zoom = dynamicNavZoom(userSpeedMps, hudDistanceM, mapPerspective3d)
-    mapRef.current.animateCamera(
+    map.animateCamera(
       {
         center: { latitude: userLocation.latitude, longitude: userLocation.longitude },
         pitch: mapPerspective3d ? 60 : 0,
@@ -572,11 +677,13 @@ export default function DashboardScreen() {
     )
   }, [isNavigating, navFollowReady, userLocation, smoothHeading, userSpeedMps, hudDistanceM, mapPerspective3d])
 
-  const platformName = suggestion.platform.charAt(0).toUpperCase() + suggestion.platform.slice(1)
+  const safePlatform = suggestion?.platform ?? 'glovo'
+  const platformName = safePlatform.charAt(0).toUpperCase() + safePlatform.slice(1)
 
   return (
     <View style={[s.root, { backgroundColor: c.tabBar }]}>
       <View style={s.mapFill}>
+      {!NUCLEAR_DISABLE_NATIVE_MAPS && isMapReady && (
       <MapView
         key={isDark ? 'map-dark' : 'map-light'}
         ref={mapRef}
@@ -585,14 +692,15 @@ export default function DashboardScreen() {
         mapType="standard"
         googleRenderer={Platform.OS === 'android' ? 'LEGACY' : undefined}
         userInterfaceStyle="light"
-        customMapStyle={isMapReady ? mapStyleForMap : undefined}
+        customMapStyle={isMapStyleReady ? mapStyleForMap : undefined}
         onMapReady={onMapReady}
         showsScale={false}
         showsPointsOfInterests={false}
         showsBuildings={false}
         showsIndoors={false}
         showsTraffic
-        showsUserLocation={!isNavigating}
+        // TEMP: disable native user-location dot while isolating mqt_v_native release crash.
+        showsUserLocation={!isNavigating && SHOWS_USER_LOCATION}
         showsMyLocationButton={false}
         compassEnabled={false}
         zoomControlEnabled={false}
@@ -621,6 +729,7 @@ export default function DashboardScreen() {
           </Marker>
         )}
       </MapView>
+      )}
       </View>
 
       {isNavigating && activeOrder && (
@@ -629,7 +738,6 @@ export default function DashboardScreen() {
             maneuver={routeSteps?.[0]?.maneuver}
             distanceLine={distanceLine}
             streetName={streetTitle}
-            c={c}
             topInset={insets.top + 28}
           />
         </View>
@@ -671,12 +779,12 @@ export default function DashboardScreen() {
             style={[s.suggCard, { backgroundColor: c.card, borderColor: c.separator }]}
           >
             <View style={s.suggHeader}>
-              <PlatformIcon platform={suggestion.platform as any} size={26} active />
+              <PlatformIcon platform={safePlatform as any} size={26} active />
               <Text style={[s.suggPlatform, { color: c.text }]} numberOfLines={1}>
                 {platformName}
               </Text>
-              <ProfitBadge label={suggestion.profitLabel as ProfitLabel} />
-              <Text style={[s.suggPrice, { color: c.text }]}>{suggestion.earnings.toFixed(0)} PLN</Text>
+              <ProfitBadge label={suggestion?.profitLabel as ProfitLabel} />
+              <Text style={[s.suggPrice, { color: c.text }]}>{(suggestion?.earnings ?? 0).toFixed(0)} PLN</Text>
             </View>
             <View style={[s.suggAddrRow, { borderColor: c.separator }]}>
               <Text
@@ -684,7 +792,7 @@ export default function DashboardScreen() {
                 numberOfLines={1}
                 ellipsizeMode="tail"
               >
-                {rideStreetLine(suggestion.pickupAddress)}
+                {rideStreetLine(suggestion?.pickupAddress ?? '')}
               </Text>
               <Feather name="arrow-right" size={14} color={c.textMuted} style={s.suggAddrSep} />
               <Text
@@ -692,12 +800,12 @@ export default function DashboardScreen() {
                 numberOfLines={1}
                 ellipsizeMode="tail"
               >
-                {rideStreetLine(suggestion.dropoffAddress)}
+                {rideStreetLine(suggestion?.dropoffAddress ?? '')}
               </Text>
             </View>
             <View style={s.pillRow}>
-              <Pill label={`${suggestion.distanceKm.toFixed(1)} km`} c={c} />
-              <Pill label={`${suggestion.durationMin} min`} c={c} />
+              <Pill label={`${(suggestion?.distanceKm ?? 0).toFixed(1)} km`} c={c} />
+              <Pill label={`${suggestion?.durationMin ?? 0} min`} c={c} />
               <Pill label={`${Math.round(goalProgress * 100)}% ${t('daily_goal')}`} c={c} />
             </View>
             <TouchableOpacity style={[s.acceptBtn, { backgroundColor: c.primary }]} activeOpacity={0.85} onPress={handleAcceptSuggestion}>
@@ -706,7 +814,7 @@ export default function DashboardScreen() {
           </View>
         )}
       </View>
-      <View pointerEvents="none" style={[s.minimalHudWrap, { top: insets.top + 18 }]}>
+      {isShiftActive && <View pointerEvents="none" style={[s.minimalHudWrap, { top: insets.top + 18 }]}>
         <View style={[s.speedChip, { backgroundColor: c.surface, borderColor: c.separator }]}>
           <Text style={[s.speedValue, { color: c.text }]}>{speedLabelKmh}</Text>
           <Text style={[s.speedUnit, { color: c.textMuted }]}>km/h</Text>
@@ -739,7 +847,7 @@ export default function DashboardScreen() {
             <Text style={[s.goalRingLabel, { color: c.textMuted }]}>Goal</Text>
           </View>
         </View>
-      </View>
+      </View>}
 
       {/* Confirmation modal */}
       <Modal visible={!!pendingConfirmation} transparent animationType="fade">

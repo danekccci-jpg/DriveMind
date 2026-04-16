@@ -8,7 +8,9 @@ let MarkerAnimatedComponent: React.ComponentType<any>
 let AnimatedRegionClass: any
 let PROVIDER_GOOGLE_VALUE: any
 
-if (Platform.OS === 'web') {
+const NUCLEAR_DISABLE_NATIVE_MAPS = false
+
+if (Platform.OS === 'web' || NUCLEAR_DISABLE_NATIVE_MAPS) {
   MapViewComponent = ({ style, children }: any) => (
     <View style={[webStyles.container, style]}>
       <Text style={webStyles.label}>Map not available on web</Text>
@@ -28,13 +30,33 @@ if (Platform.OS === 'web') {
 } else {
   // Native: use Google Maps on Android/iOS when MapView gets provider={PROVIDER_GOOGLE}.
   // Android needs Maps SDK + API key (Expo android.config.googleMaps / prebuild); iOS uses ios.config.googleMapsApiKey.
-  const RNMaps = require('react-native-maps')
-  MapViewComponent = RNMaps.default
-  MarkerComponent = RNMaps.Marker
-  PolylineComponent = RNMaps.Polyline
-  MarkerAnimatedComponent = RNMaps.MarkerAnimated ?? RNMaps.Marker
-  AnimatedRegionClass = RNMaps.AnimatedRegion
-  PROVIDER_GOOGLE_VALUE = RNMaps.PROVIDER_GOOGLE
+  try {
+    const RNMaps = require('react-native-maps')
+    MapViewComponent = RNMaps.default
+    MarkerComponent = RNMaps.Marker
+    PolylineComponent = RNMaps.Polyline
+    MarkerAnimatedComponent = RNMaps.MarkerAnimated ?? RNMaps.Marker
+    AnimatedRegionClass = RNMaps.AnimatedRegion
+    PROVIDER_GOOGLE_VALUE = RNMaps.PROVIDER_GOOGLE
+  } catch {
+    // Fallback stub (same as web branch) if native maps module is unavailable.
+    MapViewComponent = ({ style, children }: any) => (
+      <View style={[webStyles.container, style]}>
+        <Text style={webStyles.label}>Map temporarily disabled</Text>
+        {children}
+      </View>
+    )
+    MarkerComponent = () => null
+    PolylineComponent = () => null
+    MarkerAnimatedComponent = () => null
+    AnimatedRegionClass = class WebAnimatedRegion {
+      constructor(_: any) {}
+      timing(_: any) {
+        return { start: (_cb?: () => void) => {} }
+      }
+    }
+    PROVIDER_GOOGLE_VALUE = 'google'
+  }
 }
 
 const webStyles = StyleSheet.create({
