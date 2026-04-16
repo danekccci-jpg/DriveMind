@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import AppTabs from './AppTabs'
 import NotificationsScreen from '../screens/Notifications'
 import NavigationSettingsScreen from '../screens/NavigationSettings'
+import PermissionsScreen from '../screens/Settings/PermissionsScreen'
 
 const Stack = createNativeStackNavigator()
 
@@ -21,6 +22,11 @@ export default function RootNavigator() {
         name="NavigationSettings"
         component={NavigationSettingsScreen}
         options={{ title: t('nav_settings_title') }}
+      />
+      <Stack.Screen
+        name="Permissions"
+        component={PermissionsScreen}
+        options={{ title: t('perm_screen_title') }}
       />
     </Stack.Navigator>
   )

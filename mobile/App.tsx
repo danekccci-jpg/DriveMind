@@ -181,8 +181,7 @@ export default function App() {
 }
 
 function MainAppWithDriverIngest({ navTheme }: { navTheme: Theme }) {
-  const NUCLEAR_DISABLE_GOOGLE_NATIVE_CALLS = true
-  useDriverIngestBridge(!NUCLEAR_DISABLE_GOOGLE_NATIVE_CALLS)
+  useDriverIngestBridge(true)
   return (
     <>
       <DriverIngestToast />

@@ -10,6 +10,7 @@ import {
   selectWeeklyEarnings,
   type WalletTransaction,
 } from '../../store/walletStore'
+import { useOrdersStore } from '../../store/ordersStore'
 import { formatPln } from '../../utils/formatCurrency'
 import { fonts } from '../../theme/typography'
 import { RouteSummary } from '../../components/RouteSummary'
@@ -26,6 +27,7 @@ export default function EarningsScreen() {
   const { isDark, colors: c } = useTheme()
   const totalBalance = useWalletStore((s) => s.totalBalance)
   const transactions = useWalletStore((s) => s.transactions)
+  const shiftStats = useOrdersStore((s) => s.shiftStats)
 
   const todayEarnings = useMemo(() => selectTodayEarnings(transactions), [transactions])
   const weeklyEarnings = useMemo(() => selectWeeklyEarnings(transactions), [transactions])
@@ -37,6 +39,10 @@ export default function EarningsScreen() {
 
   const hasTransactions = transactions.length > 0
   const cardBg = isDark ? c.surface : LIGHT_CARD
+  const hoursOnline = useMemo(() => {
+    if (shiftStats.startTime == null) return 0
+    return Math.max(0, (Date.now() - shiftStats.startTime) / 3_600_000)
+  }, [shiftStats.startTime])
 
   return (
     <ScrollView
@@ -45,6 +51,22 @@ export default function EarningsScreen() {
       showsVerticalScrollIndicator={false}
     >
       <Text style={[s.screenTitle, { color: c.textMuted }]}>{t('earnings')}</Text>
+
+      <Text style={[s.sectionTitle, { color: c.textSecondary }]}>{t('current_shift')}</Text>
+      <View style={s.shiftRow}>
+        <View style={[s.shiftCard, cardShadow, { backgroundColor: cardBg }]}>
+          <Text style={[s.shiftLabel, { color: c.textSecondary }]}>{t('earnings_label')}</Text>
+          <Text style={[s.shiftValue, { color: c.text }]}>{formatPln(shiftStats.totalEarnings)}</Text>
+        </View>
+        <View style={[s.shiftCard, cardShadow, { backgroundColor: cardBg }]}>
+          <Text style={[s.shiftLabel, { color: c.textSecondary }]}>{t('orders_label')}</Text>
+          <Text style={[s.shiftValue, { color: c.text }]}>{String(shiftStats.completedOrders)}</Text>
+        </View>
+        <View style={[s.shiftCard, cardShadow, { backgroundColor: cardBg }]}>
+          <Text style={[s.shiftLabel, { color: c.textSecondary }]}>{t('hours_online')}</Text>
+          <Text style={[s.shiftValue, { color: c.text }]}>{`${hoursOnline.toFixed(1)}h`}</Text>
+        </View>
+      </View>
 
       <View style={[s.balanceCard, cardShadow, { backgroundColor: cardBg }]}>
         <Text style={[s.balanceLabel, { color: c.textSecondary }]}>{t('wallet_balance_label')}</Text>
@@ -216,6 +238,28 @@ const s = StyleSheet.create({
     letterSpacing: 0.6,
     textTransform: 'uppercase',
     marginBottom: 14,
+  },
+  shiftRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 16,
+  },
+  shiftCard: {
+    flex: 1,
+    borderRadius: 14,
+    padding: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255,255,255,0.06)',
+  },
+  shiftLabel: {
+    fontSize: 12,
+    fontFamily: fonts.medium,
+    marginBottom: 8,
+  },
+  shiftValue: {
+    fontSize: 17,
+    fontFamily: fonts.bold,
+    fontWeight: '700',
   },
   balanceCard: {
     borderRadius: 16,

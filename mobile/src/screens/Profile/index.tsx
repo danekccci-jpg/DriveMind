@@ -36,16 +36,17 @@ const VEHICLE_OPTIONS: { id: VehicleType; icon: string; label: string }[] = [
 interface Alert {
   id: string
   type: 'demand' | 'platform' | 'milestone' | 'review'
-  title: string
-  desc: string
-  time: string
+  titleKey: string
+  descKey: string
+  descParams?: Record<string, string | number>
+  timeValue: number
 }
 
 const MOCK_ALERTS: Alert[] = [
-  { id: '1', type: 'demand', title: 'High demand nearby', desc: 'Stare Miasto zone is surging right now', time: '2 min ago' },
-  { id: '2', type: 'platform', title: 'Better platform available', desc: 'Wolt paying +18% more than Glovo now', time: '14 min ago' },
-  { id: '3', type: 'milestone', title: 'Earnings milestone', desc: 'You reached 1,000 PLN this week', time: '1 hr ago' },
-  { id: '4', type: 'review', title: 'Shift in review', desc: "Yesterday's shift summary is ready", time: '3 hr ago' },
+  { id: '1', type: 'demand', titleKey: 'high_demand_title', descKey: 'high_demand_desc', descParams: { zone: 'Stare Miasto' }, timeValue: 2 },
+  { id: '2', type: 'platform', titleKey: 'better_platform_title', descKey: 'better_platform_desc_tmpl', descParams: { p1: 'Wolt', percent: 18, p2: 'Glovo' }, timeValue: 14 },
+  { id: '3', type: 'milestone', titleKey: 'earnings_milestone', descKey: 'earnings_milestone_desc', timeValue: 60 },
+  { id: '4', type: 'review', titleKey: 'shift_review_title', descKey: 'shift_review_desc', timeValue: 180 },
 ]
 
 const ALERT_DOT_COLOR: Record<Alert['type'], string> = {
@@ -94,6 +95,11 @@ export default function ProfileScreen() {
     const next = language === 'en' ? 'pl' : 'en'
     setLanguage(next)
     i18n.changeLanguage(next)
+  }
+
+  const formatAgo = (mins: number) => {
+    if (mins >= 60) return `${Math.floor(mins / 60)} ${t('hr_ago_short')}`
+    return `${mins} ${t('min_ago_short')}`
   }
 
   return (
@@ -232,16 +238,26 @@ export default function ProfileScreen() {
         <View key={alert.id} style={[s.alertCard, { backgroundColor: c.surface, borderColor: c.border }]}>
           <View style={[s.alertDot, { backgroundColor: ALERT_DOT_COLOR[alert.type] }]} />
           <View style={s.alertBody}>
-            <Text style={[s.alertTitle, { color: c.text }]}>{alert.title}</Text>
-            <Text style={[s.alertDesc, { color: c.textSecondary }]}>{alert.desc}</Text>
+            <Text style={[s.alertTitle, { color: c.text }]}>{t(alert.titleKey)}</Text>
+            <Text style={[s.alertDesc, { color: c.textSecondary }]}>{t(alert.descKey, alert.descParams)}</Text>
           </View>
-          <Text style={[s.alertTime, { color: c.textMuted }]}>{alert.time}</Text>
+          <Text style={[s.alertTime, { color: c.textMuted }]}>{formatAgo(alert.timeValue)}</Text>
         </View>
       ))}
 
       {/* Settings */}
       <SectionLabel label={t('settings')} color={c.textMuted} />
       <View style={[s.settingsCard, { backgroundColor: c.surface, borderColor: c.border }]}>
+        <SettingsRow
+          icon={<Feather name="shield" size={20} color={c.secondary} />}
+          label={t('system_permissions')}
+          onPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+            navigation.navigate('Permissions')
+          }}
+          right={<Feather name="chevron-right" size={18} color={c.textMuted} />}
+          separatorColor={c.separator}
+        />
         <SettingsRow
           icon={<Feather name="map" size={20} color={c.secondary} />}
           label={t('navigation_settings')}
@@ -293,13 +309,7 @@ export default function ProfileScreen() {
           }
           separatorColor={c.separator}
         />
-        <SettingsRow
-          icon={<Feather name="info" size={20} color={c.secondary} />}
-          label={t('about')}
-          right={<Feather name="chevron-right" size={18} color={c.textMuted} />}
-          separatorColor={c.separator}
-          noBorder
-        />
+        
       </View>
 
       <TouchableOpacity

@@ -3,16 +3,14 @@
   "private": true,
   "workspaces": [
     "mobile",
-    "backend",
-    "packages/*"
+    "packages/shared"
   ],
   "scripts": {
-    "dev": "npm-run-all -p dev:backend dev:mobile",
+    "dev": "npm-run-all -p dev:mobile",
     "dev:mobile": "npm --workspace mobile run start",
-    "dev:backend": "npm --workspace backend run dev",
-    "lint": "npm-run-all -p lint:mobile lint:backend",
+    "lint": "npm-run-all -p lint:mobile",
     "lint:mobile": "npm --workspace mobile run lint",
-    "lint:backend": "npm --workspace backend run lint"
+    "build:shared": "npm --workspace @drivemind/shared run build"
   },
   "devDependencies": {
     "@react-native-community/cli": "^20.1.3",

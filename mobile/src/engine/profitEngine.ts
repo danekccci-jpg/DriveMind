@@ -11,12 +11,18 @@ export interface ProfitScoreResult {
   score: number
   label: ProfitLabel
   color: string
-  /** Kraków 2026 tier for the primary profit badge. */
+  /** 5-tier classification from shared engine. */
   profitTier: ProfitTier
   /** Emoji shorthand matching the tier for quick display. */
-  tierEmoji: '🔴' | '🟡' | '🟢'
+  tierEmoji: '💎' | '✅' | '👌' | '🤔' | '🗑️'
   /** True when a 30 % out-of-city penalty was applied. */
   isOutOfCity: boolean
+  /** Shared tier label (emoji + name), e.g. \"💎 LEGENDARY\". */
+  tierLabel: string
+  /** Shared tier color hex. */
+  tierColor: string
+  /** Gross zł/km (Brutto). */
+  złPerKm: number
 }
 
 const PEAK_HOURS: [number, number][] = [[12, 14], [18, 21]]
@@ -50,10 +56,12 @@ function isWeekendOrNight(): boolean {
   return isWeekend || isNight
 }
 
-function tierEmoji(tier: ProfitTier): '🔴' | '🟡' | '🟢' {
-  if (tier === 'TRASH') return '🔴'
-  if (tier === 'OKAY') return '🟡'
-  return '🟢'
+function tierEmoji(tier: ProfitTier): '💎' | '✅' | '👌' | '🤔' | '🗑️' {
+  if (tier === 'LEGENDARY') return '💎'
+  if (tier === 'VERY_GOOD') return '✅'
+  if (tier === 'WORTH_IT') return '👌'
+  if (tier === 'RISKY') return '🤔'
+  return '🗑️'
 }
 
 function labelFromScore(score: number): { label: ProfitLabel; color: string } {
@@ -101,5 +109,8 @@ export function calculateProfitScore(
     profitTier: profitability.profitTier,
     tierEmoji: tierEmoji(profitability.profitTier),
     isOutOfCity: profitability.isOutOfCity,
+    tierLabel: profitability.tierLabel,
+    tierColor: profitability.tierColor,
+    złPerKm: profitability.złPerKm,
   }
 }

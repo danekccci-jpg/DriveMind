@@ -17,23 +17,28 @@ import { useTranslation } from 'react-i18next'
 import * as Haptics from 'expo-haptics'
 
 import PlatformIcon from '../../components/PlatformIcon'
-import ProfitBadge from '../../components/ProfitBadge'
 import SkeletonCard from '../../components/SkeletonCard'
 import { useOrdersStore, Order } from '../../store/ordersStore'
 import { useRoleStore } from '../../store/roleStore'
-import { MOCK_ORDERS } from '../../data/mockOrders'
-import { calculateProfitScore } from '../../engine/profitEngine'
 import { openPlatformDeepLink } from '../../utils/platformDeepLink'
 import { triggerScraperWindow } from '../../services/driverIngestBridge'
 import { useDriverIngestStore, type IngestedOffer } from '../../store/driverIngestStore'
 import { fonts } from '../../theme/typography'
 import { useColors } from '../../theme/theme'
+import { computeProfitability } from '@drivemind/shared'
 
 type PlatformId = 'glovo' | 'uber' | 'bolt' | 'wolt'
 
 const COURIER_PLATFORMS: PlatformId[] = ['glovo', 'uber', 'bolt', 'wolt']
 const TAXI_PLATFORMS: PlatformId[] = ['uber', 'bolt']
 const PLATFORM_LABEL: Record<string, string> = { glovo: 'Glovo', uber: 'Uber', bolt: 'Bolt', wolt: 'Wolt' }
+
+function shortStreet(value: string): string {
+  const s = (value ?? '').trim()
+  if (!s) return '—'
+  const i = s.indexOf(',')
+  return i > 0 ? s.slice(0, i).trim() : s
+}
 
 export default function OrderHubScreen() {
   const { t } = useTranslation()
@@ -42,7 +47,7 @@ export default function OrderHubScreen() {
   const role = useRoleStore((st) => st.role) ?? 'courier'
   const fuelConsumption = useRoleStore((st) => st.fuelConsumption)
   const {
-    shiftStats, lastPlatformActivity, pendingConfirmation,
+    orderHistory, pendingConfirmation,
     setPendingConfirmation, confirmOrder, rejectOrder,
   } = useOrdersStore()
 
@@ -51,12 +56,9 @@ export default function OrderHubScreen() {
   const dismissActiveIngest = useDriverIngestStore((s) => s.dismissActiveRide)
 
   const [selectedPlatform, setSelectedPlatform] = useState<PlatformId | 'all'>('all')
-  const [isLoading, setIsLoading] = useState(true)
   const appStateRef = useRef<AppStateStatus>(AppState.currentState)
   const pendingOrderRef = useRef<Order | null>(null)
   const platforms = role === 'taxi' ? TAXI_PLATFORMS : COURIER_PLATFORMS
-
-  useEffect(() => { const tm = setTimeout(() => setIsLoading(false), 1500); return () => clearTimeout(tm) }, [])
 
   useEffect(() => {
     const handler = (next: AppStateStatus) => {
@@ -72,10 +74,10 @@ export default function OrderHubScreen() {
 
   const filteredOrders = useMemo(() => {
     const base = role === 'taxi'
-      ? MOCK_ORDERS.filter((o) => o.platform === 'uber' || o.platform === 'bolt')
-      : MOCK_ORDERS
+      ? orderHistory.filter((o) => o.platform === 'uber' || o.platform === 'bolt')
+      : orderHistory
     return selectedPlatform === 'all' ? base : base.filter((o) => o.platform === selectedPlatform)
-  }, [role, selectedPlatform])
+  }, [role, selectedPlatform, orderHistory])
 
   const handleAccept = useCallback(async (order: Order) => {
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
@@ -107,42 +109,34 @@ export default function OrderHubScreen() {
 
   const renderOrder = useCallback(
     ({ item }: { item: Order; index: number }) => {
-      const result = calculateProfitScore(item, shiftStats, role as 'courier' | 'taxi', fuelConsumption, lastPlatformActivity)
-      const a = accent(item.platform)
+      const result = computeProfitability({
+        role: role as 'courier' | 'taxi',
+        pricePLN: item.earnings,
+        distanceKm: Math.max(0.2, (item.distanceKm ?? 0) + (item.deadrunKm ?? 0)),
+        etaMin: Math.max(1, item.durationMin ?? 1),
+        dropoffLabel: item.dropoffAddress,
+      })
+      const a = result.tierColor
 
       return (
         <View style={[s.card, { backgroundColor: c.surface, borderColor: c.separator, borderLeftColor: a }]}>
           <View style={s.cardHeader}>
             <PlatformIcon platform={item.platform as PlatformId} size={24} />
             <Text style={[s.cardPlatform, { color: c.text }]}>{PLATFORM_LABEL[item.platform] ?? item.platform}</Text>
-            <ProfitBadge label={result.label} />
-            <Text style={[s.cardPrice, { color: c.text }]}>{item.earnings.toFixed(0)} PLN</Text>
+            <View style={[s.tierPill, { borderColor: result.tierColor, backgroundColor: `${result.tierColor}22` }]}>
+              <Text style={[s.tierPillText, { color: result.tierColor }]}>{result.tierLabel}</Text>
+            </View>
+            <Text style={[s.cardPrice, { color: c.text }]}>{item.earnings.toFixed(0)} zł</Text>
           </View>
           <View style={[s.routeInline, { borderColor: c.separator }]}>
-            <Text style={[s.addrLabel, { color: c.textSecondary }]} numberOfLines={1}>
-              A: {item.pickupAddress}
+            <Text style={[s.addrSingle, { color: c.textSecondary }]} numberOfLines={1}>
+              {`${shortStreet(item.pickupAddress)} → ${shortStreet(item.dropoffAddress)}`}
             </Text>
-            <View style={s.routeMid}>
-              <Text style={[s.routeArrow, { color: c.textMuted }]}>→</Text>
-              <Text style={[s.routeDist, { color: c.text }]}>{item.distanceKm.toFixed(1)} km</Text>
-              <Text style={[s.routeArrow, { color: c.textMuted }]}>→</Text>
-            </View>
-            <Text style={[s.addrLabelRight, { color: c.textSecondary }]} numberOfLines={1}>
-              B: {item.dropoffAddress}
-            </Text>
-          </View>
-          <View style={s.btnRow}>
-            <TouchableOpacity style={[s.acceptBtn, { borderColor: a }]} activeOpacity={0.7} onPress={() => handleAccept(item)}>
-              <Text style={[s.acceptText, { color: a }]}>{t('accept')}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={s.skipBtn} activeOpacity={0.7}>
-              <Text style={[s.skipText, { color: c.textMuted }]}>{t('skip_btn')}</Text>
-            </TouchableOpacity>
           </View>
         </View>
       )
     },
-    [shiftStats, role, fuelConsumption, lastPlatformActivity, handleAccept, t, c, accent],
+    [role, handleAccept, t, c, accent],
   )
 
   const ingestHeader = useMemo(() => {
@@ -205,39 +199,24 @@ export default function OrderHubScreen() {
         })}
       </ScrollView>
 
-      <View style={[s.banner, { backgroundColor: c.surface, borderLeftColor: c.primary }]}>
-        <Text style={[s.bannerLabel, { color: c.textMuted }]}>{t('profit_engine').toUpperCase()}</Text>
-        <Text style={[s.bannerValue, { color: c.text }]}>{t('best_zone_now')}: Stare Miasto</Text>
-      </View>
-
       <View style={s.listWrap}>
-        {isLoading ? (
-          <ScrollView
-            style={s.listFlex}
-            contentContainerStyle={s.listPad}
-            showsVerticalScrollIndicator={false}
-          >
-            <SkeletonCard /><SkeletonCard /><SkeletonCard />
-          </ScrollView>
-        ) : (
-          <FlatList
-            style={s.listFlex}
-            data={filteredOrders}
-            keyExtractor={(item) => item.id}
-            renderItem={renderOrder}
-            contentContainerStyle={s.listPad}
-            scrollEventThrottle={1}
-            removeClippedSubviews
-            maxToRenderPerBatch={8}
-            showsVerticalScrollIndicator={false}
-            ListHeaderComponent={ingestHeader}
-            ListEmptyComponent={
-              <View style={s.emptyWrap}>
-                <Text style={[s.empty, { color: c.textMuted }]}>{t('no_orders_yet')}</Text>
-              </View>
-            }
-          />
-        )}
+        <FlatList
+          style={s.listFlex}
+          data={filteredOrders}
+          keyExtractor={(item) => item.id}
+          renderItem={renderOrder}
+          contentContainerStyle={s.listPad}
+          scrollEventThrottle={1}
+          removeClippedSubviews
+          maxToRenderPerBatch={8}
+          showsVerticalScrollIndicator={false}
+          ListHeaderComponent={ingestHeader}
+          ListEmptyComponent={
+            <View style={s.emptyWrap}>
+              <Text style={[s.empty, { color: c.textMuted }]}>{t('no_orders_yet')}</Text>
+            </View>
+          }
+        />
       </View>
 
       <Modal visible={!!pendingConfirmation} transparent animationType="fade">
@@ -290,19 +269,6 @@ const s = StyleSheet.create({
   pillsRow: { paddingHorizontal: 20, gap: 8, paddingBottom: 8 },
   pill: { height: 34, paddingHorizontal: 16, borderRadius: 20, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
   pillText: { fontSize: 13, fontFamily: fonts.medium },
-  /** No extra top margin — keeps orders list close under filters */
-  banner: {
-    marginHorizontal: 20,
-    marginTop: 0,
-    marginBottom: 10,
-    borderLeftWidth: 2,
-    borderRadius: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    flexShrink: 0,
-  },
-  bannerLabel: { fontSize: 10, fontFamily: fonts.regular, letterSpacing: 1, marginBottom: 2 },
-  bannerValue: { fontSize: 14, fontWeight: '500', fontFamily: fonts.medium },
   listWrap: { flex: 1, alignSelf: 'stretch', width: '100%', minHeight: 0 },
   listFlex: { flex: 1, alignSelf: 'stretch', width: '100%', minHeight: 0 },
   /** Top-aligned scroll content (no vertical centering) */
@@ -334,15 +300,15 @@ const s = StyleSheet.create({
     marginBottom: 8,
   },
   addrLabel: { flex: 1, fontSize: 11, fontFamily: fonts.medium, marginRight: 6 },
-  routeMid: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  routeArrow: { fontSize: 11, fontFamily: fonts.medium },
-  routeDist: { fontSize: 12, fontWeight: '600', fontFamily: fonts.semiBold },
-  addrLabelRight: { flex: 1, fontSize: 11, fontFamily: fonts.medium, marginLeft: 6, textAlign: 'right' },
-  btnRow: { flexDirection: 'row', gap: 8 },
-  acceptBtn: { flex: 1, height: 36, borderRadius: 9, borderWidth: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: 'transparent' },
-  acceptText: { fontSize: 14, fontWeight: '600', fontFamily: fonts.semiBold },
-  skipBtn: { flex: 0.35, height: 36, alignItems: 'center', justifyContent: 'center' },
-  skipText: { fontSize: 13, fontFamily: fonts.regular },
+  addrSingle: { flex: 1, fontSize: 12, fontFamily: fonts.medium },
+  tierPill: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    maxWidth: '50%',
+  },
+  tierPillText: { fontSize: 10, fontFamily: fonts.semiBold },
   empty: { textAlign: 'center', fontSize: 15, fontFamily: fonts.regular },
   ingestBlock: { marginBottom: 12, alignSelf: 'stretch' },
   ingestTitle: {

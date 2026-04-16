@@ -8,6 +8,7 @@ import {
   Dimensions,
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
+import { useTranslation } from 'react-i18next'
 import { MaterialCommunityIcons } from '@expo/vector-icons'
 import * as Haptics from 'expo-haptics'
 import { useColors } from '../../theme/theme'
@@ -26,6 +27,7 @@ interface Props {
 }
 
 export default function RoleSelectionScreen({ onSelect }: Props) {
+  const { t } = useTranslation()
   const c = useColors()
   const insets = useSafeAreaInsets()
   const scaleA = useRef(new Animated.Value(1)).current
@@ -44,7 +46,7 @@ export default function RoleSelectionScreen({ onSelect }: Props) {
       <View style={s.header}>
         <Text style={[s.brand, { color: c.text }]}>DRIVEMIND</Text>
         <View style={[s.divider, { backgroundColor: c.primary }]} />
-        <Text style={[s.subtitle, { color: c.secondary }]}>SELECT YOUR MODE</Text>
+        <Text style={[s.subtitle, { color: c.secondary }]}>{t('select_mode').toUpperCase()}</Text>
       </View>
 
       <View style={s.cards}>
@@ -57,8 +59,8 @@ export default function RoleSelectionScreen({ onSelect }: Props) {
             <View style={[s.iconRing, { borderColor: c.primaryDim, backgroundColor: c.primaryDim }]}>
               <MaterialCommunityIcons name="bike" size={36} color={c.primary} />
             </View>
-            <Text style={[s.cardTitle, { color: c.text }]}>COURIER</Text>
-            <Text style={[s.cardDesc, { color: c.secondary }]}>Delivery & logistics</Text>
+            <Text style={[s.cardTitle, { color: c.text }]}>{t('courier').toUpperCase()}</Text>
+            <Text style={[s.cardDesc, { color: c.secondary }]}>{t('courier_sub')}</Text>
             <View style={[s.cardLine, { backgroundColor: c.primaryDim }]} />
           </TouchableOpacity>
         </Animated.View>
@@ -72,14 +74,14 @@ export default function RoleSelectionScreen({ onSelect }: Props) {
             <View style={[s.iconRing, { borderColor: c.primaryDim, backgroundColor: c.primaryDim }]}>
               <MaterialCommunityIcons name="car-outline" size={36} color={c.primary} />
             </View>
-            <Text style={[s.cardTitle, { color: c.text }]}>TAXI</Text>
-            <Text style={[s.cardDesc, { color: c.secondary }]}>Rideshare & transport</Text>
+            <Text style={[s.cardTitle, { color: c.text }]}>{t('taxi').toUpperCase()}</Text>
+            <Text style={[s.cardDesc, { color: c.secondary }]}>{t('taxi_sub')}</Text>
             <View style={[s.cardLine, { backgroundColor: c.primaryDim }]} />
           </TouchableOpacity>
         </Animated.View>
       </View>
 
-      <Text style={[s.footer, { color: c.textMuted }]}>Tap to begin</Text>
+      <Text style={[s.footer, { color: c.textMuted }]}>{t('tap_to_begin')}</Text>
     </View>
   )
 }

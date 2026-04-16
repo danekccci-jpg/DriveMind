@@ -17,17 +17,16 @@ function round2(n: number) {
 // ---------------------------------------------------------------------------
 
 /**
- * PLN/km thresholds for the three driver-facing tiers.
+ * 5-tier zł/km thresholds (gross, Brutto) for Kraków 2026.
  *
- * Weekday trash bar is lower because demand is lighter — drivers should still
- * take orders at 2.50+ rather than sit idle.
- * Weekend/night trash bar is raised to 4.00 because surge demand means the
- * driver can afford to hold out for premium rates.
+ * These values are intended to match the driver-facing economics in 2026 and
+ * align with what is typically shown on Uber/Bolt offer screens (gross zł).
  */
 const THRESHOLDS = {
-  TRASH_WEEKDAY: 2.50,   // < this on a normal weekday → 🔴 TRASH
-  TRASH_WEEKEND_NIGHT: 4.00, // < this on weekend/night  → 🔴 TRASH
-  OKAY_MAX: 3.50,        // 2.50–3.50 → 🟡 OKAY; > 3.50 → 🟢 PROFIT
+  LEGENDARY_MIN: 5.50, // > 5.50 zł/km
+  VERY_GOOD_MIN: 3.50, // 3.50–5.50 zł/km
+  WORTH_IT_MIN: 2.50,  // 2.50–3.50 zł/km
+  RISKY_MIN: 2.00,     // 2.00–2.50 zł/km
 } as const;
 
 /**
@@ -69,14 +68,27 @@ function detectOutOfCity(dropoffLabel?: string): boolean {
 // Tier classification
 // ---------------------------------------------------------------------------
 
-function classifyTier(effectivePlnPerKm: number, isWeekendOrNight: boolean): ProfitTier {
-  const trashThreshold = isWeekendOrNight
-    ? THRESHOLDS.TRASH_WEEKEND_NIGHT
-    : THRESHOLDS.TRASH_WEEKDAY;
+function classifyTier(effectiveZlPerKm: number): ProfitTier {
+  if (effectiveZlPerKm > THRESHOLDS.LEGENDARY_MIN) return "LEGENDARY";
+  if (effectiveZlPerKm >= THRESHOLDS.VERY_GOOD_MIN) return "VERY_GOOD";
+  if (effectiveZlPerKm >= THRESHOLDS.WORTH_IT_MIN) return "WORTH_IT";
+  if (effectiveZlPerKm >= THRESHOLDS.RISKY_MIN) return "RISKY";
+  return "TRASH";
+}
 
-  if (effectivePlnPerKm < trashThreshold) return "TRASH";
-  if (effectivePlnPerKm >= THRESHOLDS.OKAY_MAX) return "PROFIT";
-  return "OKAY";
+function tierMeta(tier: ProfitTier): { tierLabel: string; tierColor: string } {
+  switch (tier) {
+    case "LEGENDARY":
+      return { tierLabel: "💎 LEGENDARY", tierColor: "#A855F7" };
+    case "VERY_GOOD":
+      return { tierLabel: "✅ VERY GOOD", tierColor: "#22C55E" };
+    case "WORTH_IT":
+      return { tierLabel: "👌 WORTH IT", tierColor: "#EAB308" };
+    case "RISKY":
+      return { tierLabel: "🤔 RISKY", tierColor: "#F97316" };
+    case "TRASH":
+      return { tierLabel: "🗑️ TRASH", tierColor: "#EF4444" };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -99,6 +111,7 @@ export function computeProfitability(input: ProfitabilityInput): ProfitabilityOu
 
   const etaMin = Math.max(1, input.etaMin * trafficFactor);
   const distanceKm = Math.max(0.2, input.distanceKm);
+  // Gross price (Brutto) as presented on driver offer screens.
   const pricePLN = Math.max(0, input.pricePLN) * demandFactor;
 
   // ── Zone penalty ────────────────────────────────────────────────────────
@@ -110,13 +123,14 @@ export function computeProfitability(input: ProfitabilityInput): ProfitabilityOu
   const effectivePricePLN = isOutOfCity ? pricePLN * ZONE_PENALTY_FACTOR : pricePLN;
 
   // ── Core metrics ────────────────────────────────────────────────────────
-  const grossPlnPerKm = pricePLN / distanceKm;
-  const effectivePlnPerKm = effectivePricePLN / distanceKm;
+  const grossZlPerKm = pricePLN / distanceKm;
+  const effectiveZlPerKm = effectivePricePLN / distanceKm;
   const plnPerMin = pricePLN / etaMin;
   const estHourlyPLN = plnPerMin * 60;
 
   // ── Tier classification (Kraków 2026) ───────────────────────────────────
-  const profitTier = classifyTier(effectivePlnPerKm, isWeekendOrNight);
+  const profitTier = classifyTier(effectiveZlPerKm);
+  const { tierLabel, tierColor } = tierMeta(profitTier);
 
   // ── Legacy 0-100 score (preserved for existing UI badge logic) ──────────
   // Role-aware normalization targets (can be tuned per market).
@@ -132,7 +146,7 @@ export function computeProfitability(input: ProfitabilityInput): ProfitabilityOu
   );
 
   const kmScore = clamp(
-    ((grossPlnPerKm - targets.kmGood) / (targets.kmGreat - targets.kmGood)) * 50 + 25,
+    ((grossZlPerKm - targets.kmGood) / (targets.kmGreat - targets.kmGood)) * 50 + 25,
     0,
     100
   );
@@ -153,32 +167,39 @@ export function computeProfitability(input: ProfitabilityInput): ProfitabilityOu
   let recommendation: ProfitabilityOutput["recommendation"] = "WAIT";
   let reason = "Borderline — keep watching for better tasks.";
 
-  if (profitTier === "PROFIT") {
+  if (profitTier === "LEGENDARY" || profitTier === "VERY_GOOD") {
     recommendation = "TAKE";
     reason = isOutOfCity
-      ? "Good rate, but destination is outside the city — factor in empty return."
-      : "Strong value for time and distance.";
+      ? "Excellent gross rate, but destination is outside the city — factor in empty return."
+      : "Excellent value for time and distance.";
+  } else if (profitTier === "WORTH_IT") {
+    recommendation = "TAKE";
+    reason = isOutOfCity
+      ? "Worth it, but out-of-city dropoff may reduce real returns."
+      : "Solid offer — generally worth taking.";
+  } else if (profitTier === "RISKY") {
+    recommendation = "WAIT";
+    reason = isWeekendOrNight
+      ? "Risky — weekend/night often pays better; consider waiting."
+      : "Risky — consider waiting for a better rate.";
   } else if (profitTier === "TRASH") {
     recommendation = "SKIP";
-    reason = isWeekendOrNight
-      ? "Weekend/night demand is high — hold out for 4.00+ zł/km."
-      : "Low rate — likely hurts hourly earnings.";
-  } else {
-    // OKAY
-    recommendation = score0to100 >= 55 ? "WAIT" : "SKIP";
     reason = isOutOfCity
-      ? "Out-of-city penalty drags effective rate into marginal territory."
-      : "Acceptable but not optimal.";
+      ? "Trash rate and destination is outside the city — likely not worth it."
+      : "Trash rate — likely hurts hourly earnings.";
   }
 
   return {
-    plnPerKm: round2(grossPlnPerKm),
+    złPerKm: round2(grossZlPerKm),
+    plnPerKm: round2(grossZlPerKm),
     plnPerMin: round2(plnPerMin),
     estHourlyPLN: round2(estHourlyPLN),
     score0to100: Math.round(score0to100),
     recommendation,
     reason,
     profitTier,
+    tierLabel,
+    tierColor,
     isOutOfCity,
     zonePenaltyApplied,
   };

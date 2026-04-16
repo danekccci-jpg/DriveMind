@@ -22,7 +22,7 @@ export type UnifiedOrder = {
 };
 
 /** Tier label displayed to the driver (Kraków 2026 market criteria). */
-export type ProfitTier = "TRASH" | "OKAY" | "PROFIT";
+export type ProfitTier = "LEGENDARY" | "VERY_GOOD" | "WORTH_IT" | "RISKY" | "TRASH";
 
 export type ProfitabilityInput = {
   role: Role;
@@ -39,14 +39,24 @@ export type ProfitabilityInput = {
 };
 
 export type ProfitabilityOutput = {
+  /**
+   * Gross zł/km (Brutto) — the primary metric shown to the driver.
+   * `plnPerKm` is kept as an alias for backward compatibility.
+   */
+  złPerKm: number;
+  /** Alias of `złPerKm` (legacy field name). */
   plnPerKm: number;
   plnPerMin: number;
   estHourlyPLN: number;
   score0to100: number;
   recommendation: Recommendation;
   reason: string;
-  /** Kraków 2026 tier: TRASH 🔴 / OKAY 🟡 / PROFIT 🟢 */
+  /** 5-tier classification based on zł/km thresholds. */
   profitTier: ProfitTier;
+  /** Human label for the tier (includes emoji), e.g. \"💎 LEGENDARY\". */
+  tierLabel: string;
+  /** UI color hex for the tier (e.g. #A855F7). */
+  tierColor: string;
   /** True when the dropoff is detected as an out-of-city destination (e.g. Wieliczka, Skawina). */
   isOutOfCity: boolean;
   /** True when the 30 % empty-return penalty was applied to the effective PLN/km. */

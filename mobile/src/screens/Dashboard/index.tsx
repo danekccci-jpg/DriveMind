@@ -9,6 +9,7 @@ import {
   AppStateStatus,
   Alert,
   Animated,
+  ActivityIndicator,
   Platform,
   ScrollView,
 } from 'react-native'
@@ -21,7 +22,7 @@ import Svg, { Circle } from 'react-native-svg'
 
 import MapView, { Marker, MarkerAnimated, AnimatedRegion, PROVIDER_GOOGLE } from '../../components/MapViewWeb'
 import { NavigationMapLayers } from '../../components/navigation/NavigationMapLayers'
-import { DirectionCard } from '../../components/navigation/DirectionCard'
+import { WazeDirectionCard } from './WazeDirectionCard'
 import { PlayerNavMarker } from '../../components/navigation/PlayerNavMarker'
 import { RouteSummary } from '../../components/RouteSummary'
 import { formatNavDistanceLine } from '../../navigation/navigationFormatting'
@@ -37,22 +38,20 @@ import {
   type LatLng,
 } from '../../navigation/navigationGeometry'
 import PlatformIcon from '../../components/PlatformIcon'
-import ProfitBadge from '../../components/ProfitBadge'
 import { useOrdersStore, Order } from '../../store/ordersStore'
 import { useRoleStore } from '../../store/roleStore'
-import { getDashboardSuggestionOrder } from '../../data/mockOrders'
 import { openPlatformDeepLink } from '../../utils/platformDeepLink'
 import { getTravelModeByVehicle } from '../../services/directionsService'
 import { navigationEngine } from '../../services/navigationEngine'
 import { triggerScraperWindow } from '../../services/driverIngestBridge'
 import { useDriverSessionStore } from '../../store/driverSessionStore'
+import { useDriverIngestStore } from '../../store/driverIngestStore'
 import { fonts } from '../../theme/typography'
 import { useTheme, type AppColors } from '../../theme/theme'
-import { ProfitLabel } from '../../engine/profitEngine'
+import { computeProfitability } from '@drivemind/shared'
 // NUCLEAR DEBUG: direct react-native-maps import disabled for this build.
 import { MAP_STYLE_DARK, MAP_STYLE_LIGHT } from '../../map/mapStyles'
 
-const TAB_BAR_HEIGHT = 60
 const GOAL_RING_SIZE = 54
 const GOAL_RING_STROKE = 5
 
@@ -70,12 +69,15 @@ function rideStreetLine(full: string): string {
   return i > 0 ? s.slice(0, i).trim() : s
 }
 
-function Pill({ label, c }: { label: string; c: AppColors }) {
-  return (
-    <View style={[s.pill, { backgroundColor: c.surfaceAlt }]}>
-      <Text style={[s.pillText, { color: c.textSecondary }]}>{label}</Text>
-    </View>
-  )
+function alpha(hex: string, a: number): string {
+  const m = hex.trim().replace('#', '')
+  const full = m.length === 3 ? `${m[0]}${m[0]}${m[1]}${m[1]}${m[2]}${m[2]}` : m
+  const r = Number.parseInt(full.slice(0, 2), 16)
+  const g = Number.parseInt(full.slice(2, 4), 16)
+  const b = Number.parseInt(full.slice(4, 6), 16)
+  return Number.isFinite(r) && Number.isFinite(g) && Number.isFinite(b)
+    ? `rgba(${r},${g},${b},${a})`
+    : `rgba(255,255,255,${a})`
 }
 
 function speedKmh(speedMps: number | null): number {
@@ -146,24 +148,27 @@ export default function DashboardScreen() {
   const markerStyle = useNavigationSettingsStore((s) => s.markerStyle)
   const units = useNavigationSettingsStore((s) => s.units)
   const mapPerspective3d = useNavigationSettingsStore((s) => s.mapPerspective3d)
+  const navPerspective3d = isNavigating ? true : mapPerspective3d
 
   const role = useRoleStore((st) => st.role) ?? 'courier'
   const vehicleType = useRoleStore((st) => st.vehicleType)
   const {
     shiftStats, dailyGoal, isNavigating, navigationPhase, deliveryPhase, routePolyline,
-    currentStep, routeSteps, pendingConfirmation,
+    currentStep, routeSteps, routeDuration, routeDurationSeconds, pendingConfirmation,
     activeOrders, setPendingConfirmation,
     confirmOrder, rejectOrder,
     updateNavigationPhase, stopNavigation, recomputeNavigationTarget, updateNavigationRoute,
+    startShiftManually,
   } = useOrdersStore()
   const navigationOrderId = useOrdersStore((s) => s.navigationOrderId)
   const isDriverOnline = useDriverSessionStore((s) => s.isOnline)
+  const setIsDriverOnline = useDriverSessionStore((s) => s.setIsOnline)
+  const activeRide = useDriverIngestStore((s) => s.activeRide)
 
   // Derived shift values — declared HERE so they are in scope for all useMemo/useCallback
   // hooks below. Declaring them after useMemo calls puts them in the TDZ (temporal dead zone)
   // for `const`, which Hermes enforces in release builds and causes a crash.
   const isShiftActive = shiftStats.startTime !== null
-  const hoursOnline = shiftStats.startTime ? (Date.now() - shiftStats.startTime) / 3_600_000 : 0
   const goalProgress = dailyGoal > 0 ? Math.min(shiftStats.totalEarnings / dailyGoal, 1) : 0
 
   const [userLocation, setUserLocation] = useState<LatLng | null>(null)
@@ -199,7 +204,50 @@ export default function DashboardScreen() {
     [activeOrders, navigationOrderId],
   )
   const routePolylineSafe = routePolyline ?? []
-  const suggestion = activeOrder ?? getDashboardSuggestionOrder(role as 'courier' | 'taxi')
+  const suggestion = useMemo(() => {
+    if (activeOrder) return activeOrder
+    if (!activeRide) return null
+    const parsedPrice = Number.parseFloat((activeRide.price ?? '').replace(',', '.').replace(/[^\d.]/g, ''))
+    const earnings = Number.isFinite(parsedPrice) ? parsedPrice : 0
+    return {
+      id: activeRide.id,
+      platform: activeRide.platform === 'unknown' ? 'uber' : activeRide.platform,
+      pickupAddress: '—',
+      dropoffAddress: activeRide.destination ?? activeRide.text ?? '—',
+      earnings,
+      distanceKm: 5,
+      durationMin: 15,
+      deadrunKm: 0,
+      pickupLat: 50.0614,
+      pickupLng: 19.9366,
+      dropoffLat: 50.0614,
+      dropoffLng: 19.9366,
+      profitScore: 0,
+      profitLabel: 'NEUTRAL',
+      status: 'pickup',
+    } as Order
+  }, [activeOrder, activeRide])
+  const hasSuggestedOrder = !!suggestion
+
+  const sheetMode = useMemo(() => {
+    if (!isDriverOnline) return 'off_air' as const
+    if (!hasSuggestedOrder) return 'searching' as const
+    return 'order' as const
+  }, [isDriverOnline, hasSuggestedOrder])
+
+  const sheetHeight = sheetMode === 'order' ? 148 : sheetMode === 'off_air' ? 92 : 74
+  const mapBottomPadding = sheetHeight + insets.bottom + 10
+
+  const tierForSuggestion = useMemo(() => {
+    if (!suggestion) return null
+    return computeProfitability({
+      role: (useRoleStore.getState().role ?? 'courier') as any,
+      pricePLN: suggestion.earnings,
+      distanceKm: Math.max(0.2, (suggestion.distanceKm ?? 0) + (suggestion.deadrunKm ?? 0)),
+      etaMin: Math.max(1, suggestion.durationMin ?? 1),
+      dropoffLabel: suggestion.dropoffAddress,
+    })
+  }, [suggestion?.id])
 
   const destCoordNav: LatLng | null = useMemo(() => {
     if (!isNavigating || !activeOrder) return null
@@ -232,6 +280,16 @@ export default function DashboardScreen() {
   )
   const streetTitle = extractStreetName(routeSteps?.[0]?.instruction ?? currentStep ?? '')
   const speedLabelKmh = useMemo(() => speedKmh(userSpeedMps), [userSpeedMps])
+  const etaText = useMemo(() => {
+    const secs = routeDurationSeconds
+    if (typeof secs === 'number' && Number.isFinite(secs) && secs > 0) {
+      const d = new Date(Date.now() + secs * 1000)
+      const hh = String(d.getHours()).padStart(2, '0')
+      const mm = String(d.getMinutes()).padStart(2, '0')
+      return `${hh}:${mm}`
+    }
+    return routeDuration || '—'
+  }, [routeDurationSeconds, routeDuration])
   const goalRing = useMemo(() => {
     const radius = (GOAL_RING_SIZE - GOAL_RING_STROKE) / 2
     const circumference = 2 * Math.PI * radius
@@ -644,7 +702,7 @@ export default function DashboardScreen() {
       map.animateCamera(
         {
           center: { latitude: loc.latitude, longitude: loc.longitude },
-          pitch: useNavigationSettingsStore.getState().mapPerspective3d ? 60 : 0,
+          pitch: 60,
           zoom: 17.5,
           heading: smoothHeadingRef.current,
         },
@@ -665,17 +723,17 @@ export default function DashboardScreen() {
       }, opts?: { duration?: number }) => void
     }
     if (typeof map.animateCamera !== 'function') return
-    const zoom = dynamicNavZoom(userSpeedMps, hudDistanceM, mapPerspective3d)
+    const zoom = dynamicNavZoom(userSpeedMps, hudDistanceM, navPerspective3d)
     map.animateCamera(
       {
         center: { latitude: userLocation.latitude, longitude: userLocation.longitude },
-        pitch: mapPerspective3d ? 60 : 0,
+        pitch: navPerspective3d ? 60 : 0,
         heading: smoothHeading,
         zoom,
       },
       { duration: 1000 },
     )
-  }, [isNavigating, navFollowReady, userLocation, smoothHeading, userSpeedMps, hudDistanceM, mapPerspective3d])
+  }, [isNavigating, navFollowReady, userLocation, smoothHeading, userSpeedMps, hudDistanceM, navPerspective3d])
 
   const safePlatform = suggestion?.platform ?? 'glovo'
   const platformName = safePlatform.charAt(0).toUpperCase() + safePlatform.slice(1)
@@ -706,6 +764,7 @@ export default function DashboardScreen() {
         zoomControlEnabled={false}
         toolbarEnabled={false}
         mapToolbarEnabled={false}
+        mapPadding={{ top: 0, right: 0, bottom: mapBottomPadding, left: 0 }}
         initialRegion={userLocation ? { ...userLocation, latitudeDelta: 0.02, longitudeDelta: 0.02 } : KRAKOW_REGION}
       >
         {isNavigating && (
@@ -734,10 +793,11 @@ export default function DashboardScreen() {
 
       {isNavigating && activeOrder && (
         <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
-          <DirectionCard
+          <WazeDirectionCard
             maneuver={routeSteps?.[0]?.maneuver}
             distanceLine={distanceLine}
             streetName={streetTitle}
+            etaText={etaText}
             topInset={insets.top + 28}
           />
         </View>
@@ -758,58 +818,88 @@ export default function DashboardScreen() {
 
       {/* Bottom sheet — order window */}
       <View
-        style={[s.sheet, { paddingBottom: insets.bottom + 5, backgroundColor: c.tabBar, borderTopColor: c.tabBarBorder }]}
+        style={[
+          s.sheet,
+          {
+            minHeight: sheetHeight,
+            paddingBottom: insets.bottom + 10,
+            backgroundColor: c.tabBar,
+            borderTopColor: c.tabBarBorder,
+          },
+        ]}
       >
-        <View>
-          <View style={[s.pullBar, { backgroundColor: c.border, marginBottom: 10 }]} />
-
-          <View style={s.statsRow}>
-            <StatCol label={t('earnings_label')} value={`${shiftStats.totalEarnings.toFixed(0)} PLN`} c={c} compact />
-            <View style={[s.statDivider, { backgroundColor: c.separator }]} />
-            <StatCol label={t('orders_label')} value={String(shiftStats.completedOrders)} c={c} compact />
-            <View style={[s.statDivider, { backgroundColor: c.separator }]} />
-            <StatCol label={t('hours_online')} value={`${hoursOnline.toFixed(1)}h`} c={c} compact />
-          </View>
+        {/* Daily goal progress bar (thin) */}
+        <View style={[s.goalBarTrack, { backgroundColor: c.separator }]}>
+          <View
+            style={[
+              s.goalBarFill,
+              {
+                width: `${Math.round(goalProgress * 100)}%`,
+                backgroundColor: c.primary,
+              },
+            ]}
+          />
         </View>
 
-        {isNavigating && activeOrder ? (
-          <View style={{ height: 8 }} />
+        {sheetMode === 'order' && suggestion ? (
+          <>
+            <View style={s.orderRow}>
+              <PlatformIcon platform={suggestion.platform as any} size={24} active />
+              <View style={s.orderMid}>
+                <View style={s.orderTopLine}>
+                  {tierForSuggestion ? (
+                    <View
+                      style={[
+                        s.tierPill,
+                        {
+                          borderColor: tierForSuggestion.tierColor,
+                          backgroundColor: alpha(tierForSuggestion.tierColor, 0.14),
+                        },
+                      ]}
+                    >
+                      <Text style={[s.tierText, { color: tierForSuggestion.tierColor }]}>
+                        {tierForSuggestion.tierLabel}
+                      </Text>
+                    </View>
+                  ) : null}
+                  <Text style={[s.priceText, { color: c.text }]}>{`${(suggestion.earnings ?? 0).toFixed(0)} zł`}</Text>
+                </View>
+                <Text style={[s.addrLine, { color: c.textSecondary }]} numberOfLines={1} ellipsizeMode="tail">
+                  {`${rideStreetLine(suggestion.pickupAddress)} → ${rideStreetLine(suggestion.dropoffAddress)}`}
+                </Text>
+              </View>
+            </View>
+
+            <TouchableOpacity
+              style={[s.acceptBtn, { backgroundColor: c.primary }]}
+              activeOpacity={0.85}
+              onPress={handleAcceptSuggestion}
+            >
+              <Text style={[s.acceptBtnText, { color: c.textInverse }]}>
+                {t('open_platform', {
+                  platform: (suggestion.platform ?? '').toString().slice(0, 1).toUpperCase() +
+                    (suggestion.platform ?? '').toString().slice(1),
+                })}
+              </Text>
+            </TouchableOpacity>
+          </>
+        ) : sheetMode === 'searching' ? (
+          <View style={[s.searchBar, { borderColor: c.separator }]}>
+            <ActivityIndicator size="small" color={c.primary} />
+            <Text style={[s.searchText, { color: c.textSecondary }]}>{t('searching_orders')}</Text>
+          </View>
         ) : (
-          <View
-            style={[s.suggCard, { backgroundColor: c.card, borderColor: c.separator }]}
-          >
-            <View style={s.suggHeader}>
-              <PlatformIcon platform={safePlatform as any} size={26} active />
-              <Text style={[s.suggPlatform, { color: c.text }]} numberOfLines={1}>
-                {platformName}
-              </Text>
-              <ProfitBadge label={suggestion?.profitLabel as ProfitLabel} />
-              <Text style={[s.suggPrice, { color: c.text }]}>{(suggestion?.earnings ?? 0).toFixed(0)} PLN</Text>
-            </View>
-            <View style={[s.suggAddrRow, { borderColor: c.separator }]}>
-              <Text
-                style={[s.suggAddrText, { color: c.text }]}
-                numberOfLines={1}
-                ellipsizeMode="tail"
-              >
-                {rideStreetLine(suggestion?.pickupAddress ?? '')}
-              </Text>
-              <Feather name="arrow-right" size={14} color={c.textMuted} style={s.suggAddrSep} />
-              <Text
-                style={[s.suggAddrText, s.suggAddrTextRight, { color: c.text }]}
-                numberOfLines={1}
-                ellipsizeMode="tail"
-              >
-                {rideStreetLine(suggestion?.dropoffAddress ?? '')}
-              </Text>
-            </View>
-            <View style={s.pillRow}>
-              <Pill label={`${(suggestion?.distanceKm ?? 0).toFixed(1)} km`} c={c} />
-              <Pill label={`${suggestion?.durationMin ?? 0} min`} c={c} />
-              <Pill label={`${Math.round(goalProgress * 100)}% ${t('daily_goal')}`} c={c} />
-            </View>
-            <TouchableOpacity style={[s.acceptBtn, { backgroundColor: c.primary }]} activeOpacity={0.85} onPress={handleAcceptSuggestion}>
-              <Text style={[s.acceptBtnText, { color: c.textInverse }]}>{t('open_platform', { platform: platformName })}</Text>
+          <View style={s.offAirRow}>
+            <Text style={[s.offAirText, { color: c.textSecondary }]}>{t('off_air')}</Text>
+            <TouchableOpacity
+              style={[s.startShiftBtn, { backgroundColor: c.primary }]}
+              activeOpacity={0.85}
+              onPress={() => {
+                startShiftManually()
+                setIsDriverOnline(true)
+              }}
+            >
+              <Text style={[s.startShiftText, { color: c.textInverse }]}>{t('start_shift')}</Text>
             </TouchableOpacity>
           </View>
         )}
@@ -844,7 +934,7 @@ export default function DashboardScreen() {
           </Svg>
           <View style={s.goalRingCenter}>
             <Text style={[s.goalRingPct, { color: c.text }]}>{goalRing.pct}%</Text>
-            <Text style={[s.goalRingLabel, { color: c.textMuted }]}>Goal</Text>
+            <Text style={[s.goalRingLabel, { color: c.textMuted }]}>{t('goal_label')}</Text>
           </View>
         </View>
       </View>}
@@ -881,15 +971,6 @@ export default function DashboardScreen() {
   )
 }
 
-function StatCol({ label, value, c, compact = false }: { label: string; value: string; c: AppColors; compact?: boolean }) {
-  return (
-    <View style={s.statCol}>
-      <Text style={[s.statLabel, { color: c.textMuted }]}>{label.toUpperCase()}</Text>
-      <Text style={[compact ? s.statValueCompact : s.statValue, { color: c.text }]}>{value}</Text>
-    </View>
-  )
-}
-
 const s = StyleSheet.create({
   root: { flex: 1, alignSelf: 'stretch', width: '100%' },
   mapFill: { flex: 1, width: '100%', alignSelf: 'stretch' },
@@ -907,55 +988,76 @@ const s = StyleSheet.create({
     borderTopRightRadius: 18,
     borderTopWidth: 0.5,
     paddingHorizontal: 15,
-    paddingTop: 6,
-    paddingBottom: TAB_BAR_HEIGHT,
+    paddingTop: 10,
   },
-  pullBar: { width: 36, height: 4, borderRadius: 2, alignSelf: 'center', marginBottom: 8 },
-  statsRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 6 },
-  statCol: { flex: 1, alignItems: 'center' },
-  statDivider: { width: 1, height: 24 },
-  statLabel: { fontSize: 11, fontFamily: fonts.regular, letterSpacing: 0.5, marginBottom: 2 },
-  statValue: { fontSize: 26, fontWeight: '700', fontFamily: fonts.bold },
-  statValueCompact: { fontSize: 20, fontWeight: '700', fontFamily: fonts.bold },
-  suggCard: {
-    borderWidth: 1,
-    borderRadius: 6,
-    paddingVertical: 5,
-    paddingHorizontal: 8,
-    marginBottom: 0,
-    marginHorizontal: -1,
+  goalBarTrack: {
+    height: 4,
+    borderRadius: 999,
+    overflow: 'hidden',
+    marginBottom: 10,
   },
-  suggHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 },
-  suggAddrRow: {
+  goalBarFill: {
+    height: 4,
+    borderRadius: 999,
+  },
+  orderRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    minHeight: 36,
-    maxHeight: 110,
-    paddingVertical: 4,
+    gap: 10,
+    paddingVertical: 6,
+    marginBottom: 10,
+  },
+  orderMid: { flex: 1, minWidth: 0 },
+  orderTopLine: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
     marginBottom: 4,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    paddingTop: 5,
-    gap: 0,
   },
-  suggAddrText: {
-    flex: 1,
-    minWidth: 0,
+  tierPill: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingVertical: 3,
+    paddingHorizontal: 10,
+    maxWidth: '78%',
+  },
+  tierText: {
     fontSize: 11,
-    lineHeight: 14,
-    fontFamily: fonts.medium,
-    fontWeight: '500',
+    fontFamily: fonts.semiBold,
+    fontWeight: '600',
   },
-  suggAddrTextRight: { textAlign: 'right' },
-  suggAddrSep: { paddingHorizontal: 4, flexShrink: 0 },
-  suggPlatform: { flex: 1, fontSize: 14, fontWeight: '600', fontFamily: fonts.semiBold, minWidth: 0 },
-  suggPrice: { fontSize: 16, fontWeight: '700', fontFamily: fonts.bold, flexShrink: 0 },
-  addressLabel: { fontSize: 11, fontFamily: fonts.regular, letterSpacing: 0.5, marginBottom: 3 },
-  addressValue: { fontSize: 13, fontFamily: fonts.regular, marginBottom: 8 },
-  pillRow: { flexDirection: 'row', gap: 5, marginBottom: 5 },
-  pill: { borderRadius: 6, paddingHorizontal: 8, paddingVertical: 5 },
-  pillText: { fontSize: 12, fontFamily: fonts.regular },
-  acceptBtn: { height: 38, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+  priceText: {
+    fontSize: 18,
+    fontFamily: fonts.bold,
+    fontWeight: '700',
+  },
+  addrLine: {
+    fontSize: 12,
+    fontFamily: fonts.medium,
+  },
+  acceptBtn: { height: 40, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
   acceptBtnText: { fontSize: 15, fontWeight: '600', fontFamily: fonts.semiBold },
+  searchBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 14,
+    marginTop: 6,
+  },
+  searchText: { fontSize: 13, fontFamily: fonts.medium },
+  offAirRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: 8,
+  },
+  offAirText: { fontSize: 13, fontFamily: fonts.medium },
+  startShiftBtn: { height: 40, borderRadius: 10, paddingHorizontal: 14, alignItems: 'center', justifyContent: 'center' },
+  startShiftText: { fontSize: 14, fontFamily: fonts.semiBold, fontWeight: '600' },
   modalOverlay: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
   modalCard: { borderRadius: 16, padding: 24, width: '100%', alignItems: 'center', gap: 10 },
   modalTitle: { fontSize: 18, fontWeight: '600', fontFamily: fonts.semiBold, marginTop: 6 },
