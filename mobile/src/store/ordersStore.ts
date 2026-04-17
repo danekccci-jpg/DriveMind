@@ -10,6 +10,8 @@ import { playWalletCreditSound } from '../services/walletSound'
 export interface Order {
   id: string
   platform: string
+  RestaurantLogo?: string
+  restaurantName?: string
   pickupAddress: string
   dropoffAddress: string
   earnings: number

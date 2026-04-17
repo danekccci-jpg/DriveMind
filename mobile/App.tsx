@@ -19,7 +19,6 @@ import { useAuthStore } from './src/store/authStore'
 import { useTheme } from './src/theme/theme'
 import { configureGoogleSignIn } from './src/services/googleAuth'
 import LoginScreen from './src/screens/Login'
-import RoleSelectionScreen from './src/screens/RoleSelection'
 import OnboardingScreen from './src/screens/Onboarding'
 import LanguageSelectionScreen from './src/screens/LanguageSelection'
 import RootNavigator from './src/navigation/RootNavigator'
@@ -38,9 +37,7 @@ export default function App() {
     Poppins_700Bold,
   })
 
-  const role = useRoleStore((s) => s.role)
   const onboardingComplete = useRoleStore((s) => s.onboardingComplete)
-  const setRole = useRoleStore((s) => s.setRole)
   const language = useLanguageStore((s) => s.language)
   const hasChosenLanguage = useLanguageStore((s) => s.hasChosenLanguage)
   const { colors: c, isDark } = useTheme()
@@ -125,15 +122,6 @@ export default function App() {
       <SafeAreaProvider>
         <StatusBar style={isDark ? 'light' : 'dark'} backgroundColor={c.bg} />
         <LanguageSelectionScreen />
-      </SafeAreaProvider>
-    )
-  }
-
-  if (!role) {
-    return (
-      <SafeAreaProvider>
-        <StatusBar style={isDark ? 'light' : 'dark'} backgroundColor={c.bg} />
-        <RoleSelectionScreen onSelect={setRole} />
       </SafeAreaProvider>
     )
   }

@@ -4,6 +4,8 @@ export const MOCK_ORDERS: Order[] = [
   {
     id: 'order-1',
     platform: 'glovo',
+    RestaurantLogo: 'https://logo.clearbit.com/mcdonalds.com',
+    restaurantName: "McDonald's",
     pickupAddress: 'ul. Floriańska 14, Stare Miasto',
     dropoffAddress: 'ul. Dietla 60, Kazimierz',
     earnings: 22.5,
@@ -21,6 +23,8 @@ export const MOCK_ORDERS: Order[] = [
   {
     id: 'order-2',
     platform: 'wolt',
+    RestaurantLogo: 'https://logo.clearbit.com/kfc.com',
+    restaurantName: 'KFC',
     pickupAddress: 'ul. Lipowa 6, Kazimierz',
     dropoffAddress: 'ul. Kalwaryjska 24, Podgórze',
     earnings: 18.0,
@@ -72,6 +76,8 @@ export const MOCK_ORDERS: Order[] = [
   {
     id: 'order-5',
     platform: 'glovo',
+    RestaurantLogo: 'https://logo.clearbit.com/subway.com',
+    restaurantName: 'Subway',
     pickupAddress: 'ul. Starowiślna 12, Grzegórzki',
     dropoffAddress: 'ul. Mogilska 65, Grzegórzki',
     earnings: 21.0,

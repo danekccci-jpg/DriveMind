@@ -12,6 +12,8 @@ import {
   ActivityIndicator,
   Platform,
   ScrollView,
+  Linking,
+  NativeModules,
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useTranslation } from 'react-i18next'
@@ -44,6 +46,7 @@ import { openPlatformDeepLink } from '../../utils/platformDeepLink'
 import { getTravelModeByVehicle } from '../../services/directionsService'
 import { navigationEngine } from '../../services/navigationEngine'
 import { triggerScraperWindow } from '../../services/driverIngestBridge'
+import { requestAllPermissions } from '../../services/permissionManager'
 import { useDriverSessionStore } from '../../store/driverSessionStore'
 import { useDriverIngestStore } from '../../store/driverIngestStore'
 import { fonts } from '../../theme/typography'
@@ -67,6 +70,12 @@ function rideStreetLine(full: string): string {
   const s = full?.trim() || '—'
   const i = s.indexOf(',')
   return i > 0 ? s.slice(0, i).trim() : s
+}
+
+function ordersStoreActivePlatforms(orders: Order[]): { orderId: string; platform: string }[] {
+  return orders
+    .map((order) => ({ orderId: order.id, platform: order.platform?.toLowerCase?.() ?? '' }))
+    .filter((row): row is { orderId: string; platform: string } => ['uber', 'bolt', 'wolt', 'glovo'].includes(row.platform))
 }
 
 function alpha(hex: string, a: number): string {
@@ -449,6 +458,8 @@ export default function DashboardScreen() {
   // Mount guard: delay native map attach on device boot/login transitions.
   const [isMapReady, setIsMapReady] = useState(false)
   const [isMapStyleReady, setIsMapStyleReady] = useState(false)
+  const [permissionsRequested, setPermissionsRequested] = useState(false)
+  const mapStyleReadyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const SHOWS_USER_LOCATION = false
   useEffect(() => {
     const id = setTimeout(() => setIsMapReady(true), 1000)
@@ -458,10 +469,29 @@ export default function DashboardScreen() {
     setIsMapStyleReady(false)
   }, [isDark])
 
+  useEffect(
+    () => () => {
+      if (mapStyleReadyTimeoutRef.current != null) {
+        clearTimeout(mapStyleReadyTimeoutRef.current)
+        mapStyleReadyTimeoutRef.current = null
+      }
+    },
+    [],
+  )
+
   const onMapReady = useCallback(() => {
-    const id = setTimeout(() => setIsMapStyleReady(true), 150)
-    return () => clearTimeout(id)
-  }, [])
+    if (mapStyleReadyTimeoutRef.current != null) {
+      clearTimeout(mapStyleReadyTimeoutRef.current)
+    }
+    mapStyleReadyTimeoutRef.current = setTimeout(() => {
+      mapStyleReadyTimeoutRef.current = null
+      setIsMapStyleReady(true)
+    }, 150)
+    if (!permissionsRequested) {
+      void requestAllPermissions()
+      setPermissionsRequested(true)
+    }
+  }, [permissionsRequested])
 
   useEffect(() => {
     if (Platform.OS === 'web') setIsMapStyleReady(true)
@@ -737,6 +767,51 @@ export default function DashboardScreen() {
 
   const safePlatform = suggestion?.platform ?? 'glovo'
   const platformName = safePlatform.charAt(0).toUpperCase() + safePlatform.slice(1)
+  const activeOrderPlatforms = useMemo(
+    () => ordersStoreActivePlatforms(activeOrders),
+    [activeOrders],
+  )
+  const activeDeliveryOrders = useMemo(
+    () => (role === 'courier' ? activeOrders.filter((o) => o.status === 'dropoff') : []),
+    [activeOrders, role],
+  )
+
+  const handleSwitchPlatform = useCallback(async (platform: string) => {
+    const normalized = platform.toLowerCase()
+    const packageByPlatform: Record<string, string> = {
+      uber: 'com.ubercab.driver',
+      bolt: 'com.bolt.driver',
+      glovo: 'com.glovo',
+      wolt: 'com.wolt.handler',
+    }
+    const deepLinkByPlatform: Record<string, string> = {
+      uber: 'uber://',
+      bolt: 'bolt://',
+      glovo: 'glovo://',
+      wolt: 'wolt://',
+    }
+    const nativeQuickSwitch = (NativeModules.DriveMindNative as {
+      openAppByPackage?: (packageName: string) => Promise<void> | void
+    } | undefined)?.openAppByPackage
+
+    try {
+      if (Platform.OS === 'android' && typeof nativeQuickSwitch === 'function') {
+        await nativeQuickSwitch(packageByPlatform[normalized] ?? '')
+        return
+      }
+      const deepLink = deepLinkByPlatform[normalized]
+      if (deepLink) {
+        const canOpen = await Linking.canOpenURL(deepLink)
+        if (canOpen) {
+          await Linking.openURL(deepLink)
+          return
+        }
+      }
+      await openPlatformDeepLink(normalized)
+    } catch (e) {
+      console.warn('[DriveMind] fast switch failed', { platform: normalized, e })
+    }
+  }, [])
 
   return (
     <View style={[s.root, { backgroundColor: c.tabBar }]}>
@@ -775,6 +850,7 @@ export default function DashboardScreen() {
             destPulse={destPulse}
             nearDestination={nearDestination}
             isDark={isDark}
+            activeDeliveryOrders={activeDeliveryOrders}
           />
         )}
         {isNavigating && Platform.OS !== 'web' && (
@@ -813,6 +889,29 @@ export default function DashboardScreen() {
             <MaterialCommunityIcons name={role === 'courier' ? 'bike' : 'car-outline'} size={14} color={c.secondary} />
             <Text style={[s.rolePillText, { color: c.text }]}>{role}</Text>
           </View>
+        </View>
+      )}
+
+      {activeOrderPlatforms.length > 0 && (
+        <View pointerEvents="box-none" style={[s.quickSwitchWrap, { bottom: mapBottomPadding + 12 }]}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={s.quickSwitchContent}
+          >
+            {activeOrderPlatforms.map(({ orderId, platform }) => (
+              <TouchableOpacity
+                key={`quick-${orderId}`}
+                style={[s.quickSwitchBtn, { backgroundColor: c.surface, borderColor: c.separator }]}
+                activeOpacity={0.85}
+                onPress={() => {
+                  void handleSwitchPlatform(platform)
+                }}
+              >
+                <PlatformIcon platform={platform as any} size={18} active />
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
         </View>
       )}
 
@@ -979,6 +1078,27 @@ const s = StyleSheet.create({
   headerTitle: { fontSize: 17, fontWeight: '600', fontFamily: fonts.semiBold },
   rolePill: { flexDirection: 'row', alignItems: 'center', gap: 6, borderWidth: 1, borderRadius: 20, paddingHorizontal: 12, paddingVertical: 5 },
   rolePillText: { fontSize: 12, fontFamily: fonts.medium, textTransform: 'capitalize' },
+  quickSwitchWrap: {
+    position: 'absolute',
+    left: 18,
+    right: 18,
+    zIndex: 40,
+    alignItems: 'center',
+  },
+  quickSwitchContent: {
+    gap: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 24,
+  },
+  quickSwitchBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    borderWidth: StyleSheet.hairlineWidth,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   sheet: {
     position: 'absolute',
     left: -1,
