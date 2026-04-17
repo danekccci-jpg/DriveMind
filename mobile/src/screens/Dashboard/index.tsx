@@ -3,7 +3,6 @@ import {
   View,
   Text,
   StyleSheet,
-  TouchableOpacity,
   Modal,
   AppState,
   AppStateStatus,
@@ -21,6 +20,7 @@ import * as Location from 'expo-location'
 import * as Haptics from 'expo-haptics'
 import { MaterialCommunityIcons, Feather } from '@expo/vector-icons'
 import Svg, { Circle } from 'react-native-svg'
+import Reanimated, { FadeInDown } from 'react-native-reanimated'
 
 import MapView, { Marker, MarkerAnimated, AnimatedRegion, PROVIDER_GOOGLE } from '../../components/MapViewWeb'
 import { NavigationMapLayers } from '../../components/navigation/NavigationMapLayers'
@@ -54,6 +54,7 @@ import { useTheme, type AppColors } from '../../theme/theme'
 import { computeProfitability } from '@drivemind/shared'
 // NUCLEAR DEBUG: direct react-native-maps import disabled for this build.
 import { MAP_STYLE_DARK, MAP_STYLE_LIGHT } from '../../map/mapStyles'
+import AnimatedButton from '../../components/AnimatedButton'
 
 const GOAL_RING_SIZE = 54
 const GOAL_RING_STROKE = 5
@@ -157,7 +158,6 @@ export default function DashboardScreen() {
   const markerStyle = useNavigationSettingsStore((s) => s.markerStyle)
   const units = useNavigationSettingsStore((s) => s.units)
   const mapPerspective3d = useNavigationSettingsStore((s) => s.mapPerspective3d)
-  const navPerspective3d = isNavigating ? true : mapPerspective3d
 
   const role = useRoleStore((st) => st.role) ?? 'courier'
   const vehicleType = useRoleStore((st) => st.vehicleType)
@@ -169,6 +169,7 @@ export default function DashboardScreen() {
     updateNavigationPhase, stopNavigation, recomputeNavigationTarget, updateNavigationRoute,
     startShiftManually,
   } = useOrdersStore()
+  const navPerspective3d = isNavigating ? true : mapPerspective3d
   const navigationOrderId = useOrdersStore((s) => s.navigationOrderId)
   const isDriverOnline = useDriverSessionStore((s) => s.isOnline)
   const setIsDriverOnline = useDriverSessionStore((s) => s.setIsOnline)
@@ -899,17 +900,21 @@ export default function DashboardScreen() {
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={s.quickSwitchContent}
           >
-            {activeOrderPlatforms.map(({ orderId, platform }) => (
-              <TouchableOpacity
-                key={`quick-${orderId}`}
-                style={[s.quickSwitchBtn, { backgroundColor: c.surface, borderColor: c.separator }]}
-                activeOpacity={0.85}
-                onPress={() => {
-                  void handleSwitchPlatform(platform)
-                }}
+            {activeOrderPlatforms.map(({ orderId, platform }, idx) => (
+              <Reanimated.View
+                key={`quick-wrap-${orderId}`}
+                entering={FadeInDown.springify().damping(15).stiffness(220).delay(idx * 45)}
               >
-                <PlatformIcon platform={platform as any} size={18} active />
-              </TouchableOpacity>
+                <AnimatedButton
+                  style={[s.quickSwitchBtn, { backgroundColor: c.surface, borderColor: c.separator }]}
+                  activeOpacity={0.85}
+                  onPress={() => {
+                    void handleSwitchPlatform(platform)
+                  }}
+                >
+                  <PlatformIcon platform={platform as any} size={18} active />
+                </AnimatedButton>
+              </Reanimated.View>
             ))}
           </ScrollView>
         </View>
@@ -969,7 +974,7 @@ export default function DashboardScreen() {
               </View>
             </View>
 
-            <TouchableOpacity
+            <AnimatedButton
               style={[s.acceptBtn, { backgroundColor: c.primary }]}
               activeOpacity={0.85}
               onPress={handleAcceptSuggestion}
@@ -980,7 +985,7 @@ export default function DashboardScreen() {
                     (suggestion.platform ?? '').toString().slice(1),
                 })}
               </Text>
-            </TouchableOpacity>
+            </AnimatedButton>
           </>
         ) : sheetMode === 'searching' ? (
           <View style={[s.searchBar, { borderColor: c.separator }]}>
@@ -990,7 +995,7 @@ export default function DashboardScreen() {
         ) : (
           <View style={s.offAirRow}>
             <Text style={[s.offAirText, { color: c.textSecondary }]}>{t('off_air')}</Text>
-            <TouchableOpacity
+            <AnimatedButton
               style={[s.startShiftBtn, { backgroundColor: c.primary }]}
               activeOpacity={0.85}
               onPress={() => {
@@ -999,7 +1004,7 @@ export default function DashboardScreen() {
               }}
             >
               <Text style={[s.startShiftText, { color: c.textInverse }]}>{t('start_shift')}</Text>
-            </TouchableOpacity>
+            </AnimatedButton>
           </View>
         )}
       </View>
@@ -1054,12 +1059,12 @@ export default function DashboardScreen() {
                   />
                 </ScrollView>
                 <View style={s.modalBtns}>
-                  <TouchableOpacity style={[s.modalBtnYes, { backgroundColor: c.primary }]} activeOpacity={0.8} onPress={handleConfirmYes}>
+                  <AnimatedButton style={[s.modalBtnYes, { backgroundColor: c.primary }]} activeOpacity={0.8} onPress={handleConfirmYes}>
                     <Text style={[s.modalBtnYesText, { color: c.textInverse }]}>{t('yes')}</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={[s.modalBtnNo, { borderColor: c.border }]} activeOpacity={0.8} onPress={handleConfirmNo}>
+                  </AnimatedButton>
+                  <AnimatedButton style={[s.modalBtnNo, { borderColor: c.border }]} activeOpacity={0.8} onPress={handleConfirmNo}>
                     <Text style={[s.modalBtnNoText, { color: c.text }]}>{t('no')}</Text>
-                  </TouchableOpacity>
+                  </AnimatedButton>
                 </View>
               </>
             )}

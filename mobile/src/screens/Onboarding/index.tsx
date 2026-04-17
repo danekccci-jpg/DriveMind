@@ -3,7 +3,6 @@ import {
   View,
   Text,
   StyleSheet,
-  TouchableOpacity,
   Animated,
   Easing,
   Dimensions,
@@ -12,35 +11,20 @@ import {
 } from 'react-native'
 import { useTranslation } from 'react-i18next'
 import { MaterialCommunityIcons, Feather } from '@expo/vector-icons'
-import * as Haptics from 'expo-haptics'
 import { useRoleStore } from '../../store/roleStore'
 import PlatformIcon from '../../components/PlatformIcon'
 import { fonts } from '../../theme/typography'
 import { useColors } from '../../theme/theme'
 import { requestAllPermissions } from '../../services/permissionManager'
+import AnimatedButton from '../../components/AnimatedButton'
 
 const { width: SCREEN_W } = Dimensions.get('window')
-const H_PAD = 24
 
-type VehicleType = 'bike' | 'moped' | 'car'
 type PlatformId = 'glovo' | 'uber' | 'bolt' | 'wolt'
 type Role = 'courier' | 'taxi'
 
 const COURIER_PLATFORMS: PlatformId[] = ['glovo', 'uber', 'bolt', 'wolt']
 const TAXI_PLATFORMS: PlatformId[] = ['uber', 'bolt']
-
-const PLATFORM_LABELS: Record<PlatformId, string> = {
-  glovo: 'Glovo',
-  uber: 'Uber',
-  bolt: 'Bolt',
-  wolt: 'Wolt',
-}
-
-const VEHICLE_OPTIONS: { id: VehicleType; icon: string; label: string }[] = [
-  { id: 'bike', icon: 'bike', label: 'bike' },
-  { id: 'moped', icon: 'moped', label: 'moped' },
-  { id: 'car', icon: 'car-outline', label: 'car' },
-]
 
 function ProgressDots({
   total,
@@ -70,8 +54,6 @@ export default function OnboardingScreen() {
 
   const [step, setStep] = useState(0)
   const [selectedRole, setSelectedRole] = useState<Role>(roleFromStore ?? 'courier')
-  const [selectedServices, setSelectedServicesLocal] = useState<PlatformId[]>([])
-  const [selectedVehicle, setSelectedVehicle] = useState<VehicleType>('bike')
   const translateX = useRef(new Animated.Value(0)).current
 
   const totalSteps = 4
@@ -94,14 +76,12 @@ export default function OnboardingScreen() {
 
   const handleFinish = useCallback(() => {
     setRole(selectedRole)
-    setVehicleType(selectedVehicle)
-    setSelectedServices(selectedServices.length > 0 ? selectedServices : platforms)
+    setVehicleType(selectedRole === 'taxi' ? 'car' : 'bike')
+    setSelectedServices(platforms)
     void requestAllPermissions()
     setOnboardingComplete(true)
   }, [
     selectedRole,
-    selectedVehicle,
-    selectedServices,
     platforms,
     setRole,
     setVehicleType,
@@ -121,12 +101,6 @@ export default function OnboardingScreen() {
     animateTo(step - 1, -1)
   }, [step, animateTo])
 
-  const toggleService = useCallback((id: PlatformId) => {
-    setSelectedServicesLocal((prev) =>
-      prev.includes(id) ? prev.filter((s) => s !== id) : [...prev, id],
-    )
-  }, [])
-
   const roleSpecificValue = useMemo(
     () =>
       isTaxi
@@ -135,13 +109,28 @@ export default function OnboardingScreen() {
     [isTaxi, t],
   )
 
+  const parallaxStyle = useMemo(
+    () => ({
+      transform: [
+        {
+          translateX: translateX.interpolate({
+            inputRange: [-SCREEN_W, 0, SCREEN_W],
+            outputRange: [32, 0, -32],
+          }),
+        },
+      ],
+    }),
+    [translateX],
+  )
+
   const renderStepRole = () => (
     <View style={[st.step, { backgroundColor: c.bg }]}>
       <ProgressDots total={totalSteps} current={0} activeColor={c.primary} mutedColor={c.border} />
       <Text style={[st.title, { color: c.text }]}>{t('onboarding_role_title')}</Text>
       <Text style={[st.sub, { color: c.textSecondary }]}>{t('onboarding_role_subtitle')}</Text>
+      <Animated.View style={parallaxStyle}>
       <View style={st.roleCardsRow}>
-        <TouchableOpacity
+        <AnimatedButton
           activeOpacity={0.8}
           onPress={() => setSelectedRole('taxi')}
           style={[
@@ -154,8 +143,8 @@ export default function OnboardingScreen() {
         >
           <MaterialCommunityIcons name="car-outline" size={28} color={selectedRole === 'taxi' ? c.primary : c.secondary} />
           <Text style={[st.roleCardText, { color: c.text }]}>{t('taxi')}</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
+        </AnimatedButton>
+        <AnimatedButton
           activeOpacity={0.8}
           onPress={() => setSelectedRole('courier')}
           style={[
@@ -168,8 +157,9 @@ export default function OnboardingScreen() {
         >
           <MaterialCommunityIcons name="bike" size={28} color={selectedRole === 'courier' ? c.primary : c.secondary} />
           <Text style={[st.roleCardText, { color: c.text }]}>{t('courier')}</Text>
-        </TouchableOpacity>
+        </AnimatedButton>
       </View>
+      </Animated.View>
       <PrimaryBtn label={t('next')} onPress={goNext} bg={c.primary} textColor={c.textInverse} />
     </View>
   )
@@ -177,15 +167,15 @@ export default function OnboardingScreen() {
   const renderStepWidget = () => (
     <View style={[st.step, { backgroundColor: c.bg }]}>
       <ProgressDots total={totalSteps} current={1} activeColor={c.primary} mutedColor={c.border} />
-      <TouchableOpacity style={st.backBtn} onPress={goBack} activeOpacity={0.7}>
+      <AnimatedButton style={st.backBtn} onPress={goBack} activeOpacity={0.7}>
         <Feather name="arrow-left" size={22} color={c.text} />
-      </TouchableOpacity>
+      </AnimatedButton>
       <Text style={[st.title, { color: c.text }]}>{t('onboarding_widget_title')}</Text>
       <Text style={[st.sub, { color: c.textSecondary }]}>{t('onboarding_widget_desc')}</Text>
-      <View style={[st.infoCard, { backgroundColor: c.surface, borderColor: c.border }]}>
+      <Animated.View style={[st.infoCard, { backgroundColor: c.surface, borderColor: c.border }, parallaxStyle]}>
         <MaterialCommunityIcons name="widgets-outline" size={34} color={c.primary} />
         <Text style={[st.infoCardBody, { color: c.textSecondary }]}>{t('onboarding_widget_body')}</Text>
-      </View>
+      </Animated.View>
       <PrimaryBtn label={t('next')} onPress={goNext} bg={c.primary} textColor={c.textInverse} />
     </View>
   )
@@ -193,9 +183,9 @@ export default function OnboardingScreen() {
   const renderStepPermissions = () => (
     <View style={[st.step, { backgroundColor: c.bg }]}>
       <ProgressDots total={totalSteps} current={2} activeColor={c.primary} mutedColor={c.border} />
-      <TouchableOpacity style={st.backBtn} onPress={goBack} activeOpacity={0.7}>
+      <AnimatedButton style={st.backBtn} onPress={goBack} activeOpacity={0.7}>
         <Feather name="arrow-left" size={22} color={c.text} />
-      </TouchableOpacity>
+      </AnimatedButton>
       <Text style={[st.title, { color: c.text }]}>{t('onboarding_permissions_title')}</Text>
       <View style={st.permissionCards}>
         <View style={[st.permissionCard, { backgroundColor: c.surface, borderColor: c.border }]}>
@@ -216,9 +206,9 @@ export default function OnboardingScreen() {
   const renderStepRoleValue = () => (
     <View style={[st.step, { backgroundColor: c.bg }]}>
       <ProgressDots total={totalSteps} current={3} activeColor={c.primary} mutedColor={c.border} />
-      <TouchableOpacity style={st.backBtn} onPress={goBack} activeOpacity={0.7}>
+      <AnimatedButton style={st.backBtn} onPress={goBack} activeOpacity={0.7}>
         <Feather name="arrow-left" size={22} color={c.text} />
-      </TouchableOpacity>
+      </AnimatedButton>
       <Text style={[st.title, { color: c.text }]}>{t('onboarding_value_title')}</Text>
       <Text style={[st.sub, { color: c.textSecondary }]}>{t('onboarding_value_subtitle')}</Text>
       <View style={st.valueList}>
@@ -230,93 +220,6 @@ export default function OnboardingScreen() {
         ))}
       </View>
       <PrimaryBtn label={t('get_started')} onPress={handleFinish} bg={c.primary} textColor={c.textInverse} />
-    </View>
-  )
-
-  const renderChooseServices = () => (
-    <View style={[st.step, { backgroundColor: c.bg }]}>
-      <ProgressDots total={totalSteps} current={0} activeColor={c.primary} mutedColor={c.border} />
-      <Text style={[st.title, { color: c.text }]}>{t('choose_services')}</Text>
-      <Text style={[st.sub, { color: c.textSecondary }]}>{t('choose_services_subtitle')}</Text>
-
-      <View style={st.serviceList}>
-        {platforms.map((id) => {
-          const selected = selectedServices.includes(id)
-          return (
-            <TouchableOpacity
-              key={id}
-              activeOpacity={0.7}
-              style={[
-                st.serviceCard,
-                {
-                  backgroundColor: selected ? c.primaryDim : c.surface,
-                  borderColor: selected ? c.primary : c.border,
-                },
-              ]}
-              onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); toggleService(id) }}
-            >
-              <PlatformIcon platform={id} size={34} active={selected} />
-              <Text style={[st.serviceLabel, { color: c.text }]}>{PLATFORM_LABELS[id].toUpperCase()}</Text>
-              <View
-                style={[
-                  st.checkbox,
-                  {
-                    borderColor: selected ? c.primary : c.textMuted,
-                    backgroundColor: selected ? c.primary : 'transparent',
-                  },
-                ]}
-              >
-                {selected && <Feather name="check" size={14} color={c.textInverse} />}
-              </View>
-            </TouchableOpacity>
-          )
-        })}
-      </View>
-
-      <PrimaryBtn label={t('next')} onPress={goNext} disabled={selectedServices.length === 0} bg={c.primary} textColor={c.textInverse} />
-    </View>
-  )
-
-  const renderChooseTransport = () => (
-    <View style={[st.step, { backgroundColor: c.bg }]}>
-      <ProgressDots total={totalSteps} current={1} activeColor={c.primary} mutedColor={c.border} />
-      <TouchableOpacity style={st.backBtn} onPress={goBack} activeOpacity={0.7}>
-        <Feather name="arrow-left" size={22} color={c.text} />
-      </TouchableOpacity>
-      <Text style={[st.title, { color: c.text }]}>{t('choose_transport')}</Text>
-      <Text style={[st.sub, { color: c.textSecondary }]}>{t('choose_transport_subtitle')}</Text>
-
-      <View style={st.vehicleRow}>
-        {VEHICLE_OPTIONS.map(({ id, icon, label }) => {
-          const selected = selectedVehicle === id
-          return (
-            <TouchableOpacity
-              key={id}
-              activeOpacity={0.7}
-              style={[
-                st.vehicleCard,
-                {
-                  backgroundColor: selected ? c.primaryDim : c.surface,
-                  borderColor: selected ? c.primary : c.border,
-                },
-              ]}
-              onPress={() => {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
-                setSelectedVehicle(id)
-              }}
-            >
-              <MaterialCommunityIcons
-                name={icon as any}
-                size={36}
-                color={selected ? c.primary : c.secondary}
-              />
-              <Text style={[st.vehicleLabel, { color: c.text }]}>{t(label).toUpperCase()}</Text>
-            </TouchableOpacity>
-          )
-        })}
-      </View>
-
-      <PrimaryBtn label={t('next')} onPress={goNext} bg={c.primary} textColor={c.textInverse} />
     </View>
   )
 
@@ -345,14 +248,14 @@ function PrimaryBtn({
   textColor: string
 }) {
   return (
-    <TouchableOpacity
+    <AnimatedButton
       activeOpacity={0.8}
       style={[st.primaryBtn, { backgroundColor: bg, opacity: disabled ? 0.3 : 1 }]}
       onPress={onPress}
       disabled={disabled}
     >
       <Text style={[st.primaryBtnText, { color: textColor }]}>{label}</Text>
-    </TouchableOpacity>
+    </AnimatedButton>
   )
 }
 
@@ -369,43 +272,6 @@ const st = StyleSheet.create({
   backBtn: { marginTop: 4, marginBottom: 8, alignSelf: 'flex-start', padding: 4 },
   title: { fontSize: 24, fontWeight: '600', fontFamily: fonts.semiBold, marginBottom: 6, marginTop: 16 },
   sub: { fontSize: 14, fontFamily: fonts.regular, marginBottom: 28 },
-  serviceList: { gap: 12, flex: 1, alignItems: 'center', justifyContent: 'center' },
-  serviceCard: {
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
-    width: SCREEN_W - 48,
-    height: 124,
-    borderRadius: 18,
-    paddingHorizontal: 16,
-    gap: 8,
-    borderWidth: 1,
-    position: 'relative',
-  },
-  serviceLabel: { fontSize: 18, fontWeight: '600', fontFamily: fonts.semiBold, letterSpacing: 2 },
-  checkbox: {
-    width: 22,
-    height: 22,
-    borderRadius: 6,
-    borderWidth: 1.5,
-    alignItems: 'center',
-    justifyContent: 'center',
-    position: 'absolute',
-    right: 12,
-    top: 12,
-  },
-  vehicleRow: { gap: 12, flex: 1, alignItems: 'center', justifyContent: 'center', marginTop: 8 },
-  vehicleCard: {
-    width: SCREEN_W - 48,
-    height: 124,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    borderWidth: 1,
-    paddingHorizontal: 16,
-  },
-  vehicleLabel: { fontSize: 18, fontFamily: fonts.semiBold, fontWeight: '600', letterSpacing: 2 },
   primaryBtn: {
     height: 54,
     borderRadius: 12,

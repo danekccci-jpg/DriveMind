@@ -36,6 +36,9 @@ declare module 'react-native-svg' {
     cx?: number | string
     cy?: number | string
     r?: number | string
+    strokeDasharray?: string | number[]
+    strokeDashoffset?: number | string
+    transform?: string
   }
   const Circle: React.FC<CircleProps>
 
