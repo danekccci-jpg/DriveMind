@@ -14,6 +14,7 @@ import HapticFeedback from 'react-native-haptic-feedback'
 
 type Props = TouchableOpacityProps & {
   style?: StyleProp<ViewStyle>
+  hapticImpact?: 'impactLight' | 'impactMedium'
 }
 
 const AnimatedTouchable = Animated.createAnimatedComponent(TouchableOpacity)
@@ -24,6 +25,7 @@ export default function AnimatedButton({
   onPressIn,
   onPressOut,
   onPress,
+  hapticImpact = 'impactLight',
   ...rest
 }: Props) {
   const scale = useSharedValue(1)
@@ -45,7 +47,7 @@ export default function AnimatedButton({
         onPressOut?.(e)
       }}
       onPress={(e) => {
-        HapticFeedback.trigger('impactLight', {
+        HapticFeedback.trigger(hapticImpact, {
           enableVibrateFallback: true,
           ignoreAndroidSystemSettings: false,
         })

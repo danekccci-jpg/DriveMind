@@ -10,7 +10,10 @@ const Stack = createStackNavigator()
 
 export default function RootNavigator() {
   const { t } = useTranslation()
-  const fadeThroughInterpolator = CardStyleInterpolators.forFadeFromBottomAndroid
+  const fadeThroughInterpolator =
+    (CardStyleInterpolators as typeof CardStyleInterpolators & {
+      forFadeThrough?: typeof CardStyleInterpolators.forFadeFromBottomAndroid
+    }).forFadeThrough ?? CardStyleInterpolators.forFadeFromBottomAndroid
   return (
     <Stack.Navigator
       screenOptions={{

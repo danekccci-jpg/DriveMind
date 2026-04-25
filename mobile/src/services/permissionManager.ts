@@ -12,6 +12,7 @@ type DriveMindNativeType = {
   isOverlayPermissionGranted: () => Promise<boolean>
   openOverlaySettings?: () => void
   requestOverlayPermission?: () => void
+  openAccessibilitySettings?: () => void
   getServiceStatuses: () => Promise<ServiceStatuses>
   isAccessibilityServiceEnabled?: () => Promise<boolean>
 }
@@ -81,7 +82,9 @@ export async function requestAllPermissions(): Promise<void> {
       {
         text: i18n.t('yes'),
         onPress: () => {
-          if (typeof native.openOverlaySettings === 'function') {
+          if (typeof native.openAccessibilitySettings === 'function') {
+            native.openAccessibilitySettings()
+          } else if (typeof native.openOverlaySettings === 'function') {
             native.openOverlaySettings()
           } else {
             native.requestOverlayPermission?.()

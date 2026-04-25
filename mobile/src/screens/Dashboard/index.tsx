@@ -20,7 +20,7 @@ import * as Location from 'expo-location'
 import * as Haptics from 'expo-haptics'
 import { MaterialCommunityIcons, Feather } from '@expo/vector-icons'
 import Svg, { Circle } from 'react-native-svg'
-import Reanimated, { FadeInDown } from 'react-native-reanimated'
+import Reanimated, { SlideInRight } from 'react-native-reanimated'
 
 import MapView, { Marker, MarkerAnimated, AnimatedRegion, PROVIDER_GOOGLE } from '../../components/MapViewWeb'
 import { NavigationMapLayers } from '../../components/navigation/NavigationMapLayers'
@@ -55,9 +55,12 @@ import { computeProfitability } from '@drivemind/shared'
 // NUCLEAR DEBUG: direct react-native-maps import disabled for this build.
 import { MAP_STYLE_DARK, MAP_STYLE_LIGHT } from '../../map/mapStyles'
 import AnimatedButton from '../../components/AnimatedButton'
+import Logo from '../../components/common/Logo'
+import { emitQaMockOrderEvent } from '../../services/qaMockOrder'
 
 const GOAL_RING_SIZE = 54
 const GOAL_RING_STROKE = 5
+const ElasticInRight = SlideInRight.springify().damping(9).stiffness(180)
 
 const KRAKOW_REGION = {
   latitude: 50.0614,
@@ -814,6 +817,18 @@ export default function DashboardScreen() {
     }
   }, [])
 
+  const handleQaInjectMockOrder = useCallback(() => {
+    if (!__DEV__) return
+    Alert.alert(
+      'DriveMind QA',
+      'Inject mock onOrderScraped (35,50 PLN · 8 km) to exercise overlay math without Uber?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Inject', onPress: () => emitQaMockOrderEvent() },
+      ],
+    )
+  }, [])
+
   return (
     <View style={[s.root, { backgroundColor: c.tabBar }]}>
       <View style={s.mapFill}>
@@ -883,9 +898,15 @@ export default function DashboardScreen() {
       {/* Header */}
       {!isNavigating && (
         <View style={[s.header, { top: insets.top + 16 }]}>
-          <View style={s.headerLeft}>
-            <Text style={[s.headerTitle, { color: c.text }]}>DriveMind</Text>
-          </View>
+          <AnimatedButton
+            style={s.headerLogoWrap}
+            activeOpacity={1}
+            delayLongPress={650}
+            onLongPress={handleQaInjectMockOrder}
+            accessibilityLabel="DriveMind"
+          >
+            <Logo size={32} />
+          </AnimatedButton>
           <View style={[s.rolePill, { backgroundColor: c.surface, borderColor: c.border }]}>
             <MaterialCommunityIcons name={role === 'courier' ? 'bike' : 'car-outline'} size={14} color={c.secondary} />
             <Text style={[s.rolePillText, { color: c.text }]}>{role}</Text>
@@ -903,7 +924,7 @@ export default function DashboardScreen() {
             {activeOrderPlatforms.map(({ orderId, platform }, idx) => (
               <Reanimated.View
                 key={`quick-wrap-${orderId}`}
-                entering={FadeInDown.springify().damping(15).stiffness(220).delay(idx * 45)}
+                entering={ElasticInRight.delay(idx * 45)}
               >
                 <AnimatedButton
                   style={[s.quickSwitchBtn, { backgroundColor: c.surface, borderColor: c.separator }]}
@@ -1078,9 +1099,8 @@ export default function DashboardScreen() {
 const s = StyleSheet.create({
   root: { flex: 1, alignSelf: 'stretch', width: '100%' },
   mapFill: { flex: 1, width: '100%', alignSelf: 'stretch' },
-  header: { position: 'absolute', left: 20, right: 20, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  headerTitle: { fontSize: 17, fontWeight: '600', fontFamily: fonts.semiBold },
+  header: { position: 'absolute', left: 20, right: 20, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end' },
+  headerLogoWrap: { position: 'absolute', left: 0, right: 0, alignItems: 'center' },
   rolePill: { flexDirection: 'row', alignItems: 'center', gap: 6, borderWidth: 1, borderRadius: 20, paddingHorizontal: 12, paddingVertical: 5 },
   rolePillText: { fontSize: 12, fontFamily: fonts.medium, textTransform: 'capitalize' },
   quickSwitchWrap: {

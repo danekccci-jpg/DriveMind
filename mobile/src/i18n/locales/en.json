@@ -222,5 +222,13 @@
   "onboarding_taxi_value_1": "Profitability Filters",
   "onboarding_taxi_value_2": "Quick App Switcher",
   "onboarding_delivery_value_1": "Restaurant Logos on Map",
-  "onboarding_delivery_value_2": "Multi-App Stacking"
+  "onboarding_delivery_value_2": "Multi-App Stacking",
+  "onboarding_disclosure_title": "Transparent Security & Permissions",
+  "onboarding_disclosure_privacy_intro": "Your privacy is critical. DriveMind processes order data only on your device.",
+  "onboarding_disclosure_a11y_title": "Screen Reading (Accessibility)",
+  "onboarding_disclosure_a11y_desc": "DriveMind uses the Accessibility Service to read order details (price, distance, destination) directly from Uber/Bolt. This data is processed locally and is never shared, stored externally, or used for ads.",
+  "onboarding_disclosure_overlay_title": "Interactive Widget (Overlay)",
+  "onboarding_disclosure_overlay_desc": "Overlay permission is used to display the Interactive Widget on top of your work apps.",
+  "onboarding_disclosure_cta": "I Understand & Grant Access",
+  "onboarding_disclosure_privacy_link": "By continuing, you agree to our Privacy Policy"
 }

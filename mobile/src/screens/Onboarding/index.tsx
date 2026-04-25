@@ -3,22 +3,26 @@ import {
   View,
   Text,
   StyleSheet,
-  Animated,
+  Animated as RNAnimated,
   Easing,
   Dimensions,
   SafeAreaView,
   Platform,
+  Linking,
 } from 'react-native'
 import { useTranslation } from 'react-i18next'
 import { MaterialCommunityIcons, Feather } from '@expo/vector-icons'
+import Reanimated, { FadeInDown, SlideInRight } from 'react-native-reanimated'
 import { useRoleStore } from '../../store/roleStore'
 import PlatformIcon from '../../components/PlatformIcon'
 import { fonts } from '../../theme/typography'
 import { useColors } from '../../theme/theme'
 import { requestAllPermissions } from '../../services/permissionManager'
 import AnimatedButton from '../../components/AnimatedButton'
+import Logo from '../../components/common/Logo'
 
 const { width: SCREEN_W } = Dimensions.get('window')
+const PRIVACY_POLICY_URL = 'https://telegra.ph/Privacy-Policy-for-DriveMind-04-25'
 
 type PlatformId = 'glovo' | 'uber' | 'bolt' | 'wolt'
 type Role = 'courier' | 'taxi'
@@ -54,7 +58,7 @@ export default function OnboardingScreen() {
 
   const [step, setStep] = useState(0)
   const [selectedRole, setSelectedRole] = useState<Role>(roleFromStore ?? 'courier')
-  const translateX = useRef(new Animated.Value(0)).current
+  const translateX = useRef(new RNAnimated.Value(0)).current
 
   const totalSteps = 4
   const isTaxi = selectedRole === 'taxi'
@@ -64,7 +68,7 @@ export default function OnboardingScreen() {
     (next: number, dir: 1 | -1) => {
       translateX.setValue(dir * SCREEN_W)
       setStep(next)
-      Animated.timing(translateX, {
+      RNAnimated.timing(translateX, {
         toValue: 0,
         duration: 300,
         easing: Easing.out(Easing.cubic),
@@ -101,6 +105,10 @@ export default function OnboardingScreen() {
     animateTo(step - 1, -1)
   }, [step, animateTo])
 
+  const openPrivacyPolicy = useCallback(() => {
+    void Linking.openURL(PRIVACY_POLICY_URL)
+  }, [])
+
   const roleSpecificValue = useMemo(
     () =>
       isTaxi
@@ -109,13 +117,27 @@ export default function OnboardingScreen() {
     [isTaxi, t],
   )
 
-  const parallaxStyle = useMemo(
+  const backgroundParallaxStyle = useMemo(
     () => ({
       transform: [
         {
           translateX: translateX.interpolate({
             inputRange: [-SCREEN_W, 0, SCREEN_W],
-            outputRange: [32, 0, -32],
+            outputRange: [SCREEN_W * 0.3, 0, -SCREEN_W * 0.3],
+          }),
+        },
+      ],
+    }),
+    [translateX],
+  )
+
+  const foregroundParallaxStyle = useMemo(
+    () => ({
+      transform: [
+        {
+          translateX: translateX.interpolate({
+            inputRange: [-SCREEN_W, 0, SCREEN_W],
+            outputRange: [-SCREEN_W * 0.2, 0, SCREEN_W * 0.2],
           }),
         },
       ],
@@ -126,9 +148,16 @@ export default function OnboardingScreen() {
   const renderStepRole = () => (
     <View style={[st.step, { backgroundColor: c.bg }]}>
       <ProgressDots total={totalSteps} current={0} activeColor={c.primary} mutedColor={c.border} />
-      <Text style={[st.title, { color: c.text }]}>{t('onboarding_role_title')}</Text>
-      <Text style={[st.sub, { color: c.textSecondary }]}>{t('onboarding_role_subtitle')}</Text>
-      <Animated.View style={parallaxStyle}>
+      <RNAnimated.View style={[st.heroWrap, backgroundParallaxStyle]}>
+        <View style={st.heroLogoCard}>
+          <Logo size={140} />
+        </View>
+      </RNAnimated.View>
+      <RNAnimated.View style={backgroundParallaxStyle}>
+        <Text style={[st.title, { color: c.text }]}>{t('onboarding_role_title')}</Text>
+        <Text style={[st.sub, { color: c.textSecondary }]}>{t('onboarding_role_subtitle')}</Text>
+      </RNAnimated.View>
+      <RNAnimated.View style={foregroundParallaxStyle}>
       <View style={st.roleCardsRow}>
         <AnimatedButton
           activeOpacity={0.8}
@@ -159,7 +188,7 @@ export default function OnboardingScreen() {
           <Text style={[st.roleCardText, { color: c.text }]}>{t('courier')}</Text>
         </AnimatedButton>
       </View>
-      </Animated.View>
+      </RNAnimated.View>
       <PrimaryBtn label={t('next')} onPress={goNext} bg={c.primary} textColor={c.textInverse} />
     </View>
   )
@@ -170,66 +199,104 @@ export default function OnboardingScreen() {
       <AnimatedButton style={st.backBtn} onPress={goBack} activeOpacity={0.7}>
         <Feather name="arrow-left" size={22} color={c.text} />
       </AnimatedButton>
-      <Text style={[st.title, { color: c.text }]}>{t('onboarding_widget_title')}</Text>
-      <Text style={[st.sub, { color: c.textSecondary }]}>{t('onboarding_widget_desc')}</Text>
-      <Animated.View style={[st.infoCard, { backgroundColor: c.surface, borderColor: c.border }, parallaxStyle]}>
+      <RNAnimated.View style={backgroundParallaxStyle}>
+        <Text style={[st.title, { color: c.text }]}>{t('onboarding_widget_title')}</Text>
+        <Text style={[st.sub, { color: c.textSecondary }]}>{t('onboarding_widget_desc')}</Text>
+      </RNAnimated.View>
+      <RNAnimated.View style={[st.infoCard, { backgroundColor: c.surface, borderColor: c.border }, foregroundParallaxStyle]}>
         <MaterialCommunityIcons name="widgets-outline" size={34} color={c.primary} />
         <Text style={[st.infoCardBody, { color: c.textSecondary }]}>{t('onboarding_widget_body')}</Text>
-      </Animated.View>
-      <PrimaryBtn label={t('next')} onPress={goNext} bg={c.primary} textColor={c.textInverse} />
-    </View>
-  )
-
-  const renderStepPermissions = () => (
-    <View style={[st.step, { backgroundColor: c.bg }]}>
-      <ProgressDots total={totalSteps} current={2} activeColor={c.primary} mutedColor={c.border} />
-      <AnimatedButton style={st.backBtn} onPress={goBack} activeOpacity={0.7}>
-        <Feather name="arrow-left" size={22} color={c.text} />
-      </AnimatedButton>
-      <Text style={[st.title, { color: c.text }]}>{t('onboarding_permissions_title')}</Text>
-      <View style={st.permissionCards}>
-        <View style={[st.permissionCard, { backgroundColor: c.surface, borderColor: c.border }]}>
-          <Feather name="eye" size={20} color={c.primary} />
-          <Text style={[st.permissionTitle, { color: c.text }]}>{t('onboarding_permissions_a11y_title')}</Text>
-          <Text style={[st.permissionDesc, { color: c.textSecondary }]}>{t('onboarding_permissions_a11y_desc')}</Text>
-        </View>
-        <View style={[st.permissionCard, { backgroundColor: c.surface, borderColor: c.border }]}>
-          <Feather name="layers" size={20} color={c.primary} />
-          <Text style={[st.permissionTitle, { color: c.text }]}>{t('onboarding_permissions_overlay_title')}</Text>
-          <Text style={[st.permissionDesc, { color: c.textSecondary }]}>{t('onboarding_permissions_overlay_desc')}</Text>
-        </View>
-      </View>
+      </RNAnimated.View>
       <PrimaryBtn label={t('next')} onPress={goNext} bg={c.primary} textColor={c.textInverse} />
     </View>
   )
 
   const renderStepRoleValue = () => (
     <View style={[st.step, { backgroundColor: c.bg }]}>
-      <ProgressDots total={totalSteps} current={3} activeColor={c.primary} mutedColor={c.border} />
+      <ProgressDots total={totalSteps} current={2} activeColor={c.primary} mutedColor={c.border} />
       <AnimatedButton style={st.backBtn} onPress={goBack} activeOpacity={0.7}>
         <Feather name="arrow-left" size={22} color={c.text} />
       </AnimatedButton>
-      <Text style={[st.title, { color: c.text }]}>{t('onboarding_value_title')}</Text>
-      <Text style={[st.sub, { color: c.textSecondary }]}>{t('onboarding_value_subtitle')}</Text>
-      <View style={st.valueList}>
+      <RNAnimated.View style={backgroundParallaxStyle}>
+        <Text style={[st.title, { color: c.text }]}>{t('onboarding_value_title')}</Text>
+        <Text style={[st.sub, { color: c.textSecondary }]}>{t('onboarding_value_subtitle')}</Text>
+      </RNAnimated.View>
+      <RNAnimated.View style={[st.valueList, foregroundParallaxStyle]}>
         {roleSpecificValue.map((line) => (
           <View key={line} style={[st.valueItem, { backgroundColor: c.surface, borderColor: c.border }]}>
             <Feather name="check-circle" size={18} color={c.primary} />
             <Text style={[st.valueText, { color: c.text }]}>{line}</Text>
           </View>
         ))}
-      </View>
-      <PrimaryBtn label={t('get_started')} onPress={handleFinish} bg={c.primary} textColor={c.textInverse} />
+      </RNAnimated.View>
+      <PrimaryBtn label={t('next')} onPress={goNext} bg={c.primary} textColor={c.textInverse} />
     </View>
   )
 
-  const steps = [renderStepRole, renderStepWidget, renderStepPermissions, renderStepRoleValue]
+  const renderStepDisclosure = () => (
+    <View style={[st.step, { backgroundColor: c.bg }]}>
+      <ProgressDots total={totalSteps} current={3} activeColor={c.primary} mutedColor={c.border} />
+      <AnimatedButton style={st.backBtn} onPress={goBack} activeOpacity={0.7}>
+        <Feather name="arrow-left" size={22} color={c.text} />
+      </AnimatedButton>
+
+      <Reanimated.View entering={FadeInDown.delay(100)} style={st.disclosureHeader}>
+        <View style={st.disclosureLogoCard}>
+          <Logo size={80} />
+        </View>
+      </Reanimated.View>
+
+      <Text style={[st.title, st.disclosureTitle, { color: c.text }]}>{t('onboarding_disclosure_title')}</Text>
+      <Text style={[st.disclosureIntro, { color: c.textSecondary }]}>{t('onboarding_disclosure_privacy_intro')}</Text>
+
+      <View style={st.permissionCards}>
+        <Reanimated.View
+          entering={SlideInRight.delay(300).springify()}
+          style={[st.permissionCard, st.disclosureCard, { backgroundColor: c.surface, borderColor: c.border }]}
+        >
+          <View style={st.disclosureCardTitleRow}>
+            <Feather name="lock" size={19} color={c.primary} />
+            <Text style={[st.permissionTitle, { color: c.text }]}>{t('onboarding_disclosure_a11y_title')}</Text>
+          </View>
+          <Text style={[st.permissionDesc, { color: c.textSecondary }]}>{t('onboarding_disclosure_a11y_desc')}</Text>
+        </Reanimated.View>
+
+        <Reanimated.View
+          entering={SlideInRight.delay(500).springify()}
+          style={[st.permissionCard, st.disclosureCard, { backgroundColor: c.surface, borderColor: c.border }]}
+        >
+          <View style={st.disclosureCardTitleRow}>
+            <Feather name="layers" size={19} color={c.primary} />
+            <Text style={[st.permissionTitle, { color: c.text }]}>{t('onboarding_disclosure_overlay_title')}</Text>
+          </View>
+          <Text style={[st.permissionDesc, { color: c.textSecondary }]}>{t('onboarding_disclosure_overlay_desc')}</Text>
+        </Reanimated.View>
+      </View>
+
+      <View style={st.disclosureFooter}>
+        <PrimaryBtn
+          label={t('onboarding_disclosure_cta')}
+          onPress={handleFinish}
+          bg={c.primary}
+          textColor={c.textInverse}
+          hapticImpact="impactMedium"
+        />
+        <AnimatedButton activeOpacity={0.75} onPress={openPrivacyPolicy} style={st.privacyLink}>
+          <Text style={[st.privacyLinkText, { color: c.textSecondary }]}>
+            {t('onboarding_disclosure_privacy_link')}
+          </Text>
+        </AnimatedButton>
+      </View>
+    </View>
+  )
+
+  const steps = [renderStepRole, renderStepWidget, renderStepRoleValue, renderStepDisclosure]
 
   return (
     <SafeAreaView style={[st.safe, { backgroundColor: c.bg }]}>
-      <Animated.View style={[st.animated, { transform: [{ translateX }] }]}>
+      <RNAnimated.View style={[st.animated, { transform: [{ translateX }] }]}>
         {steps[step]?.()}
-      </Animated.View>
+      </RNAnimated.View>
     </SafeAreaView>
   )
 }
@@ -240,12 +307,14 @@ function PrimaryBtn({
   disabled = false,
   bg,
   textColor,
+  hapticImpact,
 }: {
   label: string
   onPress: () => void
   disabled?: boolean
   bg: string
   textColor: string
+  hapticImpact?: 'impactLight' | 'impactMedium'
 }) {
   return (
     <AnimatedButton
@@ -253,6 +322,7 @@ function PrimaryBtn({
       style={[st.primaryBtn, { backgroundColor: bg, opacity: disabled ? 0.3 : 1 }]}
       onPress={onPress}
       disabled={disabled}
+      hapticImpact={hapticImpact}
     >
       <Text style={[st.primaryBtnText, { color: textColor }]}>{label}</Text>
     </AnimatedButton>
@@ -270,6 +340,21 @@ const st = StyleSheet.create({
   dotsRow: { flexDirection: 'row', gap: 6, marginTop: 16, marginBottom: 8, alignSelf: 'center' },
   dot: { width: 6, height: 6, borderRadius: 3 },
   backBtn: { marginTop: 4, marginBottom: 8, alignSelf: 'flex-start', padding: 4 },
+  heroWrap: {
+    marginTop: 18,
+    marginBottom: 10,
+    alignItems: 'center',
+  },
+  heroLogoCard: {
+    width: 212,
+    height: 212,
+    borderRadius: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(10,16,28,0.72)',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(150,170,200,0.3)',
+  },
   title: { fontSize: 24, fontWeight: '600', fontFamily: fonts.semiBold, marginBottom: 6, marginTop: 16 },
   sub: { fontSize: 14, fontFamily: fonts.regular, marginBottom: 28 },
   primaryBtn: {
@@ -345,6 +430,54 @@ const st = StyleSheet.create({
   valueText: {
     flex: 1,
     fontSize: 14,
+    fontFamily: fonts.medium,
+  },
+  disclosureHeader: {
+    alignItems: 'center',
+    marginTop: 6,
+  },
+  disclosureLogoCard: {
+    width: 112,
+    height: 112,
+    borderRadius: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(10,16,28,0.72)',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(150,170,200,0.3)',
+  },
+  disclosureTitle: {
+    textAlign: 'center',
+    marginTop: 14,
+  },
+  disclosureIntro: {
+    fontSize: 13,
+    lineHeight: 19,
+    textAlign: 'center',
+    fontFamily: fonts.regular,
+    marginBottom: 14,
+  },
+  disclosureCard: {
+    padding: 16,
+  },
+  disclosureCardTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  disclosureFooter: {
+    marginTop: 'auto',
+    gap: 12,
+  },
+  privacyLink: {
+    alignSelf: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+  },
+  privacyLinkText: {
+    fontSize: 12,
+    lineHeight: 17,
+    textAlign: 'center',
     fontFamily: fonts.medium,
   },
 })

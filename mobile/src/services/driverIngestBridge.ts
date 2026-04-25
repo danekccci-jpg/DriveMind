@@ -6,9 +6,9 @@ import { useOrdersStore } from '../store/ordersStore'
 import { useRoleStore } from '../store/roleStore'
 import { computeProfitability } from '@drivemind/shared'
 
-const EVENT_NOTIFICATION = 'DriveMindNotification'
-const EVENT_SCRAPE       = 'DriveMindScrape'
-const EVENT_ORDER_SCRAPED = 'onOrderScraped'
+export const EVENT_NOTIFICATION = 'DriveMindNotification'
+export const EVENT_SCRAPE = 'DriveMindScrape'
+export const EVENT_ORDER_SCRAPED = 'onOrderScraped'
 
 type DriveMindNativeType = {
   getBufferedNotificationsJson: () => Promise<string>
@@ -29,6 +29,8 @@ type DriveMindNativeType = {
   /** Remove the floating tier pill from the screen. */
   hideOverlay: () => void
   triggerScraperWindow: () => void
+  /** Optional: forward to `Log.d("DM_DEBUG", …)` from Kotlin for logcat parity. */
+  logDmDebug?: (phase: string, detail: string, jsonPayload: string) => void
 }
 
 function getNative(): DriveMindNativeType | null {
@@ -72,18 +74,42 @@ export async function syncBufferedNotificationsIfNeeded(): Promise<void> {
   }
 }
 
+function dmDebug(phase: string, detail: string, extra?: Record<string, unknown>) {
+  const tail = extra && Object.keys(extra).length ? ` ${JSON.stringify(extra)}` : ''
+  console.log(`DM_DEBUG ${phase}: ${detail}${tail}`)
+  try {
+    getNative()?.logDmDebug?.(phase, detail, JSON.stringify(extra ?? {}))
+  } catch {
+    /* noop */
+  }
+}
+
+/** First plausible decimal in the string (handles `12,50`, `12.50`, `35,50 PLN`). */
 function parsePriceNumber(priceRaw: string): number {
   if (!priceRaw) return 0
-  const cleaned = priceRaw.replace(',', '.').replace(/[^\d.]/g, '')
-  const parsed = Number.parseFloat(cleaned)
+  const m = priceRaw.replace(/\s+/g, ' ').match(/(\d+(?:[.,]\d+)?)/)
+  if (!m?.[1]) return 0
+  const normalized = m[1].includes(',') && m[1].includes('.')
+    ? m[1].replace(/\./g, '').replace(',', '.')
+    : m[1].replace(',', '.')
+  const parsed = Number.parseFloat(normalized)
   return Number.isFinite(parsed) ? parsed : 0
 }
 
+/** Kilometres from `km` or metres from standalone `m` (avoids matching `min`). */
 function parseDistanceKm(text: string): number | null {
-  const m = text.match(/(\d+(?:[.,]\d+)?)\s*km/i)
-  if (!m?.[1]) return null
-  const n = Number.parseFloat(m[1].replace(',', '.'))
-  return Number.isFinite(n) ? n : null
+  const km = text.match(/(\d+(?:[.,]\d+)?)\s*km\b/i)
+  if (km?.[1]) {
+    const n = Number.parseFloat(km[1].replace(',', '.'))
+    return Number.isFinite(n) ? n : null
+  }
+  const meters = text.match(/(\d+(?:[.,]\d+)?)\s*m\b(?![a-z])/i)
+  if (meters?.[1]) {
+    const n = Number.parseFloat(meters[1].replace(',', '.'))
+    if (!Number.isFinite(n)) return null
+    return n / 1000
+  }
+  return null
 }
 
 function parseEtaMin(text: string): number | null {
@@ -124,6 +150,7 @@ export function useDriverIngestBridge(enabled = true): void {
   const handlersRef = useRef({ ingestNotification, ingestScrape, removeExpired, showToast })
   const overlayPermissionPromptedRef = useRef(false)
   const usagePermissionPromptedRef = useRef(false)
+  const orderDedupeRef = useRef({ sig: '', at: 0 })
   handlersRef.current = { ingestNotification, ingestScrape, removeExpired, showToast }
 
   // ── Event subscriptions + TTL sweep + NetInfo sync ──────────────────────────
@@ -159,28 +186,58 @@ export function useDriverIngestBridge(enabled = true): void {
         price?: string
         currency?: string
       }) => {
-        console.log('[DriveMind] 🔔 DriveMindNotification received', {
+        dmDebug('ORDER_DETECTED', 'notification payload', {
           pkg: payload.packageName,
           price: payload.price,
-          title: payload.title,
+          title: payload.title?.slice(0, 80),
         })
         handlersRef.current.ingestNotification(payload)
         const nativeNow = getNative()
         if (!nativeNow) return
         const role = useRoleStore.getState().role ?? 'courier'
-        const price = parsePriceNumber(payload.price ?? '')
-        const distanceKm = parseDistanceKm(payload.text) ?? 6
-        const etaMin = parseEtaMin(payload.text) ?? 18
-        const result = computeProfitability({
-          role,
-          pricePLN: price,
+        dmDebug('PARSING_START', 'notification → profitability', { role })
+        let price = 0
+        let distanceKm = 6
+        let etaMin = 18
+        let result: ReturnType<typeof computeProfitability>
+        try {
+          price = parsePriceNumber(payload.price ?? '')
+          distanceKm = parseDistanceKm(payload.text) ?? 6
+          etaMin = parseEtaMin(payload.text) ?? 18
+          result = computeProfitability({
+            role,
+            pricePLN: price,
+            distanceKm,
+            etaMin,
+            dropoffLabel: payload.text,
+            isWeekendOrNight: isWeekendOrNightNow(),
+          })
+        } catch (e) {
+          dmDebug('PARSING_ERROR', 'notification parse failed', { reason: String(e) })
+          return
+        }
+        dmDebug('PARSING_SUCCESS', 'notification parsed', {
+          price,
           distanceKm,
           etaMin,
-          dropoffLabel: payload.text,
-          isWeekendOrNight: isWeekendOrNightNow(),
+          tier: result.profitTier,
         })
         const potential = `${price > 0 ? price.toFixed(2) : '--'} ${payload.currency ?? 'zł'}`
-        nativeNow.updateOverlayProfitability(result.profitTier, potential)
+        void nativeNow.isOverlayPermissionGranted().then((granted) => {
+          if (!granted) {
+            dmDebug('WIDGET_TRIGGERED', 'skipped — overlay not granted', {})
+            return
+          }
+          try {
+            nativeNow.updateOverlayProfitability(result.profitTier, potential)
+            dmDebug('WIDGET_TRIGGERED', 'updateOverlayProfitability', {
+              tier: result.profitTier,
+              potential,
+            })
+          } catch (e) {
+            dmDebug('PARSING_ERROR', 'overlay update failed', { reason: String(e) })
+          }
+        })
       },
     )
 
@@ -188,7 +245,7 @@ export function useDriverIngestBridge(enabled = true): void {
     const sub2 = DeviceEventEmitter.addListener(
       EVENT_SCRAPE,
       (payload: { price: string; destination: string; surge: string; packageName: string }) => {
-        console.log('[DriveMind] 🔍 DriveMindScrape received', {
+        dmDebug('ORDER_DETECTED', 'legacy DriveMindScrape', {
           pkg: payload.packageName,
           price: payload.price,
           destination: payload.destination?.slice(0, 60),
@@ -214,7 +271,17 @@ export function useDriverIngestBridge(enabled = true): void {
         surge: string
         packageName: string
       }) => {
-        console.log('[DriveMind] 🚀 onOrderScraped received', {
+        const sig = `${payload.packageName}|${payload.price}|${payload.distanceKm}|${(payload.dropoff ?? '').slice(0, 48)}`
+        const now = Date.now()
+        const dedupe = orderDedupeRef.current
+        if (sig === dedupe.sig && now - dedupe.at < 180) {
+          dmDebug('ORDER_DEDUPED', 'near-duplicate scrape ignored', { dtMs: now - dedupe.at })
+          return
+        }
+        dedupe.sig = sig
+        dedupe.at = now
+
+        dmDebug('ORDER_DETECTED', 'onOrderScraped', {
           pkg: payload.packageName,
           price: payload.price,
           distanceKm: payload.distanceKm,
@@ -223,56 +290,75 @@ export function useDriverIngestBridge(enabled = true): void {
           dropoff: payload.dropoff?.slice(0, 40),
         })
 
-        // Persist raw scrape into the ingest store (same shape as legacy scrape).
-        handlersRef.current.ingestScrape({
-          price: payload.price,
-          destination: payload.dropoff,
-          surge: payload.surge,
-          packageName: payload.packageName,
-        })
+        try {
+          dmDebug('PARSING_START', 'ingest + compute', {})
 
-        const nativeNow = getNative()
-        if (!nativeNow) return
+          // Persist raw scrape into the ingest store (same shape as legacy scrape).
+          handlersRef.current.ingestScrape({
+            price: payload.price,
+            destination: payload.dropoff,
+            surge: payload.surge,
+            packageName: payload.packageName,
+          })
 
-        const price = parsePriceNumber(payload.price)
-        // Try the explicit distanceKm field first, fall back to parsing the dropoff address.
-        const distKm =
-          parseDistanceKm(payload.distanceKm ?? '') ??
-          parseDistanceKm(payload.dropoff ?? '') ??
-          5
-        const eta = parseEtaMin(payload.etaMin ?? '') ?? 15
-        const role = useRoleStore.getState().role ?? 'courier'
+          const nativeNow = getNative()
+          if (!nativeNow) {
+            dmDebug('PARSING_ERROR', 'native module missing', {})
+            return
+          }
 
-        const result = computeProfitability({
-          role,
-          pricePLN: price,
-          distanceKm: Math.max(0.2, distKm),
-          etaMin: Math.max(1, eta),
-          dropoffLabel: payload.dropoff,
-          isWeekendOrNight: isWeekendOrNightNow(),
-        })
+          const price = parsePriceNumber(payload.price)
+          // Try the explicit distanceKm field first, fall back to parsing the dropoff address.
+          const distKm =
+            parseDistanceKm(payload.distanceKm ?? '') ??
+            parseDistanceKm(payload.dropoff ?? '') ??
+            5
+          const eta = parseEtaMin(payload.etaMin ?? '') ?? 15
+          const role = useRoleStore.getState().role ?? 'courier'
 
-        console.log('[DriveMind] 📊 computeProfitability result', {
-          tier: result.profitTier,
-          label: result.tierLabel,
-          złPerKm: result.złPerKm?.toFixed(2),
-          score: result.score0to100,
-        })
+          const result = computeProfitability({
+            role,
+            pricePLN: price,
+            distanceKm: Math.max(0.2, distKm),
+            etaMin: Math.max(1, eta),
+            dropoffLabel: payload.dropoff,
+            isWeekendOrNight: isWeekendOrNightNow(),
+          })
 
-        const priceStr = `${price > 0 ? price.toFixed(2) : '--'} zł`
-        console.log('[Bridge] Order Scraped and Analyzed:', {
-          tier: result.profitTier,
-          price: priceStr,
-        })
-        // Production flow:
-        // 1) parse raw scrape → 2) computeProfitability → 3) updateOverlayProfitability
-        void nativeNow.isOverlayPermissionGranted().then((granted) => {
-          if (!granted) return
-          nativeNow.updateOverlayProfitability(result.profitTier, priceStr)
-        })
+          dmDebug('PARSING_SUCCESS', 'computeProfitability', {
+            tier: result.profitTier,
+            label: result.tierLabel,
+            złPerKm: result.złPerKm?.toFixed(2),
+            score: result.score0to100,
+            price,
+            distKm,
+            eta,
+          })
 
-        const platName = packageToPlatformName(payload.packageName ?? '')
-        handlersRef.current.showToast(`${result.tierLabel}  ${platName} · ${priceStr}`)
+          const priceStr = `${price > 0 ? price.toFixed(2) : '--'} zł`
+          // Production flow:
+          // 1) parse raw scrape → 2) computeProfitability → 3) updateOverlayProfitability
+          void nativeNow.isOverlayPermissionGranted().then((granted) => {
+            if (!granted) {
+              dmDebug('WIDGET_TRIGGERED', 'skipped — overlay not granted', {})
+              return
+            }
+            try {
+              nativeNow.updateOverlayProfitability(result.profitTier, priceStr)
+              dmDebug('WIDGET_TRIGGERED', 'updateOverlayProfitability', {
+                tier: result.profitTier,
+                priceStr,
+              })
+            } catch (e) {
+              dmDebug('PARSING_ERROR', 'overlay update failed', { reason: String(e) })
+            }
+          })
+
+          const platName = packageToPlatformName(payload.packageName ?? '')
+          handlersRef.current.showToast(`${result.tierLabel}  ${platName} · ${priceStr}`)
+        } catch (e) {
+          dmDebug('PARSING_ERROR', 'onOrderScraped pipeline failed', { reason: String(e) })
+        }
       },
     )
 

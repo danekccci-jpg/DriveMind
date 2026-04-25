@@ -222,5 +222,13 @@
   "onboarding_taxi_value_1": "Filtry opłacalności",
   "onboarding_taxi_value_2": "Szybkie przełączanie aplikacji",
   "onboarding_delivery_value_1": "Loga restauracji na mapie",
-  "onboarding_delivery_value_2": "Stackowanie wielu aplikacji"
+  "onboarding_delivery_value_2": "Stackowanie wielu aplikacji",
+  "onboarding_disclosure_title": "Przejrzyste bezpieczeństwo i uprawnienia",
+  "onboarding_disclosure_privacy_intro": "Twoja prywatność jest kluczowa. Dane przetwarzane są wyłącznie lokalnie na Twoim urządzeniu. DriveMind nie wysyła ich na serwery.",
+  "onboarding_disclosure_a11y_title": "Odczyt ekranu (Dostępność)",
+  "onboarding_disclosure_a11y_desc": "DriveMind używa Usługi Dostępności do odczytu szczegółów zlecenia (cena, odległość, cel) bezpośrednio z Uber/Bolt. Dane są przetwarzane lokalnie i nigdy nie są udostępniane, przechowywane zewnętrznie ani używane do reklam.",
+  "onboarding_disclosure_overlay_title": "Interaktywny Widget (Nakładka)",
+  "onboarding_disclosure_overlay_desc": "Uprawnienie nakładki służy do wyświetlania Interaktywnego Widgetu nad aplikacjami do pracy.",
+  "onboarding_disclosure_cta": "Rozumiem i przyznaję dostęp",
+  "onboarding_disclosure_privacy_link": "Kontynuując, akceptujesz naszą Politykę prywatności"
 }
