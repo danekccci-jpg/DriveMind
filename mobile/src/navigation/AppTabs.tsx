@@ -10,14 +10,14 @@ import ShiftModeScreen from '../screens/ShiftMode'
 import EarningsScreen from '../screens/Earnings'
 import ProfileScreen from '../screens/Profile'
 import { useColors } from '../theme/theme'
-import { useDriverIngestStore } from '../store/driverIngestStore'
+import { useDriverIngestStore, selectAvailableIngestCount } from '../store/driverIngestStore'
 
 const Tab = createBottomTabNavigator()
 
 export default function AppTabs() {
   const { t } = useTranslation()
   const c = useColors()
-  const ordersBadge = useDriverIngestStore((s) => s.backgroundOrders.length)
+  const ordersBadge = useDriverIngestStore(selectAvailableIngestCount)
 
   return (
     <Tab.Navigator

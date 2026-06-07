@@ -5,6 +5,7 @@
   },
   "build": {
     "development": {
+      "workingDirectory": "mobile",
       "developmentClient": true,
       "distribution": "internal",
       "env": {
@@ -12,12 +13,14 @@
       }
     },
     "preview": {
+      "workingDirectory": "mobile",
       "distribution": "internal",
       "env": {
         "NODE_ENV": "production"
       }
     },
     "production": {
+      "workingDirectory": "mobile",
       "autoIncrement": true,
       "env": {
         "NODE_ENV": "production"

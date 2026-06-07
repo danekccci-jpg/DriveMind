@@ -1,13 +1,11 @@
 import { Platform } from 'react-native'
 
 /**
- * Web application OAuth 2.0 client ID (Google Cloud Console → APIs & Services →
- * Credentials → OAuth 2.0 Client IDs → type **Web application**).
- * Do not use the Android/iOS client id here — `@react-native-google-signin/google-signin`
- * expects the Web client id for `webClientId` on Android.
+ * Web client ID (client_type: 3) from mobile/android/app/google-services.json —
+ * project drivemind-d4994. Must stay in sync with that file's oauth_client entry.
  */
 const WEB_CLIENT_ID =
-  '981872670341-f22vp7pvntj3k96sdgtd6jhr5dbqdf8g.apps.googleusercontent.com'
+  'REDACTED_GOOGLE_WEB_CLIENT_ID'
 
 let configured = false
 
@@ -47,7 +45,7 @@ function logGoogleSignInError(e: unknown): void {
 
 /** Result of `signInWithGoogle` — use `kind` so UI can ignore cancel vs show errors. */
 export type GoogleSignInResult =
-  | { kind: 'success'; name: string; email: string }
+  | { kind: 'success'; name: string; email: string; idToken: string | null }
   | { kind: 'cancelled' }
   | { kind: 'error'; error: unknown }
 
@@ -70,7 +68,7 @@ export async function signInWithGoogle(): Promise<GoogleSignInResult> {
         console.warn('[DriveMind] Google sign-in: empty email in profile')
         return { kind: 'error', error: new Error('No email in Google profile') }
       }
-      return { kind: 'success', name: u.name ?? '', email }
+      return { kind: 'success', name: u.name ?? '', email, idToken: response.data.idToken ?? null }
     }
     console.warn('[DriveMind] Google sign-in: unexpected response shape', response)
     return { kind: 'error', error: new Error('Unexpected Google sign-in response') }

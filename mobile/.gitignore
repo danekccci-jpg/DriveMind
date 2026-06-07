@@ -28,6 +28,7 @@ web-build/
 # --- SECURITY (Keystore and Env) ---
 *.jks
 *.keystore
+android/keystore.properties
 *.p12
 *.key
 *.pem

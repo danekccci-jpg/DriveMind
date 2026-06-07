@@ -1,0 +1,6 @@
+type User @table(key: "id") {
+  id: String! @default(expr: "auth.uid")
+  createdAt: Timestamp! @default(expr: "request.time")
+  isSubscribed: Boolean! @default(value: false)
+  trialEndsAt: Timestamp!
+}

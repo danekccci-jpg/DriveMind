@@ -6,7 +6,7 @@ import * as Haptics from 'expo-haptics'
 import i18n from '../../i18n'
 import { useColors } from '../../theme/theme'
 import { fonts } from '../../theme/typography'
-import { useLanguageStore } from '../../store/languageStore'
+import { useLanguageStore, type Language } from '../../store/languageStore'
 
 export default function LanguageSelectionScreen() {
   const insets = useSafeAreaInsets()
@@ -14,7 +14,7 @@ export default function LanguageSelectionScreen() {
   const c = useColors()
   const confirmLanguageChoice = useLanguageStore((s) => s.confirmLanguageChoice)
 
-  const applyLanguage = (lang: 'en' | 'pl') => {
+  const applyLanguage = (lang: Language) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
     confirmLanguageChoice(lang)
     i18n.changeLanguage(lang)
@@ -25,12 +25,20 @@ export default function LanguageSelectionScreen() {
       <View style={[s.card, { backgroundColor: c.surface, borderColor: c.border }]}>
         <Text style={[s.title, { color: c.text }]}>{t('choose_language')}</Text>
         <Text style={[s.subtitle, { color: c.textSecondary }]}>{t('choose_language_subtitle')}</Text>
-        <TouchableOpacity style={[s.button, { borderColor: c.primary }]} activeOpacity={0.7} onPress={() => applyLanguage('en')}>
-          <Text style={[s.buttonText, { color: c.text }]}>English</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={[s.button, { borderColor: c.primary }]} activeOpacity={0.7} onPress={() => applyLanguage('pl')}>
-          <Text style={[s.buttonText, { color: c.text }]}>Polski</Text>
-        </TouchableOpacity>
+        <View style={s.langGrid}>
+          <TouchableOpacity style={[s.button, { borderColor: c.primary }]} activeOpacity={0.7} onPress={() => applyLanguage('en')}>
+            <Text style={[s.buttonText, { color: c.text }]}>English</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[s.button, { borderColor: c.primary }]} activeOpacity={0.7} onPress={() => applyLanguage('pl')}>
+            <Text style={[s.buttonText, { color: c.text }]}>Polski</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[s.button, { borderColor: c.primary }]} activeOpacity={0.7} onPress={() => applyLanguage('uk')}>
+            <Text style={[s.buttonText, { color: c.text }]}>Українська</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[s.button, { borderColor: c.primary }]} activeOpacity={0.7} onPress={() => applyLanguage('ru')}>
+            <Text style={[s.buttonText, { color: c.text }]}>Русский</Text>
+          </TouchableOpacity>
+        </View>
       </View>
     </View>
   )
@@ -41,6 +49,7 @@ const s = StyleSheet.create({
   card: { borderWidth: 1, borderRadius: 16, padding: 20, gap: 10 },
   title: { fontSize: 24, fontFamily: fonts.semiBold, textAlign: 'center' },
   subtitle: { fontSize: 14, fontFamily: fonts.regular, textAlign: 'center', marginBottom: 12 },
-  button: { height: 52, borderWidth: 1, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  langGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, justifyContent: 'space-between' },
+  button: { width: '48%', height: 52, borderWidth: 1, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   buttonText: { fontSize: 16, fontFamily: fonts.medium },
 })

@@ -21,8 +21,15 @@ import {
   type Units,
   type DirectionsMode,
 } from '../../store/navigationSettingsStore'
-import { useLanguageStore } from '../../store/languageStore'
+import { useLanguageStore, cycleDriveMindLanguage, type Language } from '../../store/languageStore'
 import { IntegrationHealthCard } from '../../components/IntegrationHealthCard'
+
+const LANG_I18N_KEY: Record<Language, 'language_en' | 'language_pl' | 'language_uk' | 'language_ru'> = {
+  en: 'language_en',
+  pl: 'language_pl',
+  uk: 'language_uk',
+  ru: 'language_ru',
+}
 
 const MARKER_OPTIONS: { id: MarkerStyleId; labelKey: string }[] = [
   { id: 'classic', labelKey: 'nav_marker_classic' },
@@ -68,7 +75,7 @@ export default function NavigationSettingsScreen() {
 
   const cycleLang = () => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
-    const next = language === 'en' ? 'pl' : 'en'
+    const next = cycleDriveMindLanguage(language)
     setLanguage(next)
     void i18n.changeLanguage(next)
   }
@@ -132,7 +139,7 @@ export default function NavigationSettingsScreen() {
       <View style={[styles.card, { backgroundColor: c.surface, borderColor: c.border }]}>
         <TouchableOpacity style={[styles.rowPick, { borderBottomColor: c.separator }]} onPress={cycleLang} activeOpacity={0.7}>
           <Text style={[styles.rowLabel, { color: c.text }]}>{t('language')}</Text>
-          <Text style={[styles.value, { color: c.textSecondary }]}>{language === 'en' ? 'English' : 'Polski'}</Text>
+          <Text style={[styles.value, { color: c.textSecondary }]}>{t(LANG_I18N_KEY[language])}</Text>
         </TouchableOpacity>
         {UNITS_OPTS.map((opt, i) => {
           const selected = units === opt.id

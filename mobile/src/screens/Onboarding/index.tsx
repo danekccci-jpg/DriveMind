@@ -149,9 +149,7 @@ export default function OnboardingScreen() {
     <View style={[st.step, { backgroundColor: c.bg }]}>
       <ProgressDots total={totalSteps} current={0} activeColor={c.primary} mutedColor={c.border} />
       <RNAnimated.View style={[st.heroWrap, backgroundParallaxStyle]}>
-        <View style={st.heroLogoCard}>
-          <Logo size={140} />
-        </View>
+        <Logo theme="auto" variant="full" size={140} maxWidth={220} />
       </RNAnimated.View>
       <RNAnimated.View style={backgroundParallaxStyle}>
         <Text style={[st.title, { color: c.text }]}>{t('onboarding_role_title')}</Text>
@@ -241,9 +239,7 @@ export default function OnboardingScreen() {
       </AnimatedButton>
 
       <Reanimated.View entering={FadeInDown.delay(100)} style={st.disclosureHeader}>
-        <View style={st.disclosureLogoCard}>
-          <Logo size={80} />
-        </View>
+        <Logo theme="auto" variant="full" size={80} maxWidth={120} />
       </Reanimated.View>
 
       <Text style={[st.title, st.disclosureTitle, { color: c.text }]}>{t('onboarding_disclosure_title')}</Text>
@@ -345,16 +341,6 @@ const st = StyleSheet.create({
     marginBottom: 10,
     alignItems: 'center',
   },
-  heroLogoCard: {
-    width: 212,
-    height: 212,
-    borderRadius: 28,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(10,16,28,0.72)',
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(150,170,200,0.3)',
-  },
   title: { fontSize: 24, fontWeight: '600', fontFamily: fonts.semiBold, marginBottom: 6, marginTop: 16 },
   sub: { fontSize: 14, fontFamily: fonts.regular, marginBottom: 28 },
   primaryBtn: {
@@ -435,16 +421,6 @@ const st = StyleSheet.create({
   disclosureHeader: {
     alignItems: 'center',
     marginTop: 6,
-  },
-  disclosureLogoCard: {
-    width: 112,
-    height: 112,
-    borderRadius: 28,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(10,16,28,0.72)',
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(150,170,200,0.3)',
   },
   disclosureTitle: {
     textAlign: 'center',

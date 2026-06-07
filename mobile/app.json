@@ -2,14 +2,14 @@
   "expo": {
     "name": "DriveMind",
     "slug": "drivemind",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
-    "userInterfaceStyle": "dark",
+    "icon": "./assets/logo/logo-symbol-light.png",
+    "userInterfaceStyle": "automatic",
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#000000"
+      "backgroundColor": "#08101C"
     },
     "ios": {
       "supportsTablet": true,
@@ -25,8 +25,8 @@
     "android": {
       "package": "com.guessxx.drivemind",
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#000000"
+        "foregroundImage": "./assets/logo/logo-symbol-light.png",
+        "backgroundColor": "#F5F5F7"
       },
       "config": {
         "googleMaps": {
@@ -47,6 +47,7 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
+      "./plugins/withDriveMindNative",
       [
         "expo-location",
         {
@@ -59,13 +60,26 @@
       [
         "@react-native-google-signin/google-signin",
         {
-          "iosUrlScheme": "com.googleusercontent.apps.981872670341-ddggrmam043qm34b1rqgtahn38bpbual"
+          "iosUrlScheme": "com.googleusercontent.apps.389029600639-bn15t2ltvor8u2rcgbb4sdm8bs565ec8"
         }
       ]
     ],
     "extra": {
       "backendUrl": "",
       "googleMapsApiKey": "REDACTED_GOOGLE_MAPS_KEY",
+      "firebase": {
+        "apiKey": "REDACTED_FIREBASE_API_KEY",
+        "authDomain": "drivemind-d4994.firebaseapp.com",
+        "projectId": "drivemind-d4994",
+        "storageBucket": "drivemind-d4994.firebasestorage.app",
+        "messagingSenderId": "389029600639",
+        "appId": "1:389029600639:android:7636d1bd1e8117dbbdce4a"
+      },
+      "dataConnect": {
+        "serviceId": "drivemind",
+        "connectorId": "default",
+        "location": "europe-central2"
+      },
       "eas": {
         "projectId": "0e7f5b9f-e8df-4452-9734-a1389b746d94"
       }

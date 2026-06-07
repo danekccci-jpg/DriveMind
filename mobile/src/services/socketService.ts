@@ -1,6 +1,7 @@
 import { io, type Socket } from 'socket.io-client'
 import Constants from 'expo-constants'
 import { useSocketConnectionStore } from '../store/socketConnectionStore'
+import { devLog, devWarn } from '../utils/devLog'
 
 let socket: Socket | null = null
 
@@ -22,7 +23,7 @@ export function resolveBackendUrl(): string {
 function flushPendingDriverLocation(): void {
   if (!socket?.connected || !pendingLocation) return
   socket.emit('update_location', pendingLocation)
-  console.log('[DriveMind Socket]: flushed queued update_location')
+  devLog('[DriveMind Socket]: flushed queued update_location')
   pendingLocation = null
 }
 
@@ -33,14 +34,14 @@ export function initSocket(opts: {
   teardownSocket()
   const url = getBackendUrl()
   if (!url) {
-    console.warn(
+    devWarn(
       '[DriveMind Socket]: No backend URL — set BACKEND_URL / EXPO_PUBLIC_BACKEND_URL in .env (see app.config.js). Realtime disabled.',
     )
     useSocketConnectionStore.getState().setSocketStatus('disconnected', 'no_backend_url')
     return
   }
 
-  console.log('[DriveMind Socket]: connecting to', url)
+  devLog('[DriveMind Socket]: connecting to', url)
   useSocketConnectionStore.getState().setSocketStatus('connecting', null)
 
   socket = io(url, {
@@ -53,40 +54,40 @@ export function initSocket(opts: {
   })
 
   socket.on('connect', () => {
-    console.log('[DriveMind Socket]: connect', socket?.id)
+    devLog('[DriveMind Socket]: connect', socket?.id)
     useSocketConnectionStore.getState().setSocketStatus('connected', null)
     socket?.emit('driver_auth', { driverId: opts.driverId })
     flushPendingDriverLocation()
   })
 
   socket.on('disconnect', (reason) => {
-    console.log('[DriveMind Socket]: disconnect', reason)
+    devLog('[DriveMind Socket]: disconnect', reason)
     useSocketConnectionStore.getState().setSocketStatus('disconnected', reason)
   })
 
   socket.on('connect_error', (err) => {
-    console.warn('[DriveMind Socket]: connect_error', err?.message)
+    devWarn('[DriveMind Socket]: connect_error', err?.message)
     useSocketConnectionStore.getState().setSocketStatus('disconnected', err?.message ?? 'connect_error')
   })
 
   socket.io.on('reconnect_attempt', (attempt) => {
-    console.log('[DriveMind Socket]: reconnect_attempt', attempt)
+    devLog('[DriveMind Socket]: reconnect_attempt', attempt)
     useSocketConnectionStore.getState().setSocketStatus('reconnecting', null)
   })
 
   socket.io.on('reconnect', (attempt) => {
-    console.log('[DriveMind Socket]: reconnect ok', attempt)
+    devLog('[DriveMind Socket]: reconnect ok', attempt)
     useSocketConnectionStore.getState().setSocketStatus('connected', null)
     socket?.emit('driver_auth', { driverId: opts.driverId })
     flushPendingDriverLocation()
   })
 
   socket.io.on('reconnect_error', (err) => {
-    console.warn('[DriveMind Socket]: reconnect_error', err?.message)
+    devWarn('[DriveMind Socket]: reconnect_error', err?.message)
   })
 
   socket.on('new_order', (payload: unknown) => {
-    console.log('[DriveMind Socket]: new_order')
+    devLog('[DriveMind Socket]: new_order')
     opts.onNewOrder?.(payload)
   })
 }
@@ -102,11 +103,11 @@ export function teardownSocket(): void {
 
 export function emitOrderAccepted(orderId: string): void {
   if (!socket?.connected) {
-    console.warn('[DriveMind Socket]: order_accepted skipped (socket not connected)')
+    devWarn('[DriveMind Socket]: order_accepted skipped (socket not connected)')
     return
   }
   socket.emit('order_accepted', { orderId })
-  console.log('[DriveMind Socket]: emitted order_accepted', orderId)
+  devLog('[DriveMind Socket]: emitted order_accepted', orderId)
 }
 
 export function emitDriverLocation(payload: {
@@ -125,7 +126,7 @@ export function emitDriverLocation(payload: {
     socket.emit('update_location', normalized)
   } else {
     pendingLocation = normalized
-    console.log('[DriveMind Socket]: update_location queued (socket offline)')
+    devLog('[DriveMind Socket]: update_location queued (socket offline)')
   }
 }
 

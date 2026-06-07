@@ -1,0 +1,11 @@
+specVersion: "v1"
+serviceId: "drivemind"
+location: "europe-central2"
+schema:
+  source: "./schema"
+  datasource:
+    postgresql:
+      database: "fdcdb"
+      cloudSql:
+        instanceId: "drivemind-fdc"
+connectorDirs: ["./connector"]

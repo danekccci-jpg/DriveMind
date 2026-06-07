@@ -17,12 +17,15 @@ import { useTranslation } from 'react-i18next'
 import * as Haptics from 'expo-haptics'
 
 import PlatformIcon from '../../components/PlatformIcon'
-import SkeletonCard from '../../components/SkeletonCard'
 import { useOrdersStore, Order } from '../../store/ordersStore'
 import { useRoleStore } from '../../store/roleStore'
 import { openPlatformDeepLink } from '../../utils/platformDeepLink'
 import { triggerScraperWindow } from '../../services/driverIngestBridge'
-import { useDriverIngestStore, type IngestedOffer } from '../../store/driverIngestStore'
+import {
+  useDriverIngestStore,
+  selectAvailableIngestOffers,
+  type IngestedOffer,
+} from '../../store/driverIngestStore'
 import { fonts } from '../../theme/typography'
 import { useColors } from '../../theme/theme'
 import { computeProfitability } from '@drivemind/shared'
@@ -40,20 +43,43 @@ function shortStreet(value: string): string {
   return i > 0 ? s.slice(0, i).trim() : s
 }
 
+function ingestToOrder(offer: IngestedOffer): Order {
+  const parsedPrice = Number.parseFloat((offer.price ?? '').replace(',', '.').replace(/[^\d.]/g, ''))
+  const earnings = Number.isFinite(parsedPrice) ? parsedPrice : 0
+  const distParsed = Number.parseFloat((offer.distanceKm ?? '').replace(',', '.').replace(/[^\d.]/g, ''))
+  const etaParsed = Number.parseInt((offer.etaMin ?? '').replace(/[^\d]/g, ''), 10)
+  const platform = offer.platform === 'unknown' ? 'uber' : offer.platform
+  return {
+    id: offer.id,
+    platform,
+    pickupAddress: offer.pickup?.trim() || '—',
+    dropoffAddress: offer.destination ?? offer.text ?? '—',
+    earnings,
+    distanceKm: Number.isFinite(distParsed) && distParsed > 0 ? distParsed : 5,
+    durationMin: Number.isFinite(etaParsed) && etaParsed > 0 ? etaParsed : 15,
+    deadrunKm: 0,
+    pickupLat: 50.0614,
+    pickupLng: 19.9366,
+    dropoffLat: 50.0614,
+    dropoffLng: 19.9366,
+    profitScore: 0,
+    profitLabel: 'NEUTRAL',
+    status: 'pickup',
+  }
+}
+
 export default function OrderHubScreen() {
   const { t } = useTranslation()
   const insets = useSafeAreaInsets()
   const c = useColors()
   const role = useRoleStore((st) => st.role) ?? 'courier'
-  const fuelConsumption = useRoleStore((st) => st.fuelConsumption)
   const {
-    orderHistory, pendingConfirmation,
+    pendingConfirmation,
     setPendingConfirmation, confirmOrder, rejectOrder,
   } = useOrdersStore()
 
-  const activeIngestSlot = useDriverIngestStore((s) => s.activeRide)
-  const backgroundIngest = useDriverIngestStore((s) => s.backgroundOrders)
-  const dismissActiveIngest = useDriverIngestStore((s) => s.dismissActiveRide)
+  const availableOffers = useDriverIngestStore(selectAvailableIngestOffers)
+  const removeOffer = useDriverIngestStore((s) => s.removeOffer)
 
   const [selectedPlatform, setSelectedPlatform] = useState<PlatformId | 'all'>('all')
   const appStateRef = useRef<AppStateStatus>(AppState.currentState)
@@ -72,19 +98,25 @@ export default function OrderHubScreen() {
     return () => sub.remove()
   }, [setPendingConfirmation])
 
-  const filteredOrders = useMemo(() => {
+  const filteredOffers = useMemo(() => {
     const base = role === 'taxi'
-      ? orderHistory.filter((o) => o.platform === 'uber' || o.platform === 'bolt')
-      : orderHistory
-    return selectedPlatform === 'all' ? base : base.filter((o) => o.platform === selectedPlatform)
-  }, [role, selectedPlatform, orderHistory])
+      ? availableOffers.filter((o) => o.platform === 'uber' || o.platform === 'bolt')
+      : availableOffers
+    return selectedPlatform === 'all'
+      ? base
+      : base.filter((o) => o.platform === selectedPlatform)
+  }, [role, selectedPlatform, availableOffers])
 
-  const handleAccept = useCallback(async (order: Order) => {
+  const availableCount = filteredOffers.length
+
+  const handleAccept = useCallback(async (offer: IngestedOffer) => {
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
+    const order = ingestToOrder(offer)
+    removeOffer(offer.id)
     if (Platform.OS === 'android') triggerScraperWindow()
     pendingOrderRef.current = order
     openPlatformDeepLink(order.platform)
-  }, [])
+  }, [removeOffer])
 
   const handleConfirmYes = useCallback(() => {
     if (!pendingConfirmation) return
@@ -95,84 +127,61 @@ export default function OrderHubScreen() {
       } catch (e) {
         const message = e instanceof Error ? e.message : String(e)
         console.error('[DriveMind Nav]: OrderHub confirmOrder failed', e)
-        Alert.alert('Directions', message)
+        Alert.alert(t('directions_alert_title'), message)
       }
     })()
-  }, [pendingConfirmation, confirmOrder])
+  }, [pendingConfirmation, confirmOrder, t])
 
   const handleConfirmNo = useCallback(() => rejectOrder(), [rejectOrder])
 
-  const accent = useCallback((platform: string) => {
-    const map: Record<string, string> = { glovo: c.glovo, uber: c.uber, bolt: c.bolt, wolt: c.wolt }
-    return map[platform] ?? c.border
-  }, [c])
-
-  const renderOrder = useCallback(
-    ({ item }: { item: Order; index: number }) => {
+  const renderOffer = useCallback(
+    ({ item }: { item: IngestedOffer }) => {
+      const order = ingestToOrder(item)
       const result = computeProfitability({
         role: role as 'courier' | 'taxi',
-        pricePLN: item.earnings,
-        distanceKm: Math.max(0.2, (item.distanceKm ?? 0) + (item.deadrunKm ?? 0)),
-        etaMin: Math.max(1, item.durationMin ?? 1),
-        dropoffLabel: item.dropoffAddress,
+        pricePLN: order.earnings,
+        distanceKm: Math.max(0.2, (order.distanceKm ?? 0) + (order.deadrunKm ?? 0)),
+        etaMin: Math.max(1, order.durationMin ?? 1),
+        dropoffLabel: order.dropoffAddress,
       })
-      const a = result.tierColor
+      const platform = (item.platform === 'unknown' ? 'uber' : item.platform) as PlatformId
 
       return (
-        <View style={[s.card, { backgroundColor: c.surface, borderColor: c.separator, borderLeftColor: a }]}>
+        <View style={[s.card, { backgroundColor: c.surface, borderColor: c.separator, borderLeftColor: result.tierColor }]}>
           <View style={s.cardHeader}>
-            <PlatformIcon platform={item.platform as PlatformId} size={24} />
+            <PlatformIcon platform={platform} size={24} />
             <Text style={[s.cardPlatform, { color: c.text }]}>{PLATFORM_LABEL[item.platform] ?? item.platform}</Text>
             <View style={[s.tierPill, { borderColor: result.tierColor, backgroundColor: `${result.tierColor}22` }]}>
               <Text style={[s.tierPillText, { color: result.tierColor }]}>{result.tierLabel}</Text>
             </View>
-            <Text style={[s.cardPrice, { color: c.text }]}>{item.earnings.toFixed(0)} zł</Text>
-          </View>
-          <View style={[s.routeInline, { borderColor: c.separator }]}>
-            <Text style={[s.addrSingle, { color: c.textSecondary }]} numberOfLines={1}>
-              {`${shortStreet(item.pickupAddress)} → ${shortStreet(item.dropoffAddress)}`}
+            <Text style={[s.cardPrice, { color: c.text }]}>
+              {order.earnings > 0 ? `${order.earnings.toFixed(0)} zł` : item.price ?? '—'}
             </Text>
           </View>
+          <View style={[s.routeInline, { borderColor: c.separator }]}>
+            <Text style={[s.addrSingle, { color: c.textSecondary }]} numberOfLines={2}>
+              {`${shortStreet(order.pickupAddress)} → ${shortStreet(order.dropoffAddress)}`}
+            </Text>
+          </View>
+          <TouchableOpacity
+            style={[s.acceptBtn, { backgroundColor: c.primary }]}
+            activeOpacity={0.85}
+            onPress={() => void handleAccept(item)}
+          >
+            <Text style={[s.acceptBtnText, { color: c.textInverse }]}>{t('accept')}</Text>
+          </TouchableOpacity>
         </View>
       )
     },
-    [role, handleAccept, t, c, accent],
+    [role, handleAccept, t, c],
   )
-
-  const ingestHeader = useMemo(() => {
-    if (Platform.OS !== 'android') return null
-    if (!activeIngestSlot && backgroundIngest.length === 0) return null
-    const row = (label: string, o: IngestedOffer, keyId: string) => (
-      <View key={keyId} style={[s.ingestCard, { backgroundColor: c.surface, borderColor: c.border }]}>
-        <Text style={[s.ingestBadge, { color: c.primary }]}>{label}</Text>
-        <Text style={[s.ingestPlatform, { color: c.text }]}>{o.platform.toUpperCase()}</Text>
-        {o.price ? <Text style={[s.ingestLine, { color: c.text }]}>{o.price}</Text> : null}
-        {o.destination ? <Text style={[s.ingestLine, { color: c.textSecondary }]} numberOfLines={2}>{o.destination}</Text> : null}
-        <Text style={[s.ingestLine, { color: c.textMuted }]} numberOfLines={2}>{o.title}: {o.text}</Text>
-      </View>
-    )
-    return (
-      <View style={s.ingestBlock}>
-        <Text style={[s.ingestTitle, { color: c.textMuted }]}>{t('driver_ingest_section')}</Text>
-        {activeIngestSlot ? (
-          <View>
-            {row(t('driver_ingest_active'), activeIngestSlot, 'ingest-active')}
-            <TouchableOpacity onPress={() => dismissActiveIngest()} style={s.ingestDismiss}>
-              <Text style={{ color: c.textMuted, fontSize: 12 }}>{t('driver_ingest_dismiss')}</Text>
-            </TouchableOpacity>
-          </View>
-        ) : null}
-        {backgroundIngest.map((o) => row(t('driver_ingest_queued'), o, o.id))}
-      </View>
-    )
-  }, [activeIngestSlot, backgroundIngest, c, dismissActiveIngest, t])
 
   return (
     <View style={[s.root, { paddingTop: insets.top, backgroundColor: c.bg }]}>
       <View style={s.header}>
         <Text style={[s.title, { color: c.text }]}>{t('available_orders')}</Text>
         <View style={[s.countBadge, { backgroundColor: c.surfaceAlt }]}>
-          <Text style={[s.countText, { color: c.secondary }]}>{filteredOrders.length}</Text>
+          <Text style={[s.countText, { color: c.secondary }]}>{availableCount}</Text>
         </View>
       </View>
 
@@ -202,18 +211,17 @@ export default function OrderHubScreen() {
       <View style={s.listWrap}>
         <FlatList
           style={s.listFlex}
-          data={filteredOrders}
+          data={filteredOffers}
           keyExtractor={(item) => item.id}
-          renderItem={renderOrder}
+          renderItem={renderOffer}
           contentContainerStyle={s.listPad}
           scrollEventThrottle={1}
           removeClippedSubviews
           maxToRenderPerBatch={8}
           showsVerticalScrollIndicator={false}
-          ListHeaderComponent={ingestHeader}
           ListEmptyComponent={
             <View style={s.emptyWrap}>
-              <Text style={[s.empty, { color: c.textMuted }]}>{t('no_orders_yet')}</Text>
+              <Text style={[s.empty, { color: c.textMuted }]}>{t('no_available_orders')}</Text>
             </View>
           }
         />
@@ -271,7 +279,6 @@ const s = StyleSheet.create({
   pillText: { fontSize: 13, fontFamily: fonts.medium },
   listWrap: { flex: 1, alignSelf: 'stretch', width: '100%', minHeight: 0 },
   listFlex: { flex: 1, alignSelf: 'stretch', width: '100%', minHeight: 0 },
-  /** Top-aligned scroll content (no vertical centering) */
   listPad: {
     flexGrow: 1,
     justifyContent: 'flex-start',
@@ -299,7 +306,6 @@ const s = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 8,
   },
-  addrLabel: { flex: 1, fontSize: 11, fontFamily: fonts.medium, marginRight: 6 },
   addrSingle: { flex: 1, fontSize: 12, fontFamily: fonts.medium },
   tierPill: {
     borderWidth: 1,
@@ -309,25 +315,14 @@ const s = StyleSheet.create({
     maxWidth: '50%',
   },
   tierPillText: { fontSize: 10, fontFamily: fonts.semiBold },
-  empty: { textAlign: 'center', fontSize: 15, fontFamily: fonts.regular },
-  ingestBlock: { marginBottom: 12, alignSelf: 'stretch' },
-  ingestTitle: {
-    fontSize: 11,
-    fontFamily: fonts.medium,
-    letterSpacing: 0.6,
-    textTransform: 'uppercase',
-    marginBottom: 8,
-  },
-  ingestCard: {
-    borderWidth: 1,
+  acceptBtn: {
+    height: 42,
     borderRadius: 10,
-    padding: 10,
-    marginBottom: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  ingestBadge: { fontSize: 10, fontFamily: fonts.semiBold, marginBottom: 4 },
-  ingestPlatform: { fontSize: 13, fontFamily: fonts.semiBold, marginBottom: 4 },
-  ingestLine: { fontSize: 12, fontFamily: fonts.regular, marginTop: 2 },
-  ingestDismiss: { alignSelf: 'flex-start', marginBottom: 8, paddingVertical: 4 },
+  acceptBtnText: { fontSize: 14, fontFamily: fonts.semiBold, fontWeight: '600' },
+  empty: { textAlign: 'center', fontSize: 15, fontFamily: fonts.regular },
   modalOverlay: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
   modalCard: { borderRadius: 16, padding: 24, width: '100%', alignItems: 'center', gap: 10 },
   modalTitle: { fontSize: 18, fontWeight: '600', fontFamily: fonts.semiBold, marginTop: 6 },

@@ -6,6 +6,8 @@ import { navigationEngine } from '../services/navigationEngine'
 import { emitOrderAccepted, clearPendingDriverLocation } from '../services/socketService'
 import { useWalletStore } from './walletStore'
 import { playWalletCreditSound } from '../services/walletSound'
+import { devLog } from '../utils/devLog'
+import { notifyOrderCompletedForUser } from '../services/userFirestoreService'
 
 export interface Order {
   id: string
@@ -124,6 +126,8 @@ interface OrdersState {
     options?: { originLat: number; originLng: number; mode: TravelMode },
   ) => Promise<void>
   rejectOrder: () => void
+  /** Removes an active order without completing it; promotes the next one if navigating. */
+  dismissOrder: (orderId: string) => void
   completeOrder: (orderId: string) => void
   setOrderStatus: (orderId: string, status: Order['status']) => void
   setDailyGoal: (goal: number) => void
@@ -181,7 +185,7 @@ export const useOrdersStore = create<OrdersState>()(
 
       confirmOrder: async (order, options) => {
         const { shiftStats, activeOrders } = get()
-        console.log('[DriveMind Nav]: confirmOrder called', {
+        devLog('[DriveMind Nav]: confirmOrder called', {
           orderId: order.id,
           platform: order.platform,
           hasRouteContext: !!options,
@@ -207,7 +211,7 @@ export const useOrdersStore = create<OrdersState>()(
         const originLng = options?.originLng ?? KRAKOW_FALLBACK_ORIGIN.longitude
         const mode = options?.mode ?? 'driving'
         try {
-          console.log('[DriveMind Nav]: fetching pickup route', {
+          devLog('[DriveMind Nav]: fetching pickup route', {
             orderId: order.id,
             origin: { latitude: originLat, longitude: originLng },
             pickup: { latitude: order.pickupLat, longitude: order.pickupLng },
@@ -230,14 +234,14 @@ export const useOrdersStore = create<OrdersState>()(
             routeDurationSeconds: route.durationSecondsTotal > 0 ? route.durationSecondsTotal : null,
           })
           emitOrderAccepted(order.id)
-          console.log('[DriveMind Store]: State updated with polyline length:', route.polylinePoints.length)
-          console.log('[DriveMind Nav]: pickup route ready', {
+          devLog('[DriveMind Store]: State updated with polyline length:', route.polylinePoints.length)
+          devLog('[DriveMind Nav]: pickup route ready', {
             points: route.polylinePoints.length,
             distance: route.distanceText,
             duration: route.durationText,
           })
         } catch (error) {
-          console.log('[DriveMind Nav]: pickup route fetch failed', {
+          devLog('[DriveMind Nav]: pickup route fetch failed', {
             orderId: order.id,
             error,
           })
@@ -247,12 +251,52 @@ export const useOrdersStore = create<OrdersState>()(
 
       rejectOrder: () => set({ pendingConfirmation: null }),
 
+      dismissOrder: (orderId) => {
+        navigationEngine.cancelPending()
+        const { activeOrders, navigationOrderId } = get()
+        const remaining = activeOrders.filter((o) => o.id !== orderId)
+        if (remaining.length === activeOrders.length) return
+
+        if (remaining.length === 0) {
+          navigationEngine.resetLocationEmitFilter()
+          clearPendingDriverLocation()
+          set({
+            activeOrders: [],
+            isNavigating: false,
+            navigationOrderId: null,
+            navigationPhase: null,
+            deliveryPhase: 'IDLE',
+            lastNearestDistanceKm: null,
+            ...emptyRouteState(),
+          })
+          return
+        }
+
+        const wasNavTarget = navigationOrderId === orderId
+        const nextNavOrder =
+          (wasNavTarget ? remaining[0] : remaining.find((o) => o.id === navigationOrderId)) ?? remaining[0]
+
+        set({
+          activeOrders: remaining,
+          ...(wasNavTarget
+            ? {
+                navigationOrderId: nextNavOrder.id,
+                navigationPhase: nextNavOrder.status === 'dropoff' ? 'dropoff' : 'pickup',
+                deliveryPhase:
+                  nextNavOrder.status === 'dropoff' ? 'EN_ROUTE_TO_DROPOFF' : 'EN_ROUTE_TO_PICKUP',
+                lastNearestDistanceKm: null,
+                ...emptyRouteState(),
+              }
+            : {}),
+        })
+      },
+
       completeOrder: (orderId) => {
         navigationEngine.cancelPending()
         const { activeOrders, orderHistory, shiftStats } = get()
         const order = activeOrders.find((o) => o.id === orderId)
         if (!order) return
-        console.log('[DriveMind Nav]: completeOrder called', { orderId })
+        devLog('[DriveMind Nav]: completeOrder called', { orderId })
 
         const completed: CompletedOrder = { ...order, status: 'completed', completedAt: Date.now() }
         const trimmedHistory = [completed, ...orderHistory].slice(0, 50)
@@ -291,6 +335,7 @@ export const useOrdersStore = create<OrdersState>()(
             lastNearestDistanceKm: null,
             ...emptyRouteState(),
           })
+          void notifyOrderCompletedForUser()
           return
         }
 
@@ -306,6 +351,7 @@ export const useOrdersStore = create<OrdersState>()(
           lastNearestDistanceKm: null,
           ...emptyRouteState(),
         })
+        void notifyOrderCompletedForUser()
       },
 
       setOrderStatus: (orderId, status) =>
@@ -333,7 +379,7 @@ export const useOrdersStore = create<OrdersState>()(
           return navigationOrderId
         }
         if (activeOrders.length === 0) {
-          console.log('[DriveMind Nav]: no active orders; stopping navigation target')
+          devLog('[DriveMind Nav]: no active orders; stopping navigation target')
           set({ navigationOrderId: null, navigationPhase: null, lastNearestDistanceKm: null })
           return null
         }
@@ -365,7 +411,7 @@ export const useOrdersStore = create<OrdersState>()(
           navigationPhase: nextOrder?.status === 'dropoff' ? 'dropoff' : 'pickup',
           lastNearestDistanceKm: nearest.distance,
         })
-        console.log('[DriveMind Nav]: navigation target recomputed', {
+        devLog('[DriveMind Nav]: navigation target recomputed', {
           nextId,
           phase: nextOrder?.status === 'dropoff' ? 'dropoff' : 'pickup',
           nearestDistanceKm: nearest.distance,
@@ -457,7 +503,7 @@ export const useOrdersStore = create<OrdersState>()(
             routeSteps: route.steps.length > 0 ? route.steps : null,
             routeDurationSeconds: route.durationSecondsTotal > 0 ? route.durationSecondsTotal : null,
           })
-          console.log('[DriveMind Nav]: dropoff route ready', {
+          devLog('[DriveMind Nav]: dropoff route ready', {
             orderId,
             points: route.polylinePoints.length,
           })
@@ -504,7 +550,7 @@ export const useOrdersStore = create<OrdersState>()(
           state.routeDurationSeconds = null
           state.lastNearestDistanceKm = null
           state.pendingConfirmation = null
-          console.log('[DriveMind Store]: rehydrated active navigation; route will be refetched', {
+          devLog('[DriveMind Store]: rehydrated active navigation; route will be refetched', {
             deliveryPhase: phase,
             orderId: id,
           })

@@ -1,6 +1,6 @@
 {
   "name": "mobile",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "main": "index.ts",
   "scripts": {
     "start": "expo start",
@@ -8,11 +8,13 @@
     "android:release": "cross-env NODE_ENV=production expo run:android --variant release",
     "android:release:fresh": "node ./scripts/clean-android-artifacts.js && cross-env NODE_ENV=production expo run:android --variant release --no-build-cache",
     "android:clean:artifacts": "node ./scripts/clean-android-artifacts.js",
+    "icons:android": "node ./scripts/generate-android-launcher-icons.mjs",
     "ios": "expo run:ios",
     "web": "expo start --web"
   },
   "dependencies": {
     "@drivemind/shared": "^0.0.1",
+    "@expo-google-fonts/inter": "^0.4.2",
     "@expo-google-fonts/poppins": "^0.4.1",
     "@expo/metro-runtime": "~55.0.6",
     "@expo/vector-icons": "^15.0.2",
@@ -31,6 +33,7 @@
     "expo-location": "~55.1.4",
     "expo-status-bar": "~55.0.4",
     "expo-task-manager": "~55.0.10",
+    "firebase": "^11.10.0",
     "i18next": "^25.10.9",
     "react": "19.2.0",
     "react-i18next": "^16.6.6",
@@ -51,6 +54,7 @@
   "devDependencies": {
     "@types/react": "~19.2.10",
     "cross-env": "^7.0.3",
+    "sharp": "^0.34.5",
     "typescript": "~5.9.2"
   },
   "private": true

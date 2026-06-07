@@ -1,0 +1,12 @@
+mutation CreateUser($trialEndsAt: Timestamp!) @auth(level: USER) {
+  user_insert(data: {
+    id_expr: "auth.uid",
+    isSubscribed: false,
+    trialEndsAt: $trialEndsAt
+  }) {
+    id
+    createdAt
+    isSubscribed
+    trialEndsAt
+  }
+}

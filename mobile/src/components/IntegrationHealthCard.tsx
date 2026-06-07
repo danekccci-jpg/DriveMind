@@ -1,9 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { AppState, Platform, StyleSheet, Switch, Text, TouchableOpacity, View, NativeModules } from 'react-native'
 import { Feather } from '@expo/vector-icons'
+import { useTranslation } from 'react-i18next'
 import { useColors } from '../theme/theme'
 import { fonts } from '../theme/typography'
 import { useDriverIngestStore } from '../store/driverIngestStore'
+import { devWarn } from '../utils/devLog'
 
 type ServiceStatuses = {
   notificationListenerEnabled: boolean
@@ -41,6 +43,7 @@ function timeLabel(ts?: number): string {
 }
 
 export function IntegrationHealthCard() {
+  const { t } = useTranslation()
   const c = useColors()
   const [statuses, setStatuses] = useState<ServiceStatuses>(emptyStatuses)
   const [diagnosticMode, setDiagnosticMode] = useState(false)
@@ -64,7 +67,7 @@ export function IntegrationHealthCard() {
         setDiagnosticEvents(Array.isArray(arr) ? arr.slice().reverse() : [])
       }
     } catch (e) {
-      console.warn('[DriveMind] IntegrationHealthCard.refresh', e)
+      devWarn('[DriveMind] IntegrationHealthCard.refresh', e)
     }
   }, [dmNative, diagnosticMode])
 
@@ -84,19 +87,19 @@ export function IntegrationHealthCard() {
   const rows = [
     {
       key: 'notification',
-      title: 'Notification Access',
+      title: t('integration_notification_access'),
       ok: statuses.notificationListenerEnabled,
       action: () => dmNative.openNotificationListenerSettings(),
     },
     {
       key: 'accessibility',
-      title: 'Accessibility',
+      title: t('integration_accessibility'),
       ok: statuses.accessibilityServiceEnabled,
       action: () => dmNative.openAccessibilitySettings(),
     },
     {
       key: 'battery',
-      title: 'Battery Optimization',
+      title: t('integration_battery'),
       ok: statuses.ignoringBatteryOptimizations,
       action: () => dmNative.openBatteryOptimizationSettings(),
     },
@@ -104,7 +107,7 @@ export function IntegrationHealthCard() {
 
   return (
     <View style={[styles.card, { backgroundColor: c.surface, borderColor: c.border }]}>
-      <Text style={[styles.title, { color: c.text }]}>Integration Health Dashboard</Text>
+      <Text style={[styles.title, { color: c.text }]}>{t('integration_health_title')}</Text>
 
       {rows.map((row, idx) => (
         <View
@@ -124,13 +127,15 @@ export function IntegrationHealthCard() {
             style={[styles.fixBtn, { borderColor: row.ok ? c.success : c.primary }]}
             activeOpacity={0.75}
           >
-            <Text style={[styles.fixBtnText, { color: row.ok ? c.success : c.primary }]}>{row.ok ? 'Fix' : 'Setup'}</Text>
+            <Text style={[styles.fixBtnText, { color: row.ok ? c.success : c.primary }]}>
+              {row.ok ? t('integration_open') : t('integration_setup')}
+            </Text>
           </TouchableOpacity>
         </View>
       ))}
 
       <View style={[styles.row, { borderBottomWidth: 0 }]}>
-        <Text style={[styles.rowText, { color: c.text }]}>Offer Notification Sound</Text>
+        <Text style={[styles.rowText, { color: c.text }]}>{t('integration_sound')}</Text>
         <Switch
           value={soundEnabled}
           onValueChange={(v) => setSoundEnabled(v)}
@@ -140,7 +145,7 @@ export function IntegrationHealthCard() {
       </View>
 
       <View style={[styles.row, { borderTopColor: c.separator, borderTopWidth: StyleSheet.hairlineWidth, borderBottomWidth: 0 }]}>
-        <Text style={[styles.rowText, { color: c.text }]}>Diagnostic Mode</Text>
+        <Text style={[styles.rowText, { color: c.text }]}>{t('integration_diagnostic_mode')}</Text>
         <Switch
           value={diagnosticMode}
           onValueChange={(v) => setDiagnosticMode(v)}
@@ -152,7 +157,7 @@ export function IntegrationHealthCard() {
       {diagnosticMode && (
         <View style={styles.diagList}>
           {diagnosticEvents.length === 0 ? (
-            <Text style={[styles.diagLine, { color: c.textMuted }]}>No recent events yet.</Text>
+            <Text style={[styles.diagLine, { color: c.textMuted }]}>{t('integration_no_events')}</Text>
           ) : (
             diagnosticEvents.map((e, i) => (
               <Text key={`${e.timestamp ?? 0}-${i}`} style={[styles.diagLine, { color: c.textSecondary }]}>

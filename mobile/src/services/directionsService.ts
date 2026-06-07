@@ -1,7 +1,17 @@
 import { useNavigationSettingsStore } from '../store/navigationSettingsStore'
 import { useLanguageStore } from '../store/languageStore'
 import { getGoogleMapsApiKey } from '../utils/googleMapsConfig'
+import { devLog, devWarn } from '../utils/devLog'
 const DIRECTIONS_PROXY_URL = (process.env.EXPO_PUBLIC_DIRECTIONS_PROXY_URL ?? '').trim()
+
+/** Google Routes language code from DriveMind UI language. */
+export function googleDirectionsLanguage(): string {
+  const l = useLanguageStore.getState().language
+  if (l === 'pl') return 'pl'
+  if (l === 'uk') return 'uk'
+  if (l === 'ru') return 'ru'
+  return 'en'
+}
 
 /** Google requires origin/destination as "lat,lng" with no spaces after the comma. */
 function coordToken(n: number): string {
@@ -50,7 +60,7 @@ export interface DirectionsResult {
 // ── Polyline decoder (Google encoded polyline algorithm) ──────────────────────
 export function decodePolyline(encoded: string | null | undefined): { latitude: number; longitude: number }[] {
   if (encoded == null || typeof encoded !== 'string' || encoded.replace(/\s/g, '') === '') {
-    console.warn('[DriveMind] decodePolyline: empty or missing encoded string; returning no points')
+    devWarn('[DriveMind] decodePolyline: empty or missing encoded string; returning no points')
     return []
   }
   const clean = encoded.replace(/\s/g, '')
@@ -113,7 +123,7 @@ export async function getDirections(
   assertValidCoord(destLat, destLng, 'destination')
 
   const nav = useNavigationSettingsStore.getState()
-  const lang = useLanguageStore.getState().language === 'pl' ? 'pl' : 'en'
+  const lang = googleDirectionsLanguage()
   /** Single source of truth — default driving so HUD never shows walking/bicycle steps unless user enables bicycling in settings */
   const mode: TravelMode = nav.directionsMode
 
@@ -134,7 +144,7 @@ export async function getDirections(
       }),
     })
     const proxyText = await proxyResponse.text()
-    console.log('[DriveMind] RAW PROXY RESPONSE:', proxyText.slice(0, 4000))
+    devLog('[DriveMind] RAW PROXY RESPONSE:', proxyText.slice(0, 4000))
     let proxyJson: any
     try {
       proxyJson = JSON.parse(proxyText)
@@ -164,7 +174,7 @@ export async function getDirections(
       '[DriveMind] Directions API is not configured. Set EXPO_PUBLIC_DIRECTIONS_PROXY_URL or EXPO_PUBLIC_GOOGLE_MAPS_API_KEY (or legacy EXPO_PUBLIC_GOOGLE_MAPS_KEY).',
     )
   }
-  console.warn('[DriveMind] Using client-side Routes API key. Prefer EXPO_PUBLIC_DIRECTIONS_PROXY_URL to avoid key exposure.')
+  devWarn('[DriveMind] Using client-side Routes API key. Prefer EXPO_PUBLIC_DIRECTIONS_PROXY_URL to avoid key exposure.')
 
   // ── Routes API v2 (POST) ──────────────────────────────────────────────────
   // Replaces the legacy Directions GET API.  The field mask intentionally omits
@@ -190,7 +200,7 @@ export async function getDirections(
     computeAlternativeRoutes: false,
   }
 
-  console.log('[DriveMind] Routes API POST body:', JSON.stringify(body).slice(0, 400))
+  devLog('[DriveMind] Routes API POST body:', JSON.stringify(body).slice(0, 400))
 
   const response = await fetch('https://routes.googleapis.com/directions/v2:computeRoutes', {
     method: 'POST',
@@ -203,7 +213,7 @@ export async function getDirections(
   })
 
   const responseText = await response.text()
-  console.log('[DriveMind] RAW ROUTES API RESPONSE:', responseText.slice(0, 4000))
+  devLog('[DriveMind] RAW ROUTES API RESPONSE:', responseText.slice(0, 4000))
 
   let json: { routes?: any[]; error?: { message?: string; status?: string } }
   try {
@@ -226,7 +236,7 @@ export async function getDirections(
   const encoded: string | undefined = route.polyline?.encodedPolyline
   const polylinePoints = decodePolyline(encoded)
   if (polylinePoints.length === 0) {
-    console.warn('[DriveMind] Routes API: encodedPolyline decoded to 0 points; map may not show a route')
+    devWarn('[DriveMind] Routes API: encodedPolyline decoded to 0 points; map may not show a route')
   }
 
   // Routes v2 returns duration as a string like "123s"
@@ -284,7 +294,7 @@ function formatCoordFallback(lat: number, lng: number): string {
 export async function reverseGeocode(lat: number, lng: number): Promise<string> {
   assertValidCoord(lat, lng, 'geocode')
 
-  const lang = useLanguageStore.getState().language === 'pl' ? 'pl' : 'en'
+  const lang = googleDirectionsLanguage()
 
   const geoKey = getGoogleMapsApiKey()
   if (!geoKey || geoKey === 'your_key_here') {
@@ -309,7 +319,7 @@ export async function reverseGeocode(lat: number, lng: number): Promise<string> 
       return json.results[0].formatted_address as string
     }
   } catch (e) {
-    console.warn('[DriveMind] reverseGeocode failed', e)
+    devWarn('[DriveMind] reverseGeocode failed', e)
   }
   return formatCoordFallback(lat, lng)
 }

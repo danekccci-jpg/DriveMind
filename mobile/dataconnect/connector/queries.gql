@@ -1,0 +1,8 @@
+query GetUserById($id: String!) @auth(level: USER) {
+  user(id: $id) {
+    id
+    createdAt
+    isSubscribed
+    trialEndsAt
+  }
+}

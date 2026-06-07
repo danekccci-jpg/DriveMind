@@ -1,12 +1,16 @@
 import React from 'react'
+import { createNavigationContainerRef } from '@react-navigation/native'
 import { createStackNavigator, CardStyleInterpolators } from '@react-navigation/stack'
 import { useTranslation } from 'react-i18next'
 import AppTabs from './AppTabs'
 import NotificationsScreen from '../screens/Notifications'
 import NavigationSettingsScreen from '../screens/NavigationSettings'
 import PermissionsScreen from '../screens/Settings/PermissionsScreen'
+import PaywallScreen from '../screens/PaywallScreen'
 
 const Stack = createStackNavigator()
+
+export const navigationRef = createNavigationContainerRef<Record<string, object | undefined>>()
 
 export default function RootNavigator() {
   const { t } = useTranslation()
@@ -38,6 +42,15 @@ export default function RootNavigator() {
       }}
     >
       <Stack.Screen name="Tabs" component={AppTabs} options={{ headerShown: false }} />
+      <Stack.Screen
+        name="Paywall"
+        component={PaywallScreen}
+        options={{
+          headerShown: false,
+          presentation: 'modal',
+          gestureEnabled: true,
+        }}
+      />
       <Stack.Screen
         name="Notifications"
         component={NotificationsScreen}

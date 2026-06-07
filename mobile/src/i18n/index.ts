@@ -3,6 +3,8 @@ import { initReactI18next } from 'react-i18next'
 
 import en from './locales/en.json'
 import pl from './locales/pl.json'
+import uk from './locales/uk.json'
+import ru from './locales/ru.json'
 
 // Language is read synchronously from the store's persisted state before i18n
 // initialises. The store will call i18n.changeLanguage whenever the user
@@ -25,6 +27,8 @@ i18n
     resources: {
       en: { translation: en },
       pl: { translation: pl },
+      uk: { translation: uk },
+      ru: { translation: ru },
     },
     lng: getPersistedLanguage(),
     fallbackLng: 'en',

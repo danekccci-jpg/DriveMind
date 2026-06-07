@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import Constants from 'expo-constants'
 import {
   View,
   Text,
@@ -18,11 +19,19 @@ import * as Haptics from 'expo-haptics'
 import { useRoleStore } from '../../store/roleStore'
 import { useDriverSessionStore } from '../../store/driverSessionStore'
 import { useAuthStore } from '../../store/authStore'
-import { signOutGoogle } from '../../services/googleAuth'
+import { signOutFirebase } from '../../services/firebaseAuth'
 import { useThemeStore } from '../../store/themeStore'
-import { useLanguageStore } from '../../store/languageStore'
+import { useLanguageStore, cycleDriveMindLanguage, type Language } from '../../store/languageStore'
 import { useColors, type AppColors } from '../../theme/theme'
 import { fonts } from '../../theme/typography'
+import Logo from '../../components/common/Logo'
+
+const LANG_I18N_KEY: Record<Language, 'language_en' | 'language_pl' | 'language_uk' | 'language_ru'> = {
+  en: 'language_en',
+  pl: 'language_pl',
+  uk: 'language_uk',
+  ru: 'language_ru',
+}
 
 type Role = 'courier' | 'taxi'
 type VehicleType = 'bike' | 'moped' | 'car'
@@ -32,29 +41,6 @@ const VEHICLE_OPTIONS: { id: VehicleType; icon: string; label: string }[] = [
   { id: 'moped', icon: 'moped', label: 'moped' },
   { id: 'car', icon: 'car-outline', label: 'car' },
 ]
-
-interface Alert {
-  id: string
-  type: 'demand' | 'platform' | 'milestone' | 'review'
-  titleKey: string
-  descKey: string
-  descParams?: Record<string, string | number>
-  timeValue: number
-}
-
-const MOCK_ALERTS: Alert[] = [
-  { id: '1', type: 'demand', titleKey: 'high_demand_title', descKey: 'high_demand_desc', descParams: { zone: 'Stare Miasto' }, timeValue: 2 },
-  { id: '2', type: 'platform', titleKey: 'better_platform_title', descKey: 'better_platform_desc_tmpl', descParams: { p1: 'Wolt', percent: 18, p2: 'Glovo' }, timeValue: 14 },
-  { id: '3', type: 'milestone', titleKey: 'earnings_milestone', descKey: 'earnings_milestone_desc', timeValue: 60 },
-  { id: '4', type: 'review', titleKey: 'shift_review_title', descKey: 'shift_review_desc', timeValue: 180 },
-]
-
-const ALERT_DOT_COLOR: Record<Alert['type'], string> = {
-  demand: '#F59E0B',
-  platform: '#00BCFF',
-  milestone: '#22C55E',
-  review: '#888888',
-}
 
 const THEME_LABELS: Record<string, string> = { dark: 'Dark', light: 'Light', system: 'System' }
 
@@ -92,14 +78,9 @@ export default function ProfileScreen() {
 
   const handleLanguageToggle = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
-    const next = language === 'en' ? 'pl' : 'en'
+    const next = cycleDriveMindLanguage(language)
     setLanguage(next)
     i18n.changeLanguage(next)
-  }
-
-  const formatAgo = (mins: number) => {
-    if (mins >= 60) return `${Math.floor(mins / 60)} ${t('hr_ago_short')}`
-    return `${mins} ${t('min_ago_short')}`
   }
 
   return (
@@ -232,19 +213,6 @@ export default function ProfileScreen() {
         </>
       )}
 
-      {/* Alerts */}
-      <SectionLabel label={t('recent_alerts')} color={c.textMuted} />
-      {MOCK_ALERTS.map((alert) => (
-        <View key={alert.id} style={[s.alertCard, { backgroundColor: c.surface, borderColor: c.border }]}>
-          <View style={[s.alertDot, { backgroundColor: ALERT_DOT_COLOR[alert.type] }]} />
-          <View style={s.alertBody}>
-            <Text style={[s.alertTitle, { color: c.text }]}>{t(alert.titleKey)}</Text>
-            <Text style={[s.alertDesc, { color: c.textSecondary }]}>{t(alert.descKey, alert.descParams)}</Text>
-          </View>
-          <Text style={[s.alertTime, { color: c.textMuted }]}>{formatAgo(alert.timeValue)}</Text>
-        </View>
-      ))}
-
       {/* Settings */}
       <SectionLabel label={t('settings')} color={c.textMuted} />
       <View style={[s.settingsCard, { backgroundColor: c.surface, borderColor: c.border }]}>
@@ -284,7 +252,7 @@ export default function ProfileScreen() {
           right={
             <TouchableOpacity onPress={handleLanguageToggle} activeOpacity={0.7}>
               <Text style={[s.settingsValue, { color: c.textMuted }]}>
-                {language === 'en' ? 'English' : 'Polski'}
+                {t(LANG_I18N_KEY[language])}
               </Text>
             </TouchableOpacity>
           }
@@ -312,12 +280,19 @@ export default function ProfileScreen() {
         
       </View>
 
+      <View style={s.aboutBlock}>
+        <Logo theme="auto" variant="symbol" size={56} />
+        <Text style={[s.aboutVersion, { color: c.textMuted }]}>
+          {`DriveMind v${Constants.expoConfig?.version ?? '1.0.0'}`}
+        </Text>
+      </View>
+
       <TouchableOpacity
         style={s.signOutBtn}
         activeOpacity={0.7}
         onPress={async () => {
           Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
-          await signOutGoogle()
+          await signOutFirebase()
           authSignOut()
         }}
       >
@@ -399,12 +374,6 @@ const s = StyleSheet.create({
   vehicleCard: { flex: 1, height: 72, borderWidth: 1, borderRadius: 12, alignItems: 'center', justifyContent: 'center', gap: 6 },
   vehicleLabel: { fontSize: 12, fontFamily: fonts.medium },
   fuelInput: { height: 48, borderWidth: 1, borderRadius: 10, paddingHorizontal: 14, fontSize: 15, fontFamily: fonts.regular, marginBottom: 16 },
-  alertCard: { flexDirection: 'row', alignItems: 'flex-start', borderWidth: 1, borderRadius: 10, padding: 12, marginBottom: 8, gap: 10 },
-  alertDot: { width: 8, height: 8, borderRadius: 4, marginTop: 4, flexShrink: 0 },
-  alertBody: { flex: 1 },
-  alertTitle: { fontSize: 14, fontWeight: '500', fontFamily: fonts.medium, marginBottom: 2 },
-  alertDesc: { fontSize: 13, fontFamily: fonts.regular },
-  alertTime: { fontSize: 11, fontFamily: fonts.regular },
   settingsCard: { borderWidth: 1, borderRadius: 12, marginBottom: 20, overflow: 'hidden' },
   settingsRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 14, paddingHorizontal: 16, gap: 12 },
   settingsLabel: { flex: 1, fontSize: 15, fontFamily: fonts.regular },
@@ -412,6 +381,8 @@ const s = StyleSheet.create({
   settingsValue: { fontSize: 14, fontFamily: fonts.regular },
   themeToggle: { paddingHorizontal: 12, paddingVertical: 5, borderRadius: 10 },
   themeToggleText: { fontSize: 13, fontFamily: fonts.medium },
+  aboutBlock: { alignItems: 'center', marginTop: 8, marginBottom: 4, gap: 10 },
+  aboutVersion: { fontSize: 12, fontFamily: fonts.regular },
   signOutBtn: { paddingVertical: 16, alignItems: 'center' },
   signOutText: { fontSize: 14, fontFamily: fonts.medium },
 })

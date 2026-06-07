@@ -13,9 +13,11 @@ import {
   ScrollView,
   Linking,
   NativeModules,
+  TouchableOpacity,
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useTranslation } from 'react-i18next'
+import { useNavigation } from '@react-navigation/native'
 import * as Location from 'expo-location'
 import * as Haptics from 'expo-haptics'
 import { MaterialCommunityIcons, Feather } from '@expo/vector-icons'
@@ -49,6 +51,8 @@ import { triggerScraperWindow } from '../../services/driverIngestBridge'
 import { requestAllPermissions } from '../../services/permissionManager'
 import { useDriverSessionStore } from '../../store/driverSessionStore'
 import { useDriverIngestStore } from '../../store/driverIngestStore'
+import { useAuthStore } from '../../store/authStore'
+import { syncOrderParsingGate } from '../../services/subscriptionGate'
 import { fonts } from '../../theme/typography'
 import { useTheme, type AppColors } from '../../theme/theme'
 import { computeProfitability } from '@drivemind/shared'
@@ -56,7 +60,6 @@ import { computeProfitability } from '@drivemind/shared'
 import { MAP_STYLE_DARK, MAP_STYLE_LIGHT } from '../../map/mapStyles'
 import AnimatedButton from '../../components/AnimatedButton'
 import Logo from '../../components/common/Logo'
-import { emitQaMockOrderEvent } from '../../services/qaMockOrder'
 
 const GOAL_RING_SIZE = 54
 const GOAL_RING_STROKE = 5
@@ -129,6 +132,7 @@ function dynamicNavZoom(speedMps: number | null, distToManeuverM: number, perspe
 export default function DashboardScreen() {
   const { t } = useTranslation()
   const insets = useSafeAreaInsets()
+  const navigation = useNavigation<any>()
   const { colors: c, isDark } = useTheme()
   const DASHBOARD_ISOLATION_MODE = false
   const NUCLEAR_DISABLE_NATIVE_MAPS = false
@@ -146,10 +150,10 @@ export default function DashboardScreen() {
         }}
       >
         <Text style={{ color: c.text, fontSize: 20, fontFamily: fonts.semiBold, marginBottom: 8 }}>
-          Dashboard Isolation Mode
+          {t('dashboard_isolation_title')}
         </Text>
         <Text style={{ color: c.textSecondary, fontSize: 14, textAlign: 'center' }}>
-          Map Hidden. Complex Animated and navigation map layers are temporarily disabled.
+          {t('dashboard_isolation_body')}
         </Text>
         <Text style={{ color: c.textMuted, fontSize: 12, textAlign: 'center', marginTop: 12 }}>
           {t('ride')}
@@ -168,7 +172,7 @@ export default function DashboardScreen() {
     shiftStats, dailyGoal, isNavigating, navigationPhase, deliveryPhase, routePolyline,
     currentStep, routeSteps, routeDuration, routeDurationSeconds, pendingConfirmation,
     activeOrders, setPendingConfirmation,
-    confirmOrder, rejectOrder,
+    confirmOrder, rejectOrder, dismissOrder,
     updateNavigationPhase, stopNavigation, recomputeNavigationTarget, updateNavigationRoute,
     startShiftManually,
   } = useOrdersStore()
@@ -177,6 +181,17 @@ export default function DashboardScreen() {
   const isDriverOnline = useDriverSessionStore((s) => s.isOnline)
   const setIsDriverOnline = useDriverSessionStore((s) => s.setIsOnline)
   const activeRide = useDriverIngestStore((s) => s.activeRide)
+  const dismissActiveRide = useDriverIngestStore((s) => s.dismissActiveRide)
+  const removeIngestOffer = useDriverIngestStore((s) => s.removeOffer)
+  const isSearchBlocked = useAuthStore((s) => s.isSearchBlocked)
+
+  const openPaywall = useCallback(() => {
+    navigation.navigate('Paywall')
+  }, [navigation])
+
+  useEffect(() => {
+    syncOrderParsingGate()
+  }, [isSearchBlocked])
 
   // Derived shift values — declared HERE so they are in scope for all useMemo/useCallback
   // hooks below. Declaring them after useMemo calls puts them in the TDZ (temporal dead zone)
@@ -222,14 +237,16 @@ export default function DashboardScreen() {
     if (!activeRide) return null
     const parsedPrice = Number.parseFloat((activeRide.price ?? '').replace(',', '.').replace(/[^\d.]/g, ''))
     const earnings = Number.isFinite(parsedPrice) ? parsedPrice : 0
+    const distParsed = Number.parseFloat((activeRide.distanceKm ?? '').replace(',', '.').replace(/[^\d.]/g, ''))
+    const etaParsed = Number.parseInt((activeRide.etaMin ?? '').replace(/[^\d]/g, ''), 10)
     return {
       id: activeRide.id,
       platform: activeRide.platform === 'unknown' ? 'uber' : activeRide.platform,
-      pickupAddress: '—',
+      pickupAddress: activeRide.pickup?.trim() || '—',
       dropoffAddress: activeRide.destination ?? activeRide.text ?? '—',
       earnings,
-      distanceKm: 5,
-      durationMin: 15,
+      distanceKm: Number.isFinite(distParsed) && distParsed > 0 ? distParsed : 5,
+      durationMin: Number.isFinite(etaParsed) && etaParsed > 0 ? etaParsed : 15,
       deadrunKm: 0,
       pickupLat: 50.0614,
       pickupLng: 19.9366,
@@ -244,9 +261,10 @@ export default function DashboardScreen() {
 
   const sheetMode = useMemo(() => {
     if (!isDriverOnline) return 'off_air' as const
+    if (isSearchBlocked && !hasSuggestedOrder) return 'blocked' as const
     if (!hasSuggestedOrder) return 'searching' as const
     return 'order' as const
-  }, [isDriverOnline, hasSuggestedOrder])
+  }, [isDriverOnline, isSearchBlocked, hasSuggestedOrder])
 
   const sheetHeight = sheetMode === 'order' ? 148 : sheetMode === 'off_air' ? 92 : 74
   const mapBottomPadding = sheetHeight + insets.bottom + 10
@@ -328,7 +346,7 @@ export default function DashboardScreen() {
     let headingSub: { remove: () => void } | null = null
     ;(async () => {
       try {
-        const NUCLEAR_DISABLE_GOOGLE_LOCATION_CALLS = true
+        const NUCLEAR_DISABLE_GOOGLE_LOCATION_CALLS = false
         if (NUCLEAR_DISABLE_GOOGLE_LOCATION_CALLS) return
         await new Promise((resolve) => setTimeout(resolve, 500))
         if (AppState.currentState !== 'active') return
@@ -409,10 +427,23 @@ export default function DashboardScreen() {
     if (!suggestion) return
     console.log('[DriveMind Nav]: accept tapped', { orderId: suggestion.id })
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+    if (activeRide && !activeOrder) {
+      removeIngestOffer(activeRide.id)
+    }
     if (Platform.OS === 'android') triggerScraperWindow()
     pendingOrderRef.current = suggestion
     openPlatformDeepLink(suggestion?.platform ?? '')
-  }, [suggestion])
+  }, [suggestion, activeRide, activeOrder, removeIngestOffer])
+
+  const handleDismissSuggestion = useCallback(() => {
+    if (!suggestion) return
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
+    if (activeOrder) {
+      dismissOrder(suggestion.id)
+    } else if (activeRide) {
+      dismissActiveRide()
+    }
+  }, [suggestion, activeOrder, activeRide, dismissOrder, dismissActiveRide])
 
   const handleConfirmYes = useCallback(() => {
     if (!pendingConfirmation) return
@@ -439,7 +470,7 @@ export default function DashboardScreen() {
         const message = e instanceof Error ? e.message : String(e)
         console.error('[DriveMind Nav]: confirmOrder / getDirections failed', e)
         if (AppState.currentState === 'active') {
-          Alert.alert('Directions', message)
+          Alert.alert(t('directions_alert_title'), message)
         }
       }
     })()
@@ -775,10 +806,6 @@ export default function DashboardScreen() {
     () => ordersStoreActivePlatforms(activeOrders),
     [activeOrders],
   )
-  const activeDeliveryOrders = useMemo(
-    () => (role === 'courier' ? activeOrders.filter((o) => o.status === 'dropoff') : []),
-    [activeOrders, role],
-  )
 
   const handleSwitchPlatform = useCallback(async (platform: string) => {
     const normalized = platform.toLowerCase()
@@ -815,18 +842,6 @@ export default function DashboardScreen() {
     } catch (e) {
       console.warn('[DriveMind] fast switch failed', { platform: normalized, e })
     }
-  }, [])
-
-  const handleQaInjectMockOrder = useCallback(() => {
-    if (!__DEV__) return
-    Alert.alert(
-      'DriveMind QA',
-      'Inject mock onOrderScraped (35,50 PLN · 8 km) to exercise overlay math without Uber?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Inject', onPress: () => emitQaMockOrderEvent() },
-      ],
-    )
   }, [])
 
   return (
@@ -866,7 +881,6 @@ export default function DashboardScreen() {
             destPulse={destPulse}
             nearDestination={nearDestination}
             isDark={isDark}
-            activeDeliveryOrders={activeDeliveryOrders}
           />
         )}
         {isNavigating && Platform.OS !== 'web' && (
@@ -897,15 +911,13 @@ export default function DashboardScreen() {
 
       {/* Header */}
       {!isNavigating && (
-        <View style={[s.header, { top: insets.top + 16 }]}>
+        <View style={[s.header, { top: insets.top + 8, paddingLeft: 4 }]}>
           <AnimatedButton
-            style={s.headerLogoWrap}
+            style={s.headerLogoBtn}
             activeOpacity={1}
-            delayLongPress={650}
-            onLongPress={handleQaInjectMockOrder}
             accessibilityLabel="DriveMind"
           >
-            <Logo size={32} />
+            <Logo theme="auto" variant="full" size={32} style={s.headerLogoImage} />
           </AnimatedButton>
           <View style={[s.rolePill, { backgroundColor: c.surface, borderColor: c.border }]}>
             <MaterialCommunityIcons name={role === 'courier' ? 'bike' : 'car-outline'} size={14} color={c.secondary} />
@@ -914,30 +926,24 @@ export default function DashboardScreen() {
         </View>
       )}
 
-      {activeOrderPlatforms.length > 0 && (
-        <View pointerEvents="box-none" style={[s.quickSwitchWrap, { bottom: mapBottomPadding + 12 }]}>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={s.quickSwitchContent}
-          >
-            {activeOrderPlatforms.map(({ orderId, platform }, idx) => (
-              <Reanimated.View
-                key={`quick-wrap-${orderId}`}
-                entering={ElasticInRight.delay(idx * 45)}
+      {isNavigating && activeOrderPlatforms.length > 0 && (
+        <View pointerEvents="box-none" style={s.quickSwitchColumn}>
+          {activeOrderPlatforms.map(({ orderId, platform }, idx) => (
+            <Reanimated.View
+              key={`quick-wrap-${orderId}`}
+              entering={ElasticInRight.delay(idx * 45)}
+            >
+              <AnimatedButton
+                style={[s.quickSwitchBtn, { backgroundColor: c.surface, borderColor: c.separator }]}
+                activeOpacity={0.85}
+                onPress={() => {
+                  void handleSwitchPlatform(platform)
+                }}
               >
-                <AnimatedButton
-                  style={[s.quickSwitchBtn, { backgroundColor: c.surface, borderColor: c.separator }]}
-                  activeOpacity={0.85}
-                  onPress={() => {
-                    void handleSwitchPlatform(platform)
-                  }}
-                >
-                  <PlatformIcon platform={platform as any} size={18} active />
-                </AnimatedButton>
-              </Reanimated.View>
-            ))}
-          </ScrollView>
+                <PlatformIcon platform={platform as any} size={18} active />
+              </AnimatedButton>
+            </Reanimated.View>
+          ))}
         </View>
       )}
 
@@ -995,23 +1001,42 @@ export default function DashboardScreen() {
               </View>
             </View>
 
-            <AnimatedButton
-              style={[s.acceptBtn, { backgroundColor: c.primary }]}
-              activeOpacity={0.85}
-              onPress={handleAcceptSuggestion}
-            >
-              <Text style={[s.acceptBtnText, { color: c.textInverse }]}>
-                {t('open_platform', {
-                  platform: (suggestion.platform ?? '').toString().slice(0, 1).toUpperCase() +
-                    (suggestion.platform ?? '').toString().slice(1),
-                })}
-              </Text>
-            </AnimatedButton>
+            <View style={s.orderActionsRow}>
+              <AnimatedButton
+                style={[s.dismissBtn, { backgroundColor: c.danger }]}
+                activeOpacity={0.85}
+                onPress={handleDismissSuggestion}
+                accessibilityLabel={t('driver_ingest_dismiss')}
+              >
+                <Feather name="x" size={20} color={c.textInverse} />
+              </AnimatedButton>
+              <AnimatedButton
+                style={[s.acceptBtn, { backgroundColor: c.primary }]}
+                activeOpacity={0.85}
+                onPress={handleAcceptSuggestion}
+              >
+                <Text style={[s.acceptBtnText, { color: c.textInverse }]}>
+                  {t('open_platform', {
+                    platform: (suggestion.platform ?? '').toString().slice(0, 1).toUpperCase() +
+                      (suggestion.platform ?? '').toString().slice(1),
+                  })}
+                </Text>
+              </AnimatedButton>
+            </View>
           </>
+        ) : sheetMode === 'blocked' ? (
+          <TouchableOpacity
+            style={[s.searchBar, s.searchBarBlocked, { borderColor: c.separator }]}
+            activeOpacity={0.85}
+            onPress={openPaywall}
+          >
+            <Feather name="lock" size={16} color={c.danger} />
+            <Text style={[s.searchText, { color: c.textSecondary }]}>{t('searchStatusBlocked')}</Text>
+          </TouchableOpacity>
         ) : sheetMode === 'searching' ? (
           <View style={[s.searchBar, { borderColor: c.separator }]}>
             <ActivityIndicator size="small" color={c.primary} />
-            <Text style={[s.searchText, { color: c.textSecondary }]}>{t('searching_orders')}</Text>
+            <Text style={[s.searchText, { color: c.textSecondary }]}>{t('searchStatusActive')}</Text>
           </View>
         ) : (
           <View style={s.offAirRow}>
@@ -1099,22 +1124,17 @@ export default function DashboardScreen() {
 const s = StyleSheet.create({
   root: { flex: 1, alignSelf: 'stretch', width: '100%' },
   mapFill: { flex: 1, width: '100%', alignSelf: 'stretch' },
-  header: { position: 'absolute', left: 20, right: 20, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end' },
-  headerLogoWrap: { position: 'absolute', left: 0, right: 0, alignItems: 'center' },
+  header: { position: 'absolute', left: 20, right: 20, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  headerLogoBtn: { paddingVertical: 4, paddingRight: 8, flexShrink: 0, alignItems: 'flex-start' },
+  headerLogoImage: { height: 32, width: undefined, maxWidth: 168 },
   rolePill: { flexDirection: 'row', alignItems: 'center', gap: 6, borderWidth: 1, borderRadius: 20, paddingHorizontal: 12, paddingVertical: 5 },
   rolePillText: { fontSize: 12, fontFamily: fonts.medium, textTransform: 'capitalize' },
-  quickSwitchWrap: {
+  quickSwitchColumn: {
     position: 'absolute',
-    left: 18,
-    right: 18,
+    left: 14,
+    top: '38%',
     zIndex: 40,
-    alignItems: 'center',
-  },
-  quickSwitchContent: {
     gap: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 24,
   },
   quickSwitchBtn: {
     width: 40,
@@ -1181,7 +1201,25 @@ const s = StyleSheet.create({
     fontSize: 12,
     fontFamily: fonts.medium,
   },
-  acceptBtn: { height: 40, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  orderActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  dismissBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  acceptBtn: {
+    flex: 1,
+    height: 40,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   acceptBtnText: { fontSize: 15, fontWeight: '600', fontFamily: fonts.semiBold },
   searchBar: {
     flexDirection: 'row',
@@ -1192,6 +1230,10 @@ const s = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 14,
     marginTop: 6,
+  },
+  searchBarBlocked: {
+    borderColor: '#FCA5A5',
+    backgroundColor: '#FEF2F2',
   },
   searchText: { fontSize: 13, fontFamily: fonts.medium },
   offAirRow: {

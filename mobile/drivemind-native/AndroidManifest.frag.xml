@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Merged into the app manifest by plugins/withDriveMindNative.js (withAndroidManifest).
+  Source of truth for DriveMind background services and package visibility.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+  <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"
+      tools:ignore="ProtectedPermissions"
+      xmlns:tools="http://schemas.android.com/tools" />
+
+  <queries>
+    <package android:name="com.ubercab.driver" />
+    <package android:name="com.bolt.driver" />
+    <package android:name="com.bolt.delivery" />
+    <package android:name="com.glovoapp.courier" />
+    <package android:name="com.wolt.handler" />
+  </queries>
+
+  <application>
+    <service
+        android:name=".DriveMindScraperService"
+        android:exported="true"
+        android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+        android:label="@string/app_name">
+      <intent-filter>
+        <action android:name="android.accessibilityservice.AccessibilityService" />
+      </intent-filter>
+      <meta-data
+          android:name="android.accessibilityservice"
+          android:resource="@xml/accessibility_service_config" />
+    </service>
+
+    <service
+        android:name=".DriveMindNotificationService"
+        android:exported="true"
+        android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+      <intent-filter>
+        <action android:name="android.service.notification.NotificationListenerService" />
+      </intent-filter>
+    </service>
+  </application>
+
+</manifest>
