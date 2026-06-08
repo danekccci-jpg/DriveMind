@@ -32,7 +32,9 @@ android/keystore.properties
 *.p12
 *.key
 *.pem
-.env*
+.env
+.env.*
+!.env.example
 eas.json
 
 # --- SYSTEM & MEDIA ---

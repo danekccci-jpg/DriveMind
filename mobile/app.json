@@ -17,21 +17,14 @@
         "UIBackgroundModes": [
           "location"
         ]
-      },
-      "config": {
-        "googleMapsApiKey": "REDACTED_GOOGLE_MAPS_KEY"
       }
     },
     "android": {
       "package": "com.guessxx.drivemind",
+      "versionCode": 2,
       "adaptiveIcon": {
         "foregroundImage": "./assets/logo/logo-symbol-light.png",
         "backgroundColor": "#F5F5F7"
-      },
-      "config": {
-        "googleMaps": {
-          "apiKey": "REDACTED_GOOGLE_MAPS_KEY"
-        }
       },
       "permissions": [
         "ACCESS_FINE_LOCATION",
@@ -48,6 +41,7 @@
     },
     "plugins": [
       "./plugins/withDriveMindNative",
+      "./plugins/withDriveMindIcons",
       [
         "expo-location",
         {
@@ -57,24 +51,9 @@
         }
       ],
       "expo-font",
-      [
-        "@react-native-google-signin/google-signin",
-        {
-          "iosUrlScheme": "com.googleusercontent.apps.389029600639-bn15t2ltvor8u2rcgbb4sdm8bs565ec8"
-        }
-      ]
+      "@react-native-google-signin/google-signin"
     ],
     "extra": {
-      "backendUrl": "",
-      "googleMapsApiKey": "REDACTED_GOOGLE_MAPS_KEY",
-      "firebase": {
-        "apiKey": "REDACTED_FIREBASE_API_KEY",
-        "authDomain": "drivemind-d4994.firebaseapp.com",
-        "projectId": "drivemind-d4994",
-        "storageBucket": "drivemind-d4994.firebasestorage.app",
-        "messagingSenderId": "389029600639",
-        "appId": "1:389029600639:android:7636d1bd1e8117dbbdce4a"
-      },
       "dataConnect": {
         "serviceId": "drivemind",
         "connectorId": "default",

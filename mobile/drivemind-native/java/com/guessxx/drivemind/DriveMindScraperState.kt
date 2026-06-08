@@ -8,11 +8,13 @@ import java.util.concurrent.atomic.AtomicLong
  */
 object DriveMindScraperState {
   private val scanUntilMs = AtomicLong(0L)
-  private val orderParsingEnabled = java.util.concurrent.atomic.AtomicBoolean(true)
+  private val orderParsingEnabled = java.util.concurrent.atomic.AtomicBoolean(false)
 
   fun setOrderParsingEnabled(enabled: Boolean) {
     orderParsingEnabled.set(enabled)
-    if (!enabled) scanUntilMs.set(0L)
+    if (!enabled) {
+      scanUntilMs.set(0L)
+    }
   }
 
   fun isOrderParsingEnabled(): Boolean = orderParsingEnabled.get()

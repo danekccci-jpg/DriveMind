@@ -3,6 +3,7 @@ import {
   getDoc,
   setDoc,
   updateDoc,
+  deleteDoc,
   increment,
   Timestamp,
   type DocumentData,
@@ -78,6 +79,10 @@ async function maybeStartTrial(uid: string, user: FirestoreUser): Promise<Firest
   const trialEndsAt = Timestamp.fromMillis(Date.now() + TRIAL_MS)
   await updateDoc(usersRef(uid), { trialEndsAt })
   return { ...user, trialEndsAt: trialEndsAt.toDate().toISOString() }
+}
+
+export async function deleteUserFirestoreDoc(uid: string): Promise<void> {
+  await deleteDoc(usersRef(uid))
 }
 
 export async function fetchUserDoc(uid: string): Promise<FirestoreUser | null> {

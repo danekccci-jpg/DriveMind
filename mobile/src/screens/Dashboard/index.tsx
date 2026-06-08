@@ -24,10 +24,10 @@ import { MaterialCommunityIcons, Feather } from '@expo/vector-icons'
 import Svg, { Circle } from 'react-native-svg'
 import Reanimated, { SlideInRight } from 'react-native-reanimated'
 
-import MapView, { Marker, MarkerAnimated, AnimatedRegion, PROVIDER_GOOGLE } from '../../components/MapViewWeb'
-import { NavigationMapLayers } from '../../components/navigation/NavigationMapLayers'
+import { AnimatedRegion } from '../../components/MapViewWeb'
 import { WazeDirectionCard } from './WazeDirectionCard'
-import { PlayerNavMarker } from '../../components/navigation/PlayerNavMarker'
+import { DashboardMap } from './DashboardMap'
+import { DashboardBottomSheet } from './DashboardBottomSheet'
 import { RouteSummary } from '../../components/RouteSummary'
 import { formatNavDistanceLine } from '../../navigation/navigationFormatting'
 import { useNavigationSettingsStore } from '../../store/navigationSettingsStore'
@@ -50,6 +50,7 @@ import { navigationEngine } from '../../services/navigationEngine'
 import { triggerScraperWindow } from '../../services/driverIngestBridge'
 import { requestAllPermissions } from '../../services/permissionManager'
 import { useDriverSessionStore } from '../../store/driverSessionStore'
+import { requestShiftAccessibilityDisclosure } from '../../services/accessibilityDisclosure'
 import { useDriverIngestStore } from '../../store/driverIngestStore'
 import { useAuthStore } from '../../store/authStore'
 import { syncOrderParsingGate } from '../../services/subscriptionGate'
@@ -72,28 +73,10 @@ const KRAKOW_REGION = {
   longitudeDelta: 0.06,
 }
 
-/** Short street line for compact Ride card (first segment before comma). */
-function rideStreetLine(full: string): string {
-  const s = full?.trim() || '—'
-  const i = s.indexOf(',')
-  return i > 0 ? s.slice(0, i).trim() : s
-}
-
 function ordersStoreActivePlatforms(orders: Order[]): { orderId: string; platform: string }[] {
   return orders
     .map((order) => ({ orderId: order.id, platform: order.platform?.toLowerCase?.() ?? '' }))
     .filter((row): row is { orderId: string; platform: string } => ['uber', 'bolt', 'wolt', 'glovo'].includes(row.platform))
-}
-
-function alpha(hex: string, a: number): string {
-  const m = hex.trim().replace('#', '')
-  const full = m.length === 3 ? `${m[0]}${m[0]}${m[1]}${m[1]}${m[2]}${m[2]}` : m
-  const r = Number.parseInt(full.slice(0, 2), 16)
-  const g = Number.parseInt(full.slice(2, 4), 16)
-  const b = Number.parseInt(full.slice(4, 6), 16)
-  return Number.isFinite(r) && Number.isFinite(g) && Number.isFinite(b)
-    ? `rgba(${r},${g},${b},${a})`
-    : `rgba(255,255,255,${a})`
 }
 
 function speedKmh(speedMps: number | null): number {
@@ -180,7 +163,22 @@ export default function DashboardScreen() {
   const navigationOrderId = useOrdersStore((s) => s.navigationOrderId)
   const isDriverOnline = useDriverSessionStore((s) => s.isOnline)
   const setIsDriverOnline = useDriverSessionStore((s) => s.setIsOnline)
-  const activeRide = useDriverIngestStore((s) => s.activeRide)
+  const setAccessibilityConsentGiven = useDriverSessionStore((s) => s.setAccessibilityConsentGiven)
+
+  const activeRideSnapshot = useDriverIngestStore((s) => {
+    const r = s.activeRide
+    if (!r) return null
+    return {
+      id: r.id,
+      platform: r.platform,
+      price: r.price,
+      pickup: r.pickup,
+      destination: r.destination,
+      text: r.text,
+      distanceKm: r.distanceKm,
+      etaMin: r.etaMin,
+    }
+  })
   const dismissActiveRide = useDriverIngestStore((s) => s.dismissActiveRide)
   const removeIngestOffer = useDriverIngestStore((s) => s.removeOffer)
   const isSearchBlocked = useAuthStore((s) => s.isSearchBlocked)
@@ -234,16 +232,16 @@ export default function DashboardScreen() {
   const routePolylineSafe = routePolyline ?? []
   const suggestion = useMemo(() => {
     if (activeOrder) return activeOrder
-    if (!activeRide) return null
-    const parsedPrice = Number.parseFloat((activeRide.price ?? '').replace(',', '.').replace(/[^\d.]/g, ''))
+    if (!activeRideSnapshot) return null
+    const parsedPrice = Number.parseFloat((activeRideSnapshot.price ?? '').replace(',', '.').replace(/[^\d.]/g, ''))
     const earnings = Number.isFinite(parsedPrice) ? parsedPrice : 0
-    const distParsed = Number.parseFloat((activeRide.distanceKm ?? '').replace(',', '.').replace(/[^\d.]/g, ''))
-    const etaParsed = Number.parseInt((activeRide.etaMin ?? '').replace(/[^\d]/g, ''), 10)
+    const distParsed = Number.parseFloat((activeRideSnapshot.distanceKm ?? '').replace(',', '.').replace(/[^\d.]/g, ''))
+    const etaParsed = Number.parseInt((activeRideSnapshot.etaMin ?? '').replace(/[^\d]/g, ''), 10)
     return {
-      id: activeRide.id,
-      platform: activeRide.platform === 'unknown' ? 'uber' : activeRide.platform,
-      pickupAddress: activeRide.pickup?.trim() || '—',
-      dropoffAddress: activeRide.destination ?? activeRide.text ?? '—',
+      id: activeRideSnapshot.id,
+      platform: activeRideSnapshot.platform === 'unknown' ? 'uber' : activeRideSnapshot.platform,
+      pickupAddress: activeRideSnapshot.pickup?.trim() || '—',
+      dropoffAddress: activeRideSnapshot.destination ?? activeRideSnapshot.text ?? '—',
       earnings,
       distanceKm: Number.isFinite(distParsed) && distParsed > 0 ? distParsed : 5,
       durationMin: Number.isFinite(etaParsed) && etaParsed > 0 ? etaParsed : 15,
@@ -256,7 +254,7 @@ export default function DashboardScreen() {
       profitLabel: 'NEUTRAL',
       status: 'pickup',
     } as Order
-  }, [activeOrder, activeRide])
+  }, [activeOrder, activeRideSnapshot])
   const hasSuggestedOrder = !!suggestion
 
   const sheetMode = useMemo(() => {
@@ -344,27 +342,33 @@ export default function DashboardScreen() {
   useEffect(() => {
     let sub: Location.LocationSubscription | null = null
     let headingSub: { remove: () => void } | null = null
-    ;(async () => {
+    let cancelled = false
+
+    const stopWatching = () => {
+      sub?.remove()
+      headingSub?.remove()
+      sub = null
+      headingSub = null
+    }
+
+    const startWatching = async () => {
+      if (cancelled || AppState.currentState !== 'active' || sub != null) return
       try {
         const NUCLEAR_DISABLE_GOOGLE_LOCATION_CALLS = false
         if (NUCLEAR_DISABLE_GOOGLE_LOCATION_CALLS) return
         await new Promise((resolve) => setTimeout(resolve, 500))
-        if (AppState.currentState !== 'active') return
-        // NUCLEAR DEBUG: disabled native location permission path.
-        // const { status } = await Location.requestForegroundPermissionsAsync()
+        if (cancelled || AppState.currentState !== 'active') return
         const { status } = await Location.requestForegroundPermissionsAsync()
-        if (status !== 'granted') return
-        // NUCLEAR DEBUG: disabled native location reads.
-        // const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced })
+        if (status !== 'granted' || cancelled) return
         const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced })
+        if (cancelled) return
         const first: LatLng = { latitude: loc.coords.latitude, longitude: loc.coords.longitude }
         setUserLocation(first)
         lastPosForBearingRef.current = first
         setUserSpeedMps(loc.coords.speed ?? null)
         const h = loc.coords.heading
         if (h != null && h >= 0) setUserHeadingDeg(h)
-        // NUCLEAR DEBUG: disabled native location subscription.
-        // sub = await Location.watchPositionAsync(...)
+        if (cancelled || AppState.currentState !== 'active') return
         sub = await Location.watchPositionAsync(
           {
             accuracy: Location.Accuracy.Balanced,
@@ -393,10 +397,18 @@ export default function DashboardScreen() {
       } catch (e) {
         console.warn('Location error:', e)
       }
-    })()
+    }
+
+    void startWatching()
+    const appSub = AppState.addEventListener('change', (next) => {
+      if (next === 'active') void startWatching()
+      else stopWatching()
+    })
+
     return () => {
-      sub?.remove()
-      headingSub?.remove()
+      cancelled = true
+      stopWatching()
+      appSub.remove()
     }
   }, [])
 
@@ -427,23 +439,23 @@ export default function DashboardScreen() {
     if (!suggestion) return
     console.log('[DriveMind Nav]: accept tapped', { orderId: suggestion.id })
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
-    if (activeRide && !activeOrder) {
-      removeIngestOffer(activeRide.id)
+    if (activeRideSnapshot && !activeOrder) {
+      removeIngestOffer(activeRideSnapshot.id)
     }
     if (Platform.OS === 'android') triggerScraperWindow()
     pendingOrderRef.current = suggestion
     openPlatformDeepLink(suggestion?.platform ?? '')
-  }, [suggestion, activeRide, activeOrder, removeIngestOffer])
+  }, [suggestion, activeRideSnapshot, activeOrder, removeIngestOffer])
 
   const handleDismissSuggestion = useCallback(() => {
     if (!suggestion) return
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
     if (activeOrder) {
       dismissOrder(suggestion.id)
-    } else if (activeRide) {
+    } else if (activeRideSnapshot) {
       dismissActiveRide()
     }
-  }, [suggestion, activeOrder, activeRide, dismissOrder, dismissActiveRide])
+  }, [suggestion, activeOrder, activeRideSnapshot, dismissOrder, dismissActiveRide])
 
   const handleConfirmYes = useCallback(() => {
     if (!pendingConfirmation) return
@@ -807,6 +819,30 @@ export default function DashboardScreen() {
     [activeOrders],
   )
 
+  const mapInitialRegion = useMemo(
+    () =>
+      userLocation
+        ? { ...userLocation, latitudeDelta: 0.02, longitudeDelta: 0.02 }
+        : KRAKOW_REGION,
+    [userLocation?.latitude, userLocation?.longitude],
+  )
+
+  const doStartShift = useCallback(() => {
+    startShiftManually()
+    setIsDriverOnline(true)
+  }, [startShiftManually, setIsDriverOnline])
+
+  const handleStartShift = useCallback(async () => {
+    const canProceed =
+      Platform.OS !== 'android' ? true : await requestShiftAccessibilityDisclosure()
+    if (!canProceed) {
+      setIsDriverOnline(false)
+      return
+    }
+    setAccessibilityConsentGiven(true)
+    doStartShift()
+  }, [doStartShift, setAccessibilityConsentGiven, setIsDriverOnline])
+
   const handleSwitchPlatform = useCallback(async (platform: string) => {
     const normalized = platform.toLowerCase()
     const packageByPlatform: Record<string, string> = {
@@ -848,52 +884,26 @@ export default function DashboardScreen() {
     <View style={[s.root, { backgroundColor: c.tabBar }]}>
       <View style={s.mapFill}>
       {!NUCLEAR_DISABLE_NATIVE_MAPS && isMapReady && (
-      <MapView
-        key={isDark ? 'map-dark' : 'map-light'}
-        ref={mapRef}
-        style={StyleSheet.absoluteFill}
-        provider={PROVIDER_GOOGLE}
-        mapType="standard"
-        googleRenderer={Platform.OS === 'android' ? 'LEGACY' : undefined}
-        userInterfaceStyle="light"
-        customMapStyle={isMapStyleReady ? mapStyleForMap : undefined}
+      <DashboardMap
+        mapRef={mapRef}
+        isDark={isDark}
+        isMapStyleReady={isMapStyleReady}
+        mapStyleForMap={mapStyleForMap}
         onMapReady={onMapReady}
-        showsScale={false}
-        showsPointsOfInterests={false}
-        showsBuildings={false}
-        showsIndoors={false}
-        showsTraffic
-        // TEMP: disable native user-location dot while isolating mqt_v_native release crash.
+        isNavigating={isNavigating}
         showsUserLocation={!isNavigating && SHOWS_USER_LOCATION}
-        showsMyLocationButton={false}
-        compassEnabled={false}
-        zoomControlEnabled={false}
-        toolbarEnabled={false}
-        mapToolbarEnabled={false}
-        mapPadding={{ top: 0, right: 0, bottom: mapBottomPadding, left: 0 }}
-        initialRegion={userLocation ? { ...userLocation, latitudeDelta: 0.02, longitudeDelta: 0.02 } : KRAKOW_REGION}
-      >
-        {isNavigating && (
-          <NavigationMapLayers
-            trimmedPolyline={trimmedRoute}
-            destCoord={destCoordNav}
-            navigationPhase={navigationPhase}
-            destPulse={destPulse}
-            nearDestination={nearDestination}
-            isDark={isDark}
-          />
-        )}
-        {isNavigating && Platform.OS !== 'web' && (
-          <MarkerAnimated coordinate={animatedCoord} anchor={{ x: 0.5, y: 0.5 }} flat>
-            <PlayerNavMarker styleId={markerStyle} headingDeg={smoothHeading} />
-          </MarkerAnimated>
-        )}
-        {isNavigating && Platform.OS === 'web' && userLocation && (
-          <Marker coordinate={userLocation} anchor={{ x: 0.5, y: 0.5 }} flat>
-            <PlayerNavMarker styleId={markerStyle} headingDeg={smoothHeading} />
-          </Marker>
-        )}
-      </MapView>
+        mapBottomPadding={mapBottomPadding}
+        initialRegion={mapInitialRegion}
+        trimmedRoute={trimmedRoute}
+        destCoordNav={destCoordNav}
+        navigationPhase={navigationPhase}
+        destPulse={destPulse}
+        nearDestination={nearDestination}
+        animatedCoord={animatedCoord}
+        markerStyle={markerStyle}
+        smoothHeading={smoothHeading}
+        userLocation={userLocation}
+      />
       )}
       </View>
 
@@ -972,87 +982,16 @@ export default function DashboardScreen() {
           />
         </View>
 
-        {sheetMode === 'order' && suggestion ? (
-          <>
-            <View style={s.orderRow}>
-              <PlatformIcon platform={suggestion.platform as any} size={24} active />
-              <View style={s.orderMid}>
-                <View style={s.orderTopLine}>
-                  {tierForSuggestion ? (
-                    <View
-                      style={[
-                        s.tierPill,
-                        {
-                          borderColor: tierForSuggestion.tierColor,
-                          backgroundColor: alpha(tierForSuggestion.tierColor, 0.14),
-                        },
-                      ]}
-                    >
-                      <Text style={[s.tierText, { color: tierForSuggestion.tierColor }]}>
-                        {tierForSuggestion.tierLabel}
-                      </Text>
-                    </View>
-                  ) : null}
-                  <Text style={[s.priceText, { color: c.text }]}>{`${(suggestion.earnings ?? 0).toFixed(0)} zł`}</Text>
-                </View>
-                <Text style={[s.addrLine, { color: c.textSecondary }]} numberOfLines={1} ellipsizeMode="tail">
-                  {`${rideStreetLine(suggestion.pickupAddress)} → ${rideStreetLine(suggestion.dropoffAddress)}`}
-                </Text>
-              </View>
-            </View>
-
-            <View style={s.orderActionsRow}>
-              <AnimatedButton
-                style={[s.dismissBtn, { backgroundColor: c.danger }]}
-                activeOpacity={0.85}
-                onPress={handleDismissSuggestion}
-                accessibilityLabel={t('driver_ingest_dismiss')}
-              >
-                <Feather name="x" size={20} color={c.textInverse} />
-              </AnimatedButton>
-              <AnimatedButton
-                style={[s.acceptBtn, { backgroundColor: c.primary }]}
-                activeOpacity={0.85}
-                onPress={handleAcceptSuggestion}
-              >
-                <Text style={[s.acceptBtnText, { color: c.textInverse }]}>
-                  {t('open_platform', {
-                    platform: (suggestion.platform ?? '').toString().slice(0, 1).toUpperCase() +
-                      (suggestion.platform ?? '').toString().slice(1),
-                  })}
-                </Text>
-              </AnimatedButton>
-            </View>
-          </>
-        ) : sheetMode === 'blocked' ? (
-          <TouchableOpacity
-            style={[s.searchBar, s.searchBarBlocked, { borderColor: c.separator }]}
-            activeOpacity={0.85}
-            onPress={openPaywall}
-          >
-            <Feather name="lock" size={16} color={c.danger} />
-            <Text style={[s.searchText, { color: c.textSecondary }]}>{t('searchStatusBlocked')}</Text>
-          </TouchableOpacity>
-        ) : sheetMode === 'searching' ? (
-          <View style={[s.searchBar, { borderColor: c.separator }]}>
-            <ActivityIndicator size="small" color={c.primary} />
-            <Text style={[s.searchText, { color: c.textSecondary }]}>{t('searchStatusActive')}</Text>
-          </View>
-        ) : (
-          <View style={s.offAirRow}>
-            <Text style={[s.offAirText, { color: c.textSecondary }]}>{t('off_air')}</Text>
-            <AnimatedButton
-              style={[s.startShiftBtn, { backgroundColor: c.primary }]}
-              activeOpacity={0.85}
-              onPress={() => {
-                startShiftManually()
-                setIsDriverOnline(true)
-              }}
-            >
-              <Text style={[s.startShiftText, { color: c.textInverse }]}>{t('start_shift')}</Text>
-            </AnimatedButton>
-          </View>
-        )}
+        <DashboardBottomSheet
+          sheetMode={sheetMode}
+          suggestion={suggestion}
+          tierForSuggestion={tierForSuggestion}
+          c={c}
+          onDismiss={handleDismissSuggestion}
+          onAccept={handleAcceptSuggestion}
+          onOpenPaywall={openPaywall}
+          onStartShift={handleStartShift}
+        />
       </View>
       {isShiftActive && <View pointerEvents="none" style={[s.minimalHudWrap, { top: insets.top + 18 }]}>
         <View style={[s.speedChip, { backgroundColor: c.surface, borderColor: c.separator }]}>

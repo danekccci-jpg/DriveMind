@@ -1,8 +1,16 @@
-import { GoogleAuthProvider, onAuthStateChanged, signInWithCredential, signOut, type User } from 'firebase/auth'
+import {
+  GoogleAuthProvider,
+  deleteUser,
+  onAuthStateChanged,
+  signInWithCredential,
+  signOut,
+  type User,
+} from 'firebase/auth'
 
 import { getFirebaseAuth } from '../config/firebase'
 import {
   applyUserSessionToStore,
+  deleteUserFirestoreDoc,
   syncUserSession,
   type FirestoreUser,
   type PaywallMode,
@@ -92,5 +100,35 @@ export async function signOutFirebase(): Promise<void> {
     await signOut(getFirebaseAuth())
   } catch {
     /* noop */
+  }
+}
+
+export type DeleteUserAccountResult =
+  | { kind: 'success' }
+  | { kind: 'requires-recent-login' }
+  | { kind: 'not-signed-in' }
+  | { kind: 'error'; error: unknown }
+
+function isRequiresRecentLoginError(error: unknown): boolean {
+  return (error as { code?: string } | undefined)?.code === 'auth/requires-recent-login'
+}
+
+export async function deleteUserAccount(): Promise<DeleteUserAccountResult> {
+  const auth = getFirebaseAuth()
+  const user = auth.currentUser
+  if (!user) return { kind: 'not-signed-in' }
+
+  const uid = user.uid
+  try {
+    await deleteUserFirestoreDoc(uid)
+    await deleteUser(user)
+    await signOutGoogle()
+    return { kind: 'success' }
+  } catch (error) {
+    if (isRequiresRecentLoginError(error)) {
+      return { kind: 'requires-recent-login' }
+    }
+    if (__DEV__) console.warn('[DriveMind] deleteUserAccount failed', error)
+    return { kind: 'error', error }
   }
 }

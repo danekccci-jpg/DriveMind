@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   View,
   Text,
@@ -6,6 +6,7 @@ import {
   ScrollView,
   TouchableOpacity,
   Switch,
+  Platform,
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useTranslation } from 'react-i18next'
@@ -18,6 +19,9 @@ import { useRoleStore } from '../../store/roleStore'
 import { fonts } from '../../theme/typography'
 import { useColors, type AppColors } from '../../theme/theme'
 import { ProfitLabel } from '../../engine/profitEngine'
+import { requestShiftAccessibilityDisclosure } from '../../services/accessibilityDisclosure'
+import { syncOrderParsingGate } from '../../services/subscriptionGate'
+import { useDriverSessionStore } from '../../store/driverSessionStore'
 
 type PlatformId = 'glovo' | 'uber' | 'bolt' | 'wolt'
 
@@ -45,6 +49,10 @@ export default function ShiftModeScreen() {
   const c = useColors()
   const role = useRoleStore((st) => st.role) ?? 'courier'
   const { shiftStats, orderHistory, dailyGoal, setDailyGoal, startShiftManually, endShiftManually } = useOrdersStore()
+  const setIsDriverOnline = useDriverSessionStore((s) => s.setIsOnline)
+  const setAccessibilityConsentGiven = useDriverSessionStore((s) => s.setAccessibilityConsentGiven)
+
+  const [shiftStarting, setShiftStarting] = useState(false)
 
   const platforms = role === 'taxi' ? TAXI_PLATFORMS : COURIER_PLATFORMS
   const isActive = shiftStats.startTime !== null
@@ -77,14 +85,37 @@ export default function ShiftModeScreen() {
   const ordersToGoal = Math.max(0, Math.ceil((dailyGoal - shiftStats.totalEarnings) / 20))
   const estMinutes = ordersToGoal * 18
 
-  const handleToggleShift = () => {
+  const handleToggleShift = useCallback(async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
     if (isActive) {
       endShiftManually()
+      setIsDriverOnline(false)
+      syncOrderParsingGate()
       return
     }
-    startShiftManually()
-  }
+
+    setShiftStarting(true)
+    try {
+      const canProceed =
+        Platform.OS !== 'android' ? true : await requestShiftAccessibilityDisclosure()
+      if (!canProceed) {
+        setIsDriverOnline(false)
+        return
+      }
+      setAccessibilityConsentGiven(true)
+      startShiftManually()
+      setIsDriverOnline(true)
+      syncOrderParsingGate()
+    } finally {
+      setShiftStarting(false)
+    }
+  }, [
+    isActive,
+    endShiftManually,
+    startShiftManually,
+    setIsDriverOnline,
+    setAccessibilityConsentGiven,
+  ])
 
   return (
     <ScrollView
@@ -105,7 +136,10 @@ export default function ShiftModeScreen() {
         <TouchableOpacity
           style={[s.shiftBtn, isActive ? { borderColor: c.danger, backgroundColor: 'transparent' } : { borderColor: c.primary, backgroundColor: c.primary }]}
           activeOpacity={0.85}
-          onPress={handleToggleShift}
+          disabled={shiftStarting}
+          onPress={() => {
+            void handleToggleShift()
+          }}
         >
           <Text style={[s.shiftBtnText, { color: isActive ? c.danger : c.textInverse }]}>
             {isActive ? 'End Shift' : 'Start Shift'}

@@ -1,8 +1,2 @@
-/** Strip verbose logs from release builds (Logcat / Metro). */
-export function devLog(...args: unknown[]): void {
-  if (__DEV__) console.log(...args)
-}
-
-export function devWarn(...args: unknown[]): void {
-  if (__DEV__) console.warn(...args)
-}
+/** @deprecated Import from `./logger` instead. Re-exported for backward compatibility. */
+export { devLog, devWarn, devError } from './logger'

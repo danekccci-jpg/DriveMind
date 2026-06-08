@@ -6,6 +6,7 @@ import { useColors } from '../theme/theme'
 import { fonts } from '../theme/typography'
 import { useDriverIngestStore } from '../store/driverIngestStore'
 import { devWarn } from '../utils/devLog'
+import { promptAccessibilitySettingsWithDisclosure } from '../services/accessibilityDisclosure'
 
 type ServiceStatuses = {
   notificationListenerEnabled: boolean
@@ -95,7 +96,9 @@ export function IntegrationHealthCard() {
       key: 'accessibility',
       title: t('integration_accessibility'),
       ok: statuses.accessibilityServiceEnabled,
-      action: () => dmNative.openAccessibilitySettings(),
+      action: () => {
+        void promptAccessibilitySettingsWithDisclosure()
+      },
     },
     {
       key: 'battery',

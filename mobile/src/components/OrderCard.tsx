@@ -39,7 +39,7 @@ function streetLine(full: string): string {
   return i > 0 ? s.slice(0, i).trim() : s
 }
 
-export function OrderCard({
+function OrderCardInner({
   order,
   platformLabel,
   profitLabel,
@@ -349,3 +349,6 @@ const styles = StyleSheet.create({
   skipBtn: { flex: 0.32, height: 22, alignItems: 'center', justifyContent: 'center' },
   skipText: { fontSize: 9, fontFamily: fonts.regular },
 })
+
+export const OrderCard = React.memo(OrderCardInner)
+export { OrderCardInner as OrderCardUnmemoized }

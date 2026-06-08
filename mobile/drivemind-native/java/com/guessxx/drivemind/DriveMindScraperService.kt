@@ -1,17 +1,20 @@
 package com.guessxx.drivemind
 
 import android.accessibilityservice.AccessibilityService
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import com.facebook.react.bridge.Arguments
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 import java.util.regex.Pattern
 
 /**
  * Accessibility service that monitors Uber Driver, Bolt Driver, Glovo Courier, and Wolt
- * driver apps.  When one of these apps enters the foreground a 10-second scan window
- * opens (500 ms ticks) and the view hierarchy is inspected for order data.
+ * driver apps. When a whitelisted app is foreground, a 10-second scan window opens
+ * (500 ms ticks) and the view hierarchy is inspected for order data.
  *
  * STRICTLY READ-ONLY — this service never performs clicks, gestures, or any form
  * of automated input inside the monitored applications.
@@ -20,31 +23,36 @@ import java.util.regex.Pattern
  */
 class DriveMindScraperService : AccessibilityService() {
 
-    private val handler = Handler(Looper.getMainLooper())
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val parseExecutor: ExecutorService = Executors.newSingleThreadExecutor { r ->
+        Thread(r, "DriveMind-A11yParse").apply { isDaemon = true }
+    }
+
     private var tickRunnable: Runnable? = null
+    private var debouncedParseRunnable: Runnable? = null
     private var foundThisWindow = false
+    private var parseInFlight = false
     private var currentPackage = ""
     private var topPackageName = ""
-
     // ── AccessibilityService callbacks ────────────────────────────────────────
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
         if (!DriveMindScraperState.isOrderParsingEnabled()) {
             cancelTickLoop()
+            cancelDebouncedParse()
             return
         }
+
         val pkg = event.packageName?.toString() ?: return
         topPackageName = pkg
 
         if (pkg !in OVERLAY_TARGET_PACKAGES) {
             cancelTickLoop()
-            // Overlay visibility is owned by DriveMind app foreground/background lifecycle.
             return
         }
 
-        showOverlay()
-
+        // Lazy scraping: full tree analysis only for whitelisted driver apps.
         if (pkg !in MONITORED_PACKAGES) {
             cancelTickLoop()
             return
@@ -53,38 +61,59 @@ class DriveMindScraperService : AccessibilityService() {
         currentPackage = pkg
 
         when (event.eventType) {
-            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
-            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
-            -> {
+            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
                 DriveMindScraperState.extendScanWindow(10_000L)
                 foundThisWindow = false
-                scheduleTicks()
+                requestDebouncedParse(immediate = true)
+            }
+            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
+                DriveMindScraperState.extendScanWindow(10_000L)
+                if (!foundThisWindow) {
+                    requestDebouncedParse(immediate = false)
+                }
             }
         }
     }
 
     override fun onInterrupt() {
         cancelTickLoop()
+        cancelDebouncedParse()
     }
 
-    override fun onServiceConnected() {
-        super.onServiceConnected()
+    override fun onDestroy() {
+        cancelTickLoop()
+        cancelDebouncedParse()
+        parseExecutor.shutdownNow()
+        super.onDestroy()
     }
 
     private fun cancelTickLoop() {
-        tickRunnable?.let { handler.removeCallbacks(it) }
+        tickRunnable?.let { mainHandler.removeCallbacks(it) }
         tickRunnable = null
+        parseInFlight = false
     }
 
-    private fun showOverlay() {
+    private fun cancelDebouncedParse() {
+        debouncedParseRunnable?.let { mainHandler.removeCallbacks(it) }
+        debouncedParseRunnable = null
+    }
+
+    private fun requestDebouncedParse(immediate: Boolean) {
         if (!DriveMindScraperState.shouldScan()) return
-        DriveMindOverlay.showRadar(applicationContext)
+        debouncedParseRunnable?.let { mainHandler.removeCallbacks(it) }
+        val r = Runnable {
+            debouncedParseRunnable = null
+            scheduleTicks()
+        }
+        debouncedParseRunnable = r
+        mainHandler.postDelayed(r, if (immediate) 0L else DEBOUNCE_MS)
     }
 
     // ── Tick loop ─────────────────────────────────────────────────────────────
 
     private fun scheduleTicks() {
-        tickRunnable?.let { handler.removeCallbacks(it) }
+        if (parseInFlight) return
+        tickRunnable?.let { mainHandler.removeCallbacks(it) }
         val r = object : Runnable {
             override fun run() {
                 if (!DriveMindScraperState.shouldScan()) {
@@ -95,32 +124,68 @@ class DriveMindScraperService : AccessibilityService() {
                     tickRunnable = null
                     return
                 }
+                runParseTick()
+            }
+        }
+        tickRunnable = r
+        mainHandler.post(r)
+    }
 
-                val root = rootInActiveWindow
-                val data: ScrapeExtract? = if (root != null) {
-                    try {
-                        extractFromNode(root)
-                    } catch (_: Exception) {
-                        null
-                    } finally {
-                        try { root.recycle() } catch (_: Exception) { }
-                    }
-                } else {
-                    null
-                }
+    /** Snapshot UI text on the main thread; parse strings on a background executor. */
+    private fun runParseTick() {
+        if (parseInFlight || foundThisWindow) return
+        val root = rootInActiveWindow
+        if (root == null) {
+            scheduleNextTick()
+            return
+        }
 
+        val snapshot = try {
+            buildSnapshot(root)
+        } catch (_: Exception) {
+            null
+        } finally {
+            recycleNode(root)
+        }
+
+        if (snapshot == null) {
+            scheduleNextTick()
+            return
+        }
+
+        parseInFlight = true
+        parseExecutor.execute {
+            val data = try {
+                extractFromSnapshot(snapshot)
+            } catch (_: Exception) {
+                null
+            }
+            mainHandler.post {
+                parseInFlight = false
+                if (!DriveMindScraperState.shouldScan() || foundThisWindow) return@post
                 if (data != null && data.isValidOrder()) {
                     foundThisWindow = true
                     emitOrderScraped(data)
                     try { DriveMindSound.playSoftClick(applicationContext) } catch (_: Exception) { }
                     tickRunnable = null
-                    return
+                    return@post
                 }
-                handler.postDelayed(this, 500)
+                scheduleNextTick()
             }
         }
+    }
+
+    private fun scheduleNextTick() {
+        if (!DriveMindScraperState.shouldScan() || foundThisWindow) {
+            tickRunnable = null
+            return
+        }
+        val r = Runnable {
+            tickRunnable = null
+            runParseTick()
+        }
         tickRunnable = r
-        handler.post(r)
+        mainHandler.postDelayed(r, TICK_INTERVAL_MS)
     }
 
     // ── Event emitters ────────────────────────────────────────────────────────
@@ -139,6 +204,13 @@ class DriveMindScraperService : AccessibilityService() {
 
     // ── Data model ────────────────────────────────────────────────────────────
 
+    private data class UiTextSnapshot(
+        val texts: List<String>,
+        val packageHint: String,
+        val pickup: String,
+        val dropoff: String,
+    )
+
     data class ScrapeExtract(
         val price: String,
         val distanceKmText: String,
@@ -156,14 +228,37 @@ class DriveMindScraperService : AccessibilityService() {
         }
     }
 
-    // ── Node tree extraction ──────────────────────────────────────────────────
+    // ── Snapshot + extraction ─────────────────────────────────────────────────
 
-    private fun extractFromNode(root: AccessibilityNodeInfo): ScrapeExtract {
+    private fun buildSnapshot(root: AccessibilityNodeInfo): UiTextSnapshot {
         val texts = mutableListOf<String>()
-        collectTexts(root, texts)
-        val blob = texts.joinToString("\n")
-        val pkgHintEarly = root.packageName?.toString()?.takeIf { it.isNotEmpty() }
+        var pickup = ""
+        var dropoff = ""
+        walkNodes(root, root) { node ->
+            node.text?.takeIf { it.isNotBlank() }?.let { texts.add(it.toString()) }
+            node.contentDescription?.takeIf { it.isNotBlank() }?.let { texts.add(it.toString()) }
+            val raw = node.text?.toString()?.trim().orEmpty()
+            if (raw.isNotEmpty()) {
+                val label = normalizeLabel(raw)
+                when {
+                    PICKUP_LABELS.contains(label) && pickup.isEmpty() -> {
+                        pickup = findAddressAdjacent(node, root).ifEmpty { extractInlineAddress(raw, label) }
+                    }
+                    DROPOFF_LABELS.contains(label) && dropoff.isEmpty() -> {
+                        dropoff = findAddressAdjacent(node, root).ifEmpty { extractInlineAddress(raw, label) }
+                    }
+                }
+            }
+        }
+        val pkgHint = root.packageName?.toString()?.takeIf { it.isNotEmpty() }
             ?: topPackageName.ifEmpty { currentPackage }
+        return UiTextSnapshot(texts.toList(), pkgHint, pickup, dropoff)
+    }
+
+    private fun extractFromSnapshot(snapshot: UiTextSnapshot): ScrapeExtract {
+        val texts = snapshot.texts
+        val blob = texts.joinToString("\n")
+        val pkgHintEarly = snapshot.packageHint
 
         val price = extractPrice(texts, blob, pkgHintEarly)
         val distanceKmText = DISTANCE_PATTERN.matcher(blob).let { m ->
@@ -174,7 +269,6 @@ class DriveMindScraperService : AccessibilityService() {
             if (m.find()) m.group(0) ?: "" else ""
         }
 
-        val labeled = extractLabeledAddresses(root)
         val addressCandidates = texts
             .map { it.trim() }
             .filter { line ->
@@ -184,8 +278,8 @@ class DriveMindScraperService : AccessibilityService() {
             }
             .sortedByDescending { it.length }
 
-        val dropoff = labeled.second.ifEmpty { addressCandidates.firstOrNull()?.take(120) ?: "" }
-        val pickup  = labeled.first.ifEmpty { addressCandidates.getOrNull(1)?.take(120) ?: "" }
+        val dropoff = snapshot.dropoff.ifEmpty { addressCandidates.firstOrNull()?.take(120) ?: "" }
+        val pickup = snapshot.pickup.ifEmpty { addressCandidates.getOrNull(1)?.take(120) ?: "" }
 
         return ScrapeExtract(
             price = price,
@@ -195,7 +289,7 @@ class DriveMindScraperService : AccessibilityService() {
             dropoff = dropoff,
             surge = surge,
             packageHint = pkgHintEarly,
-            sourceTexts = texts.toList(),
+            sourceTexts = texts,
         )
     }
 
@@ -232,51 +326,23 @@ class DriveMindScraperService : AccessibilityService() {
         }
     }
 
-    /** Depth-first walk; recycles every child node to avoid a11y connection leaks. */
-    private fun collectTexts(node: AccessibilityNodeInfo?, out: MutableList<String>) {
+    /** API 33+ auto-manages nodes; recycle only on older releases. */
+    private fun recycleNode(node: AccessibilityNodeInfo?) {
         if (node == null) return
-        node.text?.takeIf { it.isNotBlank() }?.let { out.add(it.toString()) }
-        node.contentDescription?.takeIf { it.isNotBlank() }?.let { out.add(it.toString()) }
-        val childCount = node.childCount
-        for (i in 0 until childCount) {
-            val child = node.getChild(i) ?: continue
-            try {
-                collectTexts(child, out)
-            } finally {
-                try { child.recycle() } catch (_: Exception) { }
-            }
-        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) return
+        try { node.recycle() } catch (_: Exception) { }
     }
 
-    private fun extractLabeledAddresses(root: AccessibilityNodeInfo): Pair<String, String> {
-        var pickup = ""
-        var dropoff = ""
-        walkNodes(root) { node ->
-            val raw = node.text?.toString()?.trim().orEmpty()
-            if (raw.isEmpty()) return@walkNodes
-            val label = normalizeLabel(raw)
-            when {
-                PICKUP_LABELS.contains(label) && pickup.isEmpty() -> {
-                    pickup = findAddressAdjacent(node).ifEmpty { extractInlineAddress(raw, label) }
-                }
-                DROPOFF_LABELS.contains(label) && dropoff.isEmpty() -> {
-                    dropoff = findAddressAdjacent(node).ifEmpty { extractInlineAddress(raw, label) }
-                }
-            }
-        }
-        return pickup to dropoff
-    }
-
-    private fun walkNodes(node: AccessibilityNodeInfo?, visit: (AccessibilityNodeInfo) -> Unit) {
+    private fun walkNodes(node: AccessibilityNodeInfo?, treeRoot: AccessibilityNodeInfo, visit: (AccessibilityNodeInfo) -> Unit) {
         if (node == null) return
         visit(node)
         val childCount = node.childCount
         for (i in 0 until childCount) {
             val child = node.getChild(i) ?: continue
             try {
-                walkNodes(child, visit)
+                walkNodes(child, treeRoot, visit)
             } finally {
-                try { child.recycle() } catch (_: Exception) { }
+                if (child !== treeRoot) recycleNode(child)
             }
         }
     }
@@ -298,21 +364,24 @@ class DriveMindScraperService : AccessibilityService() {
         return if (looksLikeAddress(cleaned)) cleaned.take(120) else ""
     }
 
-    private fun findAddressAdjacent(labelNode: AccessibilityNodeInfo): String {
+    private fun findAddressAdjacent(labelNode: AccessibilityNodeInfo, treeRoot: AccessibilityNodeInfo): String {
         val parent = labelNode.parent ?: return ""
+        val recycleParent = parent !== treeRoot && parent !== labelNode
         try {
             val childCount = parent.childCount
             for (i in 0 until childCount) {
                 val child = parent.getChild(i) ?: continue
+                val recycleChild = child !== treeRoot && child !== labelNode
                 try {
                     if (child == labelNode) {
                         val next = parent.getChild(i + 1)
                         if (next != null) {
+                            val recycleNext = next !== treeRoot
                             try {
                                 val candidate = nodeTextOrDesc(next)
                                 if (looksLikeAddress(candidate)) return candidate.take(120)
                             } finally {
-                                try { next.recycle() } catch (_: Exception) { }
+                                if (recycleNext) recycleNode(next)
                             }
                         }
                         continue
@@ -322,11 +391,11 @@ class DriveMindScraperService : AccessibilityService() {
                         return candidate.take(120)
                     }
                 } finally {
-                    try { child.recycle() } catch (_: Exception) { }
+                    if (recycleChild) recycleNode(child)
                 }
             }
         } finally {
-            try { parent.recycle() } catch (_: Exception) { }
+            if (recycleParent) recycleNode(parent)
         }
         return ""
     }
@@ -348,9 +417,9 @@ class DriveMindScraperService : AccessibilityService() {
     }
 
     companion object {
-        /** Legacy event name — kept for reference; no longer emitted from this service. */
+        private const val DEBOUNCE_MS = 250L
+        private const val TICK_INTERVAL_MS = 500L
         const val EVENT_SCRAPE = "DriveMindScrape"
-
         const val EVENT_ORDER_SCRAPED = "onOrderScraped"
 
         const val PACKAGE_BOLT_FOOD = DriveMindNotificationService.PACKAGE_BOLT_FOOD

@@ -1,6 +1,7 @@
 import { NativeModules, Platform } from 'react-native'
 import i18n from '../i18n'
 import { isGuestEmail, useAuthStore } from '../store/authStore'
+import { useOrdersStore } from '../store/ordersStore'
 import { isSearchBlocked, type FirestoreUser } from './userFirestoreService'
 
 type GateNative = {
@@ -39,10 +40,13 @@ export function syncOrderParsingGate(user?: Pick<FirestoreUser, 'completedOrders
   const native = getNative()
   if (!native) return
 
+  const isShiftOn = useOrdersStore.getState().shiftStats.startTime !== null
+  const parsingEnabled = isShiftOn && !blocked
+
   try {
-    native.setOrderParsingEnabled?.(!blocked)
+    native.setOrderParsingEnabled?.(parsingEnabled)
     native.setOverlayRadarLabel?.(blocked ? i18n.t('searchStatusBlocked') : i18n.t('searchStatusActive'))
-    if (blocked) native.hideOverlay?.()
+    if (blocked || !isShiftOn) native.hideOverlay?.()
   } catch {
     /* noop */
   }

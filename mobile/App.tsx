@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { Animated, Platform, ActivityIndicator, View, Dimensions, DeviceEventEmitter } from 'react-native'
+import { Animated, Platform, ActivityIndicator, View, Dimensions, DeviceEventEmitter, AppState } from 'react-native'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 import { NavigationContainer, DefaultTheme, DarkTheme, type Theme } from '@react-navigation/native'
 import { StatusBar } from 'expo-status-bar'
@@ -33,6 +33,7 @@ import RootNavigator, { navigationRef } from './src/navigation/RootNavigator'
 import PaywallScreen from './src/screens/PaywallScreen'
 import { EVENT_OPEN_PAYWALL, syncOrderParsingGate } from './src/services/subscriptionGate'
 import { DriverIngestToast } from './src/components/DriverIngestToast'
+import { AccessibilityDisclosureHost } from './src/components/AccessibilityDisclosureHost'
 import { useDriverIngestBridge } from './src/services/driverIngestBridge'
 import { startLocationTracking, stopLocationTracking } from './src/services/locationTrackingService'
 import i18n from './src/i18n'
@@ -95,8 +96,9 @@ export default function App() {
         return
       }
       const nav = useOrdersStore.getState().isNavigating
-      const online = useDriverSessionStore.getState().isOnline
-      if (nav || online) {
+      const inBackground = AppState.currentState !== 'active'
+      // FGS only when navigating in background — avoids AppOps MONITOR_LOCATION crash on app switch.
+      if (nav && inBackground) {
         void startLocationTracking()
       } else {
         void stopLocationTracking()
@@ -105,9 +107,11 @@ export default function App() {
     syncLocationTask()
     const unsubOrders = useOrdersStore.subscribe(syncLocationTask)
     const unsubDriver = useDriverSessionStore.subscribe(syncLocationTask)
+    const appSub = AppState.addEventListener('change', syncLocationTask)
     return () => {
       unsubOrders()
       unsubDriver()
+      appSub.remove()
     }
   }, [onboardingComplete])
 
@@ -227,6 +231,7 @@ export default function App() {
       <SafeAreaProvider>
         <StatusBar style={isDark ? 'light' : 'dark'} backgroundColor={c.bg} />
         <OnboardingScreen />
+        <AccessibilityDisclosureHost />
       </SafeAreaProvider>
     )
   }
@@ -299,6 +304,7 @@ function MainAppWithDriverIngest({ navTheme }: { navTheme: Theme }) {
   return (
     <>
       <DriverIngestToast />
+      <AccessibilityDisclosureHost />
       <NavigationContainer ref={navigationRef} theme={navTheme}>
         <RootNavigator />
       </NavigationContainer>

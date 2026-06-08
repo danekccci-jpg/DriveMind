@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useCallback, useState } from 'react'
 import Constants from 'expo-constants'
 import {
   View,
@@ -8,6 +8,9 @@ import {
   TouchableOpacity,
   TextInput,
   Switch,
+  Linking,
+  Alert,
+  ActivityIndicator,
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useNavigation } from '@react-navigation/native'
@@ -18,13 +21,14 @@ import * as Haptics from 'expo-haptics'
 
 import { useRoleStore } from '../../store/roleStore'
 import { useDriverSessionStore } from '../../store/driverSessionStore'
-import { useAuthStore } from '../../store/authStore'
-import { signOutFirebase } from '../../services/firebaseAuth'
+import { useAuthStore, isGuestEmail } from '../../store/authStore'
+import { deleteUserAccount, signOutFirebase } from '../../services/firebaseAuth'
 import { useThemeStore } from '../../store/themeStore'
 import { useLanguageStore, cycleDriveMindLanguage, type Language } from '../../store/languageStore'
 import { useColors, type AppColors } from '../../theme/theme'
 import { fonts } from '../../theme/typography'
 import Logo from '../../components/common/Logo'
+import { PRIVACY_POLICY_URL, TERMS_OF_SERVICE_URL } from '../../constants/legalUrls'
 
 const LANG_I18N_KEY: Record<Language, 'language_en' | 'language_pl' | 'language_uk' | 'language_ru'> = {
   en: 'language_en',
@@ -66,9 +70,13 @@ export default function ProfileScreen() {
 
   const userName = useAuthStore((s) => s.userName)
   const userEmail = useAuthStore((s) => s.userEmail)
+  const firebaseUid = useAuthStore((s) => s.firebaseUid)
   const authSignOut = useAuthStore((s) => s.signOut)
 
   const [fuelInput, setFuelInput] = useState(String(fuelConsumption))
+  const [deletingAccount, setDeletingAccount] = useState(false)
+
+  const canDeleteAccount = Boolean(firebaseUid) && !isGuestEmail(userEmail)
 
   const handleFuelChange = (val: string) => {
     setFuelInput(val)
@@ -82,6 +90,55 @@ export default function ProfileScreen() {
     setLanguage(next)
     i18n.changeLanguage(next)
   }
+
+  const openTerms = useCallback(() => {
+    void Linking.openURL(TERMS_OF_SERVICE_URL)
+  }, [])
+
+  const openPrivacyPolicy = useCallback(() => {
+    void Linking.openURL(PRIVACY_POLICY_URL)
+  }, [])
+
+  const performDeleteAccount = useCallback(async () => {
+    setDeletingAccount(true)
+    try {
+      const result = await deleteUserAccount()
+      if (result.kind === 'success') {
+        authSignOut()
+        return
+      }
+      if (result.kind === 'requires-recent-login') {
+        Alert.alert(
+          t('delete_account_requires_relogin_title'),
+          t('delete_account_requires_relogin_message'),
+        )
+        return
+      }
+      if (result.kind === 'not-signed-in') {
+        Alert.alert(t('delete_account_alert_title'), t('delete_account_not_signed_in'))
+        authSignOut()
+        return
+      }
+      Alert.alert(t('delete_account_alert_title'), t('delete_account_failed'))
+    } finally {
+      setDeletingAccount(false)
+    }
+  }, [authSignOut, t])
+
+  const handleDeleteAccountPress = useCallback(() => {
+    if (deletingAccount) return
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
+    Alert.alert(t('delete_account_alert_title'), t('delete_account_alert_message'), [
+      { text: t('no'), style: 'cancel' },
+      {
+        text: t('delete_account_confirm'),
+        style: 'destructive',
+        onPress: () => {
+          void performDeleteAccount()
+        },
+      },
+    ])
+  }, [deletingAccount, performDeleteAccount, t])
 
   return (
     <ScrollView
@@ -290,6 +347,7 @@ export default function ProfileScreen() {
       <TouchableOpacity
         style={s.signOutBtn}
         activeOpacity={0.7}
+        disabled={deletingAccount}
         onPress={async () => {
           Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
           await signOutFirebase()
@@ -298,6 +356,34 @@ export default function ProfileScreen() {
       >
         <Text style={[s.signOutText, { color: c.danger }]}>{t('sign_out')}</Text>
       </TouchableOpacity>
+
+      {canDeleteAccount && (
+        <TouchableOpacity
+          style={[s.deleteAccountBtn, { borderColor: c.danger }]}
+          activeOpacity={0.7}
+          disabled={deletingAccount}
+          onPress={handleDeleteAccountPress}
+        >
+          {deletingAccount ? (
+            <ActivityIndicator size="small" color={c.danger} />
+          ) : (
+            <Text style={[s.deleteAccountText, { color: c.danger }]}>{t('delete_account')}</Text>
+          )}
+        </TouchableOpacity>
+      )}
+
+      <View style={s.legalFooter}>
+        <Text style={[s.legalSectionLabel, { color: c.textMuted }]}>{t('profile_legal_section')}</Text>
+        <View style={s.legalLinksRow}>
+          <TouchableOpacity activeOpacity={0.7} onPress={openTerms} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}>
+            <Text style={[s.legalLinkText, { color: c.textSecondary }]}>{t('profile_legal_terms')}</Text>
+          </TouchableOpacity>
+          <Text style={[s.legalDot, { color: c.textMuted }]}>•</Text>
+          <TouchableOpacity activeOpacity={0.7} onPress={openPrivacyPolicy} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}>
+            <Text style={[s.legalLinkText, { color: c.textSecondary }]}>{t('profile_legal_privacy')}</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
     </ScrollView>
   )
 }
@@ -385,4 +471,25 @@ const s = StyleSheet.create({
   aboutVersion: { fontSize: 12, fontFamily: fonts.regular },
   signOutBtn: { paddingVertical: 16, alignItems: 'center' },
   signOutText: { fontSize: 14, fontFamily: fonts.medium },
+  deleteAccountBtn: {
+    marginBottom: 8,
+    paddingVertical: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 48,
+  },
+  deleteAccountText: { fontSize: 15, fontFamily: fonts.semiBold, fontWeight: '600' },
+  legalFooter: { alignItems: 'center', marginTop: 4, paddingTop: 12, paddingBottom: 8 },
+  legalSectionLabel: {
+    fontSize: 11,
+    fontFamily: fonts.medium,
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+    marginBottom: 10,
+  },
+  legalLinksRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap', gap: 8 },
+  legalLinkText: { fontSize: 12, fontFamily: fonts.regular, textDecorationLine: 'underline' },
+  legalDot: { fontSize: 12, fontFamily: fonts.regular },
 })

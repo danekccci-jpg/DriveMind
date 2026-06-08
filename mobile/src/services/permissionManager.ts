@@ -1,6 +1,7 @@
 import { Alert, NativeModules, Platform } from 'react-native'
 import { PERMISSIONS, request, requestNotifications } from 'react-native-permissions'
 import i18n from '../i18n'
+import { promptAccessibilitySettingsWithDisclosure } from './accessibilityDisclosure'
 
 type ServiceStatuses = {
   notificationListenerEnabled: boolean
@@ -77,21 +78,7 @@ export async function requestAllPermissions(): Promise<void> {
     const a11yOk = await isAccessibilityServiceEnabled(native)
     if (a11yOk) return
 
-    Alert.alert(i18n.t('perm_alert_title'), i18n.t('perm_alert_msg'), [
-      { text: i18n.t('no'), style: 'cancel' },
-      {
-        text: i18n.t('yes'),
-        onPress: () => {
-          if (typeof native.openAccessibilitySettings === 'function') {
-            native.openAccessibilitySettings()
-          } else if (typeof native.openOverlaySettings === 'function') {
-            native.openOverlaySettings()
-          } else {
-            native.requestOverlayPermission?.()
-          }
-        },
-      },
-    ])
+    await promptAccessibilitySettingsWithDisclosure()
   } catch (e) {
     console.warn('[DriveMind] requestAllPermissions special checks', e)
   }

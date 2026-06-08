@@ -34,12 +34,81 @@ const DRIVER_PACKAGES = [
 ]
 
 const DRIVEMIND_PERMISSIONS = ['android.permission.PACKAGE_USAGE_STATS']
+const DEFAULT_ANDROID_PACKAGE = 'com.guessxx.drivemind'
+
+function envTrim(key) {
+  return (process.env[key] ?? '').trim()
+}
+
+/**
+ * Writes android/app/google-services.json from EXPO_PUBLIC_FIREBASE_* when missing.
+ * Does not overwrite an existing file (e.g. downloaded from Firebase Console).
+ */
+function ensureGoogleServicesJson(appDir, packageName) {
+  const destPath = path.join(appDir, 'google-services.json')
+  if (fs.existsSync(destPath)) {
+    return true
+  }
+
+  const apiKey = envTrim('EXPO_PUBLIC_FIREBASE_API_KEY')
+  const projectId = envTrim('EXPO_PUBLIC_FIREBASE_PROJECT_ID')
+  const appId = envTrim('EXPO_PUBLIC_FIREBASE_APP_ID')
+  const senderId = envTrim('EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID')
+  const storageBucket = envTrim('EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET')
+
+  if (!apiKey || !projectId || !appId || !senderId) {
+    console.warn(
+      '[with-drivemind-native] google-services.json not written — set EXPO_PUBLIC_FIREBASE_* in .env (see .env.example)',
+    )
+    return false
+  }
+
+  const webClientId = envTrim('EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID')
+  const oauthClient = webClientId ? [{ client_id: webClientId, client_type: 3 }] : []
+
+  const payload = {
+    project_info: {
+      project_number: senderId,
+      project_id: projectId,
+      storage_bucket: storageBucket || `${projectId}.firebasestorage.app`,
+    },
+    client: [
+      {
+        client_info: {
+          mobilesdk_app_id: appId,
+          android_client_info: {
+            package_name: packageName,
+          },
+        },
+        oauth_client: oauthClient,
+        api_key: [{ current_key: apiKey }],
+        services: {
+          appinvite_service: {
+            other_platform_oauth_client: [],
+          },
+        },
+      },
+    ],
+    configuration_version: '1',
+  }
+
+  fs.writeFileSync(destPath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8')
+  return true
+}
 
 /** Overlay spring animation + MapsInitializer need app-level deps (not api-transitive from RN Maps). */
-function ensureDriveMindGradleDeps(gradlePath) {
+const FIREBASE_GRADLE_DEPS = [
+  "implementation platform('com.google.firebase:firebase-bom:34.14.0')",
+  "implementation 'com.google.firebase:firebase-firestore'",
+]
+
+function ensureDriveMindGradleDeps(gradlePath, hasGoogleServices = true) {
   let gradle = fs.readFileSync(gradlePath, 'utf8')
   let changed = false
-  for (const dep of DRIVEMIND_GRADLE_DEPS) {
+  const deps = hasGoogleServices
+    ? DRIVEMIND_GRADLE_DEPS
+    : DRIVEMIND_GRADLE_DEPS.filter((dep) => !FIREBASE_GRADLE_DEPS.includes(dep))
+  for (const dep of deps) {
     if (gradle.includes(dep)) continue
     const anchor = 'implementation("com.facebook.react:react-android")'
     if (!gradle.includes(anchor)) continue
@@ -49,7 +118,14 @@ function ensureDriveMindGradleDeps(gradlePath) {
   if (changed) fs.writeFileSync(gradlePath, gradle, 'utf8')
 }
 
-function ensureGoogleServicesPlugin(rootGradlePath, appGradlePath) {
+function ensureGoogleServicesPlugin(rootGradlePath, appGradlePath, googleServicesJsonPath) {
+  if (!googleServicesJsonPath || !fs.existsSync(googleServicesJsonPath)) {
+    console.warn(
+      '[with-drivemind-native] Skipping google-services Gradle plugin — google-services.json is missing',
+    )
+    return
+  }
+
   if (fs.existsSync(rootGradlePath)) {
     let rootGradle = fs.readFileSync(rootGradlePath, 'utf8')
     if (!rootGradle.includes('com.google.gms:google-services')) {
@@ -95,6 +171,53 @@ function mergeAccessibilityString(srcPath, destPath) {
   if (dest.includes('name="accessibility_service_description"')) return
   dest = dest.replace('</resources>', `  ${entry}\n</resources>`)
   fs.writeFileSync(destPath, dest, 'utf8')
+}
+
+/**
+ * Writes/updates android/gradle.properties to pin the release-minify setting.
+ *
+ * Why false?  Several Expo native modules use reflection patterns that R8's full
+ * mode strips even with keep rules, causing hard-to-reproduce crashes on device.
+ * Flip to `true` only after validating a release APK locally with `--no-minify`
+ * removed.  The ProGuard keeps in proguard-rules.pro are kept comprehensive so
+ * the switch is safe whenever we're ready.
+ *
+ * Keys managed by this function (idempotent — will not duplicate):
+ *   android.enableMinifyInReleaseBuilds=false
+ *   android.enableR8.fullMode=false
+ */
+function patchGradleProperties(gradlePropertiesPath) {
+  const MANAGED_KEYS = {
+    'android.enableMinifyInReleaseBuilds': 'false',
+    'android.enableR8.fullMode': 'false',
+  }
+
+  let content = ''
+  if (fs.existsSync(gradlePropertiesPath)) {
+    content = fs.readFileSync(gradlePropertiesPath, 'utf8')
+  }
+
+  let changed = false
+  for (const [key, value] of Object.entries(MANAGED_KEYS)) {
+    const regex = new RegExp(`^${key.replace('.', '\\.')}\\s*=.*$`, 'm')
+    const line = `${key}=${value}`
+    if (regex.test(content)) {
+      const updated = content.replace(regex, line)
+      if (updated !== content) {
+        content = updated
+        changed = true
+      }
+    } else {
+      content = content.trimEnd() + `\n# set by withDriveMindNative\n${line}\n`
+      changed = true
+    }
+  }
+
+  if (changed) {
+    fs.mkdirSync(path.dirname(gradlePropertiesPath), { recursive: true })
+    fs.writeFileSync(gradlePropertiesPath, content, 'utf8')
+    console.log('[with-drivemind-native] patched gradle.properties: minify=false, R8.fullMode=false')
+  }
 }
 
 /** Appends DriveMind ProGuard keeps if not already present. */
@@ -219,6 +342,41 @@ function addDriveMindServices(application) {
   application.service = services
 }
 
+const MANIFEST_REQUIRED_TOKENS = [
+  'DriveMindScraperService',
+  'BIND_ACCESSIBILITY_SERVICE',
+  'DriveMindNotificationService',
+  'BIND_NOTIFICATION_LISTENER_SERVICE',
+  'accessibility_service_config',
+]
+
+function getOrCreateApplication(manifest) {
+  if (!manifest.application) {
+    manifest.application = []
+  }
+  const apps = ensureArray(manifest.application)
+  if (!apps[0]) {
+    apps.push({ $: { 'android:name': '.MainApplication' } })
+    manifest.application = apps
+  }
+  return apps[0]
+}
+
+/** Validates merged manifest JSON (in-memory modResults), not the on-disk file. */
+function assertManifestModResults(manifest) {
+  const application = ensureArray(manifest.application)[0]
+  if (!application) {
+    throw new Error('[with-drivemind-native] AndroidManifest has no <application> node')
+  }
+  const xml = JSON.stringify(application)
+  const missing = MANIFEST_REQUIRED_TOKENS.filter((token) => !xml.includes(token))
+  if (missing.length > 0) {
+    throw new Error(
+      `[with-drivemind-native] AndroidManifest modResults missing required entries: ${missing.join(', ')}`,
+    )
+  }
+}
+
 function withDriveMindAndroidManifest(config) {
   return withAndroidManifest(config, (cfg) => {
     const manifest = cfg.modResults.manifest
@@ -227,35 +385,60 @@ function withDriveMindAndroidManifest(config) {
     }
     addQueryPackages(manifest)
 
-    const application = ensureArray(manifest.application)[0]
-    if (application) {
-      addDriveMindServices(application)
-    }
+    const application = getOrCreateApplication(manifest)
+    addDriveMindServices(application)
+    assertManifestModResults(manifest)
 
     return cfg
   })
 }
 
-function assertManifestContainsServices(manifestPath) {
-  if (!fs.existsSync(manifestPath)) {
-    throw new Error(
-      `[with-drivemind-native] AndroidManifest.xml not found at ${manifestPath}`,
-    )
+/**
+ * Dangerous mod runs before Expo writes manifest modResults to disk — patch the template
+ * file so intermediate tooling and post-prebuild inspection see DriveMind services.
+ */
+function patchManifestOnDisk(manifestPath) {
+  if (!fs.existsSync(manifestPath)) return
+  let xml = fs.readFileSync(manifestPath, 'utf8')
+  if (xml.includes('DriveMindScraperService')) return
+
+  if (!xml.includes('xmlns:tools=') && !xml.includes('xmlns:tools="')) {
+    xml = xml.replace('<manifest ', '<manifest xmlns:tools="http://schemas.android.com/tools" ')
   }
-  const xml = fs.readFileSync(manifestPath, 'utf8')
-  const required = [
-    'DriveMindScraperService',
-    'BIND_ACCESSIBILITY_SERVICE',
-    'DriveMindNotificationService',
-    'BIND_NOTIFICATION_LISTENER_SERVICE',
-    'accessibility_service_config',
-  ]
-  const missing = required.filter((token) => !xml.includes(token))
-  if (missing.length > 0) {
-    throw new Error(
-      `[with-drivemind-native] AndroidManifest missing required entries: ${missing.join(', ')}`,
-    )
+
+  if (!xml.includes('android.permission.PACKAGE_USAGE_STATS')) {
+    const perm =
+      '  <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions"/>\n'
+    xml = xml.replace('<application ', `${perm}<application `)
   }
+
+  for (const pkg of DRIVER_PACKAGES) {
+    if (!xml.includes(`android:name="${pkg}"`)) {
+      const tag = `    <package android:name="${pkg}"/>\n`
+      if (xml.includes('<queries>')) {
+        xml = xml.replace('</queries>', `${tag}  </queries>`)
+      } else {
+        xml = xml.replace('<application ', `<queries>\n${tag}  </queries>\n  <application `)
+      }
+    }
+  }
+
+  const services = `
+    <service android:name=".DriveMindScraperService" android:exported="true" android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE" android:label="@string/app_name">
+      <intent-filter>
+        <action android:name="android.accessibilityservice.AccessibilityService"/>
+      </intent-filter>
+      <meta-data android:name="android.accessibilityservice" android:resource="@xml/accessibility_service_config"/>
+    </service>
+    <service android:name=".DriveMindNotificationService" android:exported="true" android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+      <intent-filter>
+        <action android:name="android.service.notification.NotificationListenerService"/>
+      </intent-filter>
+    </service>
+`
+
+  xml = xml.replace('</application>', `${services}  </application>`)
+  fs.writeFileSync(manifestPath, xml, 'utf8')
 }
 
 function withDriveMindNative(config) {
@@ -291,23 +474,30 @@ function withDriveMindNative(config) {
         mergeAccessibilityString(stringsSrc, stringsDest)
       }
 
+      const appDir = path.join(projectRoot, 'app')
+      const packageName = cfg.android?.package ?? DEFAULT_ANDROID_PACKAGE
+      const hasGoogleServices = ensureGoogleServicesJson(appDir, packageName)
+
       const rootGradle = path.join(projectRoot, 'build.gradle')
-      const appGradle = path.join(projectRoot, 'app', 'build.gradle')
-      ensureGoogleServicesPlugin(rootGradle, appGradle)
+      const appGradle = path.join(appDir, 'build.gradle')
+      ensureGoogleServicesPlugin(rootGradle, appGradle, path.join(appDir, 'google-services.json'))
       if (fs.existsSync(appGradle)) {
-        ensureDriveMindGradleDeps(appGradle)
+        ensureDriveMindGradleDeps(appGradle, hasGoogleServices)
       }
 
       const proguardSrc = path.join(NATIVE_SRC, 'proguard-rules.pro')
       const proguardDest = path.join(projectRoot, 'app', 'proguard-rules.pro')
       mergeProguardRules(proguardSrc, proguardDest)
 
+      const gradlePropertiesPath = path.join(projectRoot, 'gradle.properties')
+      patchGradleProperties(gradlePropertiesPath)
+
       const manifestPath = path.join(projectRoot, 'app', 'src', 'main', 'AndroidManifest.xml')
-      assertManifestContainsServices(manifestPath)
+      patchManifestOnDisk(manifestPath)
 
       return cfg
     },
   ])
 }
 
-module.exports = createRunOncePlugin(withDriveMindNative, 'with-drivemind-native', '2.0.0')
+module.exports = createRunOncePlugin(withDriveMindNative, 'with-drivemind-native', '2.0.2')

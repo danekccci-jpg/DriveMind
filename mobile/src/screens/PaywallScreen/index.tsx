@@ -7,6 +7,7 @@ import {
   ActivityIndicator,
   Alert,
   ScrollView,
+  Linking,
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useTranslation } from 'react-i18next'
@@ -15,6 +16,7 @@ import { useNavigation } from '@react-navigation/native'
 import { fonts } from '../../theme/typography'
 import { signOutFirebase } from '../../services/firebaseAuth'
 import { useAuthStore } from '../../store/authStore'
+import { PRIVACY_POLICY_URL, TERMS_OF_SERVICE_URL } from '../../constants/legalUrls'
 
 const BG = '#F3F4F6'
 const CARD = '#FFFFFF'
@@ -60,6 +62,14 @@ export default function PaywallScreen() {
       navigation.goBack?.()
     }
   }, [navigation])
+
+  const openTerms = useCallback(() => {
+    void Linking.openURL(TERMS_OF_SERVICE_URL)
+  }, [])
+
+  const openPrivacyPolicy = useCallback(() => {
+    void Linking.openURL(PRIVACY_POLICY_URL)
+  }, [])
 
   return (
     <View style={[styles.root, { paddingTop: insets.top, paddingBottom: insets.bottom + 12 }]}>
@@ -119,6 +129,16 @@ export default function PaywallScreen() {
         </TouchableOpacity>
 
         <Text style={styles.footerLegal}>{t('footerLegal')}</Text>
+
+        <View style={styles.legalLinksRow}>
+          <TouchableOpacity activeOpacity={0.7} onPress={openTerms} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}>
+            <Text style={styles.legalLink}>{t('profile_legal_terms')}</Text>
+          </TouchableOpacity>
+          <Text style={styles.legalDot}>•</Text>
+          <TouchableOpacity activeOpacity={0.7} onPress={openPrivacyPolicy} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}>
+            <Text style={styles.legalLink}>{t('profile_legal_privacy')}</Text>
+          </TouchableOpacity>
+        </View>
 
         <TouchableOpacity style={styles.signOutBtn} onPress={onSignOut} activeOpacity={0.7}>
           <Text style={styles.signOutLabel}>{t('sign_out')}</Text>
@@ -301,7 +321,26 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontFamily: fonts.regular,
     color: TEXT_LEGAL,
-    marginBottom: 12,
+    marginBottom: 10,
+  },
+  legalLinksRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 14,
+  },
+  legalLink: {
+    fontSize: 12,
+    fontFamily: fonts.medium,
+    color: BLUE,
+    textDecorationLine: 'underline',
+  },
+  legalDot: {
+    fontSize: 12,
+    fontFamily: fonts.regular,
+    color: TEXT_LEGAL,
   },
   signOutBtn: {
     alignItems: 'center',

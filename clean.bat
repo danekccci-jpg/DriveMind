@@ -12,6 +12,7 @@ if exist "android" rd /s /q "android"
 echo [3/5] Removing mobile build and cache folders...
 if exist "mobile\android\app\build" rd /s /q "mobile\android\app\build"
 if exist "mobile\android\app\.cxx" rd /s /q "mobile\android\app\.cxx"
+if exist "mobile\android\build" rd /s /q "mobile\android\build"
 if exist "mobile\android\.gradle" rd /s /q "mobile\android\.gradle"
 
 echo [4/5] Resetting Expo prebuild in mobile/ (Fixing Autolinking)...

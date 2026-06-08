@@ -20,9 +20,9 @@ import { useColors } from '../../theme/theme'
 import { requestAllPermissions } from '../../services/permissionManager'
 import AnimatedButton from '../../components/AnimatedButton'
 import Logo from '../../components/common/Logo'
+import { PRIVACY_POLICY_URL, TERMS_OF_SERVICE_URL } from '../../constants/legalUrls'
 
 const { width: SCREEN_W } = Dimensions.get('window')
-const PRIVACY_POLICY_URL = 'https://telegra.ph/Privacy-Policy-for-DriveMind-04-25'
 
 type PlatformId = 'glovo' | 'uber' | 'bolt' | 'wolt'
 type Role = 'courier' | 'taxi'
@@ -104,6 +104,10 @@ export default function OnboardingScreen() {
   const goBack = useCallback(() => {
     animateTo(step - 1, -1)
   }, [step, animateTo])
+
+  const openTerms = useCallback(() => {
+    void Linking.openURL(TERMS_OF_SERVICE_URL)
+  }, [])
 
   const openPrivacyPolicy = useCallback(() => {
     void Linking.openURL(PRIVACY_POLICY_URL)
@@ -277,11 +281,17 @@ export default function OnboardingScreen() {
           textColor={c.textInverse}
           hapticImpact="impactMedium"
         />
-        <AnimatedButton activeOpacity={0.75} onPress={openPrivacyPolicy} style={st.privacyLink}>
-          <Text style={[st.privacyLinkText, { color: c.textSecondary }]}>
-            {t('onboarding_disclosure_privacy_link')}
+        <Text style={[st.legalConsentText, { color: c.textSecondary }]}>
+          {t('onboarding_disclosure_legal_prefix')}
+          <Text style={[st.legalConsentLink, { color: c.textSecondary }]} onPress={openTerms}>
+            {t('profile_legal_terms')}
           </Text>
-        </AnimatedButton>
+          {t('onboarding_disclosure_legal_and')}
+          <Text style={[st.legalConsentLink, { color: c.textSecondary }]} onPress={openPrivacyPolicy}>
+            {t('profile_legal_privacy')}
+          </Text>
+          .
+        </Text>
       </View>
     </View>
   )
@@ -445,15 +455,17 @@ const st = StyleSheet.create({
     marginTop: 'auto',
     gap: 12,
   },
-  privacyLink: {
-    alignSelf: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-  },
-  privacyLinkText: {
+  legalConsentText: {
     fontSize: 12,
     lineHeight: 17,
     textAlign: 'center',
+    fontFamily: fonts.regular,
+    paddingHorizontal: 8,
+  },
+  legalConsentLink: {
+    fontSize: 12,
+    lineHeight: 17,
     fontFamily: fonts.medium,
+    textDecorationLine: 'underline',
   },
 })

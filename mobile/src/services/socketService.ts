@@ -1,7 +1,7 @@
 import { io, type Socket } from 'socket.io-client'
 import Constants from 'expo-constants'
 import { useSocketConnectionStore } from '../store/socketConnectionStore'
-import { devLog, devWarn } from '../utils/devLog'
+import { devLog, devWarn } from '../utils/logger'
 
 let socket: Socket | null = null
 

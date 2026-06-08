@@ -27,6 +27,7 @@ private const val OVERLAY_SAFE_ZONE_HEIGHT_FRACTION = 0.45f
 private const val CARD_CORNER_DP = 20
 private const val CARD_ELEVATION_DP = 4
 private const val CARD_MAX_WIDTH_DP = 280
+private const val BACKGROUND_DEBOUNCE_MS = 80L
 
 data class OverlayProfitFields(
     val tierTitle: String,
@@ -80,59 +81,95 @@ object DriveMindOverlay {
     @Volatile private var layoutParams: WindowManager.LayoutParams? = null
     @Volatile private var radarPulseRunnable: Runnable? = null
     @Volatile private var radarPulsePhase = false
+    @Volatile private var usingAccessibilityOverlay = false
 
-    /** True while DriveMind is visible (MainActivity / AppState active). */
+    /** True while DriveMind is visible (RN AppState active). */
     @Volatile private var appInForeground = true
     @Volatile private var shiftOverlayActive = false
     @Volatile private var cachedMode = CachedMode.NONE
     @Volatile private var cachedProfit: OverlayProfitFields? = null
 
-    fun setShiftActive(active: Boolean) {
+    @Volatile private var overlayMutationInFlight = false
+    private var pendingOverlayMutation: (() -> Unit)? = null
+    @Volatile private var lastBackgroundAtMs = 0L
+
+    private fun runOverlayMutation(block: () -> Unit) {
         mainHandler.post {
-            shiftOverlayActive = active
-            if (!active) {
-                cachedMode = CachedMode.NONE
-                cachedProfit = null
-                detachOverlayView()
+            if (overlayMutationInFlight) {
+                pendingOverlayMutation = block
+                return@post
+            }
+            overlayMutationInFlight = true
+            try {
+                block()
+            } finally {
+                overlayMutationInFlight = false
+                pendingOverlayMutation?.let { next ->
+                    pendingOverlayMutation = null
+                    runOverlayMutation(next)
+                }
             }
         }
     }
 
-    /** DriveMind gained focus — remove the WindowManager view but keep cached content. */
-    fun onAppForegrounded() {
-        mainHandler.post {
-            appInForeground = true
-            detachOverlayView()
+    fun setShiftActive(active: Boolean) {
+        runOverlayMutation {
+            shiftOverlayActive = active
+            if (!active) {
+                cachedMode = CachedMode.NONE
+                cachedProfit = null
+                detachOverlayView(immediate = true)
+            }
         }
     }
 
-    /** DriveMind left foreground — re-attach the cached overlay when shift is armed. */
+    /** Primary path: RN AppState `active`. */
+    fun onAppForegrounded() {
+        runOverlayMutation {
+            appInForeground = true
+            detachOverlayView(immediate = true)
+        }
+    }
+
+    /** Fallback when Activity resumes before RN AppState catches up. */
+    fun onAppForegroundedFallback() {
+        runOverlayMutation {
+            if (!appInForeground) {
+                appInForeground = true
+                detachOverlayView(immediate = true)
+            }
+        }
+    }
+
+    /** Primary path: RN AppState `background`. */
     fun onAppBackgrounded(context: Context) {
-        mainHandler.post {
+        runOverlayMutation {
+            val now = System.currentTimeMillis()
+            if (!appInForeground && now - lastBackgroundAtMs < BACKGROUND_DEBOUNCE_MS) return@runOverlayMutation
+            lastBackgroundAtMs = now
             appInForeground = false
             val appCtx = context.applicationContext
             if (!DriveMindScraperState.isOrderParsingEnabled()) {
                 if (shiftOverlayActive && Settings.canDrawOverlays(appCtx)) {
                     cachedMode = CachedMode.RADAR
                     cachedProfit = null
-                    attachRadar(appCtx)
+                    attachRadar(appCtx, useAccessibilityOverlay = false)
                 }
-                return@post
+                return@runOverlayMutation
             }
             restoreCachedOverlay(appCtx)
         }
     }
 
     fun showProfitability(context: Context, fields: OverlayProfitFields) {
-        mainHandler.post {
+        runOverlayMutation {
             cachedMode = CachedMode.PROFIT
             cachedProfit = fields
-            if (!mayAttachOverlay(context)) return@post
+            if (!mayAttachApplicationOverlay(context)) return@runOverlayMutation
             attachProfitability(context.applicationContext, fields)
         }
     }
 
-    /** Legacy single-text entry (e.g. showOverlay bridge). */
     fun show(context: Context, text: String, colorHex: String) {
         showProfitability(
             context,
@@ -145,34 +182,45 @@ object DriveMindOverlay {
         )
     }
 
-    /** Fully dismiss overlay and clear cached content. */
     fun hide() {
-        mainHandler.post {
+        runOverlayMutation {
             cachedMode = CachedMode.NONE
             cachedProfit = null
-            detachOverlayView()
+            detachOverlayView(immediate = true)
         }
     }
 
     fun showRadar(context: Context) {
-        mainHandler.post {
+        runOverlayMutation {
             cachedMode = CachedMode.RADAR
             cachedProfit = null
-            if (!mayAttachOverlay(context)) return@post
-            attachRadar(context.applicationContext)
+            if (!mayAttachApplicationOverlay(context)) return@runOverlayMutation
+            attachRadar(context.applicationContext, useAccessibilityOverlay = false)
         }
     }
 
-    private fun mayAttachOverlay(context: Context): Boolean {
+    /**
+     * Accessibility hot path — only updates cache; WM attach is owned by [onAppBackgrounded].
+     * Kept for API compatibility; does not add views from the A11y thread loop.
+     */
+    fun showRadarFromAccessibility(@Suppress("UNUSED_PARAMETER") serviceContext: Context) {
+        mainHandler.post {
+            if (!shiftOverlayActive || appInForeground) return@post
+            cachedMode = CachedMode.RADAR
+            cachedProfit = null
+        }
+    }
+
+    private fun mayAttachApplicationOverlay(context: Context): Boolean {
         val appCtx = context.applicationContext
         return shiftOverlayActive && !appInForeground && Settings.canDrawOverlays(appCtx)
     }
 
     private fun restoreCachedOverlay(appCtx: Context) {
-        if (!mayAttachOverlay(appCtx)) return
+        if (!mayAttachApplicationOverlay(appCtx)) return
         when (cachedMode) {
             CachedMode.PROFIT -> cachedProfit?.let { attachProfitability(appCtx, it) }
-            CachedMode.RADAR -> attachRadar(appCtx)
+            CachedMode.RADAR -> attachRadar(appCtx, useAccessibilityOverlay = false)
             CachedMode.NONE -> { }
         }
     }
@@ -183,27 +231,36 @@ object DriveMindOverlay {
         val bgColor = parseColorSafe(fields.colorHex)
 
         val existing = cardRefs
-        if (existing != null) {
+        if (existing != null && windowManager != null) {
             applyProfitFields(existing, fields, bgColor)
             setProfitLayoutVisible(existing, profitVisible = true)
             fadeToVisible(existing.root)
             return
         }
 
+        detachOverlayView(immediate = true)
         windowManager = wm
+        usingAccessibilityOverlay = false
         val refs = buildCard(appCtx, bgColor)
         applyProfitFields(refs, fields, bgColor)
         setProfitLayoutVisible(refs, profitVisible = true)
-        attachAndShow(appCtx, wm, refs)
+        attachAndShow(appCtx, wm, refs, useAccessibilityOverlay = false)
     }
 
-    private fun attachRadar(appCtx: Context) {
+    private fun attachRadar(appCtx: Context, useAccessibilityOverlay: Boolean) {
+        val canAttach = if (useAccessibilityOverlay) {
+            shiftOverlayActive && !appInForeground
+        } else {
+            mayAttachApplicationOverlay(appCtx)
+        }
+        if (!canAttach) return
+
         val wm = appCtx.getSystemService(Context.WINDOW_SERVICE) as? WindowManager ?: return
         val label = radarLabel.ifBlank { "Radar" }
         val bgColor = parseColorSafe(RADAR_COLOR)
 
         val existing = cardRefs
-        if (existing != null) {
+        if (existing != null && windowManager != null && usingAccessibilityOverlay == useAccessibilityOverlay) {
             existing.tierBadge.text = label
             applyCardBackground(existing.root, bgColor)
             applyTierBadgeBackground(existing.tierBadge, bgColor)
@@ -213,30 +270,41 @@ object DriveMindOverlay {
             return
         }
 
+        detachOverlayView(immediate = true)
         windowManager = wm
+        usingAccessibilityOverlay = useAccessibilityOverlay
         val refs = buildCard(appCtx, bgColor)
         refs.tierBadge.text = label
         setProfitLayoutVisible(refs, profitVisible = false)
-        attachAndShow(appCtx, wm, refs)
+        attachAndShow(appCtx, wm, refs, useAccessibilityOverlay)
         startRadarPulse()
     }
 
-    private fun detachOverlayView() {
+    private fun detachOverlayView(immediate: Boolean) {
         stopRadarPulse()
         val wm = windowManager ?: return
         val refs = cardRefs ?: return
+        refs.root.animate().cancel()
+        if (immediate) {
+            try { wm.removeView(refs.root) } catch (_: Exception) { }
+            cardRefs = null
+            layoutParams = null
+            windowManager = null
+            usingAccessibilityOverlay = false
+            return
+        }
         fadeToHidden(refs.root) {
             try { wm.removeView(refs.root) } catch (_: Exception) { }
             cardRefs = null
             layoutParams = null
             windowManager = null
+            usingAccessibilityOverlay = false
         }
     }
 
     private fun buildCard(appCtx: Context, bgColor: Int): OverlayCardRefs {
         val padH = overlayDp(appCtx, 14)
         val padV = overlayDp(appCtx, 12)
-
         val innerMaxWidth = overlayDp(appCtx, CARD_MAX_WIDTH_DP) - padH * 2
 
         val root = LinearLayout(appCtx).apply {
@@ -304,11 +372,22 @@ object DriveMindOverlay {
         refs.metricsLine.visibility = if (profitVisible && refs.metricsLine.text.isNotBlank()) View.VISIBLE else View.GONE
     }
 
-    private fun attachAndShow(appCtx: Context, wm: WindowManager, refs: OverlayCardRefs) {
+    private fun attachAndShow(
+        appCtx: Context,
+        wm: WindowManager,
+        refs: OverlayCardRefs,
+        useAccessibilityOverlay: Boolean,
+    ) {
+        val overlayType = if (useAccessibilityOverlay) {
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
+        } else {
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+        }
+
         val lp = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            overlayType,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                 or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
                 or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
@@ -325,7 +404,7 @@ object DriveMindOverlay {
         refs.root.setOnTouchListener(
             WidgetTouchListener(wm, refs.root, lp) {
                 if (!DriveMindScraperState.isOrderParsingEnabled()) {
-                    DriveMindReactBridge.emit("DriveMindOpenPaywall", null)
+                    DriveMindReactBridge.emitImmediate("DriveMindOpenPaywall", null)
                 }
                 val intent = Intent(appCtx, MainActivity::class.java).apply {
                     addFlags(
@@ -340,12 +419,16 @@ object DriveMindOverlay {
 
         cardRefs = refs
         try {
+            if (refs.root.parent != null) {
+                try { wm.removeView(refs.root) } catch (_: Exception) { }
+            }
             wm.addView(refs.root, lp)
             fadeToVisible(refs.root)
         } catch (_: Exception) {
             cardRefs = null
             layoutParams = null
             windowManager = null
+            usingAccessibilityOverlay = false
         }
     }
 

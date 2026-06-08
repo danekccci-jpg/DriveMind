@@ -9,6 +9,10 @@
     "android:release:fresh": "node ./scripts/clean-android-artifacts.js && cross-env NODE_ENV=production expo run:android --variant release --no-build-cache",
     "android:clean:artifacts": "node ./scripts/clean-android-artifacts.js",
     "icons:android": "node ./scripts/generate-android-launcher-icons.mjs",
+    "android:google-services": "node ./scripts/ensure-google-services-json.js",
+    "android:logcat-clear": "powershell -ExecutionPolicy Bypass -File ./scripts/clear-logcat.ps1",
+    "android:crash-log": "powershell -ExecutionPolicy Bypass -File ./scripts/capture-release-crash-log.ps1",
+    "android:install-release": "powershell -ExecutionPolicy Bypass -File ./scripts/install-release-apk.ps1",
     "ios": "expo run:ios",
     "web": "expo start --web"
   },

@@ -524,7 +524,7 @@ export function useDriverIngestBridge(enabled = true): void {
 
   useEffect(() => {
     if (!enabled) return
-    const unsub = useAuthStore.subscribe((state, prev) => {
+    const unsubAuth = useAuthStore.subscribe((state, prev) => {
       if (
         state.isSearchBlocked !== prev.isSearchBlocked ||
         state.isSubscribed !== prev.isSubscribed ||
@@ -533,7 +533,16 @@ export function useDriverIngestBridge(enabled = true): void {
         syncOrderParsingGate()
       }
     })
-    return () => unsub()
+    const unsubShift = useOrdersStore.subscribe((state, prev) => {
+      if (state.shiftStats.startTime !== prev.shiftStats.startTime) {
+        syncOrderParsingGate()
+      }
+    })
+    syncOrderParsingGate()
+    return () => {
+      unsubAuth()
+      unsubShift()
+    }
   }, [enabled])
 
   // ── Sound sync ───────────────────────────────────────────────────────────────

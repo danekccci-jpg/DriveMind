@@ -7,6 +7,7 @@ import {
   ActivityIndicator,
   Platform,
   Alert,
+  Linking,
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useTranslation } from 'react-i18next'
@@ -23,6 +24,7 @@ import { useRoleStore } from '../../store/roleStore'
 import { isGoogleSignInDeveloperError, formatGoogleSignInErrorDebug } from '../../services/googleAuth'
 import Logo from '../../components/common/Logo'
 import GoogleGIcon from '../../components/common/GoogleGIcon'
+import { PRIVACY_POLICY_URL, TERMS_OF_SERVICE_URL } from '../../constants/legalUrls'
 
 const LOGO_H_MARGIN = 15
 
@@ -34,6 +36,14 @@ export default function LoginScreen() {
   const setSubscription = useAuthStore((s) => s.setSubscription)
 
   const [loading, setLoading] = useState(false)
+
+  const openTerms = useCallback(() => {
+    void Linking.openURL(TERMS_OF_SERVICE_URL)
+  }, [])
+
+  const openPrivacyPolicy = useCallback(() => {
+    void Linking.openURL(PRIVACY_POLICY_URL)
+  }, [])
 
   const onGooglePress = useCallback(async () => {
     if (Platform.OS === 'web') {
@@ -136,6 +146,16 @@ export default function LoginScreen() {
         >
           <Text style={[styles.laterLabel, { color: c.textSecondary }]}>{t('login_later')}</Text>
         </TouchableOpacity>
+
+        <View style={styles.legalFooter}>
+          <TouchableOpacity activeOpacity={0.7} onPress={openTerms} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}>
+            <Text style={[styles.legalLink, { color: c.textMuted }]}>{t('profile_legal_terms')}</Text>
+          </TouchableOpacity>
+          <Text style={[styles.legalDot, { color: c.textMuted }]}>•</Text>
+          <TouchableOpacity activeOpacity={0.7} onPress={openPrivacyPolicy} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}>
+            <Text style={[styles.legalLink, { color: c.textMuted }]}>{t('profile_legal_privacy')}</Text>
+          </TouchableOpacity>
+        </View>
       </View>
     </View>
   )
@@ -198,6 +218,23 @@ const styles = StyleSheet.create({
   },
   laterLabel: {
     fontSize: 15,
+    fontFamily: fonts.regular,
+  },
+  legalFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginTop: 20,
+    paddingBottom: 4,
+  },
+  legalLink: {
+    fontSize: 12,
+    fontFamily: fonts.regular,
+    textDecorationLine: 'underline',
+  },
+  legalDot: {
+    fontSize: 12,
     fontFamily: fonts.regular,
   },
 })
