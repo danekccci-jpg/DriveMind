@@ -37,41 +37,49 @@ class DriveMindScraperService : AccessibilityService() {
     // ── AccessibilityService callbacks ────────────────────────────────────────
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        if (event == null) return
-        if (!DriveMindScraperState.isOrderParsingEnabled()) {
-            cancelTickLoop()
-            cancelDebouncedParse()
-            return
-        }
-
-        val pkg = event.packageName?.toString() ?: return
-        topPackageName = pkg
-
-        if (pkg !in OVERLAY_TARGET_PACKAGES) {
-            cancelTickLoop()
-            return
-        }
-
-        // Lazy scraping: full tree analysis only for whitelisted driver apps.
-        if (pkg !in MONITORED_PACKAGES) {
-            cancelTickLoop()
-            return
-        }
-
-        currentPackage = pkg
-
-        when (event.eventType) {
-            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
-                DriveMindScraperState.extendScanWindow(10_000L)
-                foundThisWindow = false
-                requestDebouncedParse(immediate = true)
+        // The AccessibilityService runs in a system-bound process; any uncaught
+        // exception here will cause AOSP to silently disable the service and
+        // strand DriveMind in a state where the SystemConfiguration card shows
+        // "Enabled" while we receive no events. Shield every event.
+        try {
+            if (event == null) return
+            if (!DriveMindScraperState.isOrderParsingEnabled()) {
+                cancelTickLoop()
+                cancelDebouncedParse()
+                return
             }
-            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
-                DriveMindScraperState.extendScanWindow(10_000L)
-                if (!foundThisWindow) {
-                    requestDebouncedParse(immediate = false)
+
+            val pkg = event.packageName?.toString() ?: return
+            topPackageName = pkg
+
+            if (pkg !in OVERLAY_TARGET_PACKAGES) {
+                cancelTickLoop()
+                return
+            }
+
+            // Lazy scraping: full tree analysis only for whitelisted driver apps.
+            if (pkg !in MONITORED_PACKAGES) {
+                cancelTickLoop()
+                return
+            }
+
+            currentPackage = pkg
+
+            when (event.eventType) {
+                AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
+                    DriveMindScraperState.extendScanWindow(10_000L)
+                    foundThisWindow = false
+                    requestDebouncedParse(immediate = true)
+                }
+                AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
+                    DriveMindScraperState.extendScanWindow(10_000L)
+                    if (!foundThisWindow) {
+                        requestDebouncedParse(immediate = false)
+                    }
                 }
             }
+        } catch (t: Throwable) {
+            android.util.Log.e("DriveMindScraper", "onAccessibilityEvent shielded crash", t)
         }
     }
 

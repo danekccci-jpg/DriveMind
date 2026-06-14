@@ -261,7 +261,7 @@ object DriveMindOverlay {
 
         val existing = cardRefs
         if (existing != null && windowManager != null && usingAccessibilityOverlay == useAccessibilityOverlay) {
-            existing.tierBadge.text = label
+            if (existing.tierBadge.text != label) existing.tierBadge.text = label
             applyCardBackground(existing.root, bgColor)
             applyTierBadgeBackground(existing.tierBadge, bgColor)
             setProfitLayoutVisible(existing, profitVisible = false)
@@ -360,9 +360,13 @@ object DriveMindOverlay {
     }
 
     private fun applyProfitFields(refs: OverlayCardRefs, fields: OverlayProfitFields, bgColor: Int) {
-        refs.tierBadge.text = fields.tierTitle.trim()
-        refs.priceLine.text = fields.priceLine.trim()
-        refs.metricsLine.text = fields.metricsLine.trim()
+        // Only assign text when the value actually changed to avoid spurious layout passes.
+        val tier = fields.tierTitle.trim()
+        val price = fields.priceLine.trim()
+        val metrics = fields.metricsLine.trim()
+        if (refs.tierBadge.text != tier) refs.tierBadge.text = tier
+        if (refs.priceLine.text != price) refs.priceLine.text = price
+        if (refs.metricsLine.text != metrics) refs.metricsLine.text = metrics
         applyCardBackground(refs.root, bgColor)
         applyTierBadgeBackground(refs.tierBadge, bgColor)
     }
@@ -433,6 +437,10 @@ object DriveMindOverlay {
     }
 
     private fun applyCardBackground(view: View, color: Int) {
+        // Guard against re-allocating a GradientDrawable (and forcing a full
+        // WindowManager layout pass) when the colour hasn't actually changed.
+        if (view.tag as? Int == color) return
+        view.tag = color
         view.background = GradientDrawable().apply {
             setColor(color)
             cornerRadius = overlayDp(view.context, CARD_CORNER_DP).toFloat()
@@ -441,6 +449,8 @@ object DriveMindOverlay {
 
     private fun applyTierBadgeBackground(view: TextView, cardColor: Int) {
         val darker = ColorUtils.blendARGB(cardColor, Color.BLACK, 0.22f)
+        if (view.tag as? Int == darker) return
+        view.tag = darker
         view.background = GradientDrawable().apply {
             setColor(darker)
             cornerRadius = overlayDp(view.context, 8).toFloat()
@@ -454,6 +464,11 @@ object DriveMindOverlay {
     }
 
     private fun fadeToVisible(view: View) {
+        // Skip restarting the animation when the view is already fully opaque and visible.
+        // Re-triggering animate().alpha(1f) on a view that is already at alpha=1 causes
+        // the ViewPropertyAnimator to cancel and re-run the frame sequence, producing a
+        // brief alpha-dip that SurfaceFlinger registers as a repaint — visible as flicker.
+        if (view.visibility == View.VISIBLE && view.alpha == 1f) return
         view.animate().cancel()
         view.visibility = View.VISIBLE
         view.animate()

@@ -11,6 +11,7 @@ import {
   AppStateStatus,
   Alert,
   Platform,
+  NativeModules,
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useTranslation } from 'react-i18next'
@@ -115,7 +116,21 @@ export default function OrderHubScreen() {
     removeOffer(offer.id)
     if (Platform.OS === 'android') triggerScraperWindow()
     pendingOrderRef.current = order
-    openPlatformDeepLink(order.platform)
+
+    const launchPkg = offer.launchPackage || offer.packageName
+    const nativeOpen = (NativeModules.DriveMindNative as {
+      openAppByPackage?: (packageName: string) => Promise<boolean>
+    } | undefined)?.openAppByPackage
+
+    if (Platform.OS === 'android' && typeof nativeOpen === 'function' && launchPkg) {
+      try {
+        await nativeOpen(launchPkg)
+        return
+      } catch (e) {
+        console.warn('[DriveMind] openAppByPackage failed, falling back to deep link', e)
+      }
+    }
+    await openPlatformDeepLink(order.platform)
   }, [removeOffer])
 
   const handleConfirmYes = useCallback(() => {

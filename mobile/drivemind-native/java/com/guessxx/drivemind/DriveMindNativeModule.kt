@@ -1,14 +1,19 @@
 package com.guessxx.drivemind
 
+import android.Manifest
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.app.AppOpsManager
-import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
 import android.provider.Settings.Secure
+import android.view.accessibility.AccessibilityManager
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
@@ -24,10 +29,27 @@ class DriveMindNativeModule(reactContext: ReactApplicationContext) :
     ReactContextBaseJavaModule(reactContext) {
 
     init {
-        DriveMindReactBridge.reactContext = reactContext
+        // Defensive: any failure here would silently kill the entire RN module
+        // (no events from notifications, scraper, or location). Swallow + log so
+        // the rest of the bridge survives even if the bridge holder is in a bad
+        // state on hot-reload / process restore.
+        try {
+            DriveMindReactBridge.reactContext = reactContext
+        } catch (e: Throwable) {
+            android.util.Log.e("DriveMindNative", "Bridge wiring failed", e)
+        }
     }
 
     override fun getName(): String = NAME
+
+    override fun initialize() {
+        super.initialize()
+        try {
+            DriveMindReactBridge.reactContext = reactApplicationContext
+        } catch (e: Throwable) {
+            android.util.Log.e("DriveMindNative", "initialize: bridge wiring failed", e)
+        }
+    }
 
     // ── Sound ─────────────────────────────────────────────────────────────────
 
@@ -94,15 +116,62 @@ class DriveMindNativeModule(reactContext: ReactApplicationContext) :
 
     @ReactMethod
     fun getServiceStatuses(promise: Promise) {
+        // Each sub-check is wrapped so a single failing one (e.g. PowerManager
+        // on locked-down OEMs) never bubbles up and rejects the whole promise.
+        // The UI must always receive a snapshot; missing booleans default to
+        // `false` so the card flips to red, not green.
+        val ctx = reactApplicationContext
+        val map = Arguments.createMap()
+
+        map.putBoolean("notificationListenerEnabled", safeCheck("notificationListener") {
+            isNotificationListenerEnabled(ctx)
+        })
+        map.putBoolean("accessibilityServiceEnabled", safeCheck("accessibilityService") {
+            isAccessibilityServiceEnabled(ctx)
+        })
+        map.putBoolean("ignoringBatteryOptimizations", safeCheck("batteryOpt") {
+            isIgnoringBatteryOptimizations(ctx)
+        })
+        promise.resolve(map)
+    }
+
+    /**
+     * Authoritative ingest readiness for JS permission onboarding.
+     * Notification listener + background-capable location — avoids cold-start
+     * mismatches when react-native-permissions lags behind the OS grant state.
+     */
+    @ReactMethod
+    fun isBridgeActive(promise: Promise) {
         try {
             val ctx = reactApplicationContext
-            val map = Arguments.createMap()
-            map.putBoolean("notificationListenerEnabled", isNotificationListenerEnabled(ctx))
-            map.putBoolean("accessibilityServiceEnabled", isAccessibilityServiceEnabled(ctx))
-            map.putBoolean("ignoringBatteryOptimizations", isIgnoringBatteryOptimizations(ctx))
-            promise.resolve(map)
+            val active = isNotificationListenerEnabled(ctx) && hasIngestLocationGranted(ctx)
+            promise.resolve(active)
         } catch (e: Exception) {
-            promise.reject("E_STATUS", e.message, e)
+            promise.reject("E_BRIDGE", e.message, e)
+        }
+    }
+
+    private fun hasIngestLocationGranted(ctx: Context): Boolean {
+        val fine = ContextCompat.checkSelfPermission(
+            ctx,
+            Manifest.permission.ACCESS_FINE_LOCATION,
+        ) == PackageManager.PERMISSION_GRANTED
+        if (!fine) return false
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            return ContextCompat.checkSelfPermission(
+                ctx,
+                Manifest.permission.ACCESS_BACKGROUND_LOCATION,
+            ) == PackageManager.PERMISSION_GRANTED
+        }
+        return true
+    }
+
+    private inline fun safeCheck(label: String, block: () -> Boolean): Boolean {
+        return try {
+            block()
+        } catch (e: Throwable) {
+            android.util.Log.e("DriveMindNative", "safeCheck[$label] failed", e)
+            false
         }
     }
 
@@ -117,23 +186,16 @@ class DriveMindNativeModule(reactContext: ReactApplicationContext) :
 
     @ReactMethod
     fun openAccessibilitySettings() {
+        // ACCESSIBILITY_DETAILS_SETTINGS requires the system-only
+        // OPEN_ACCESSIBILITY_DETAILS_SETTINGS permission (API 33+). Normal apps must
+        // open the general accessibility list; the user selects DriveMind manually.
         val ctx = reactApplicationContext
-        val component = ComponentName(ctx.packageName, DriveMindScraperService::class.java.name)
-        val intent: Intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            Intent("android.settings.ACCESSIBILITY_DETAILS_SETTINGS").apply {
-                putExtra(Intent.EXTRA_COMPONENT_NAME, component)
-            }
-        } else {
-            Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-        }
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         try {
             ctx.startActivity(intent)
-        } catch (_: Exception) {
-            ctx.startActivity(
-                Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-            )
+        } catch (e: Exception) {
+            android.util.Log.e("DriveMindNative", "openAccessibilitySettings failed", e)
         }
     }
 
@@ -307,13 +369,43 @@ class DriveMindNativeModule(reactContext: ReactApplicationContext) :
     private fun isNotificationListenerEnabled(ctx: ReactApplicationContext): Boolean =
         NotificationManagerCompat.getEnabledListenerPackages(ctx).contains(ctx.packageName)
 
+    /**
+     * Runtime check via [AccessibilityManager] — the authoritative source.
+     *
+     * Reading `Secure.ENABLED_ACCESSIBILITY_SERVICES` returns true even when
+     * accessibility is globally disabled at the system level, which is why the
+     * SystemConfiguration card was showing "Enabled" while the scraper service
+     * was actually dead. We now ask the AccessibilityManager for the list of
+     * *active* services and verify our component ID is present. Falls back to
+     * the Settings string only if the manager service is unavailable.
+     */
     private fun isAccessibilityServiceEnabled(ctx: ReactApplicationContext): Boolean {
-        val enabled = Secure.getString(
-            ctx.contentResolver,
-            Secure.ENABLED_ACCESSIBILITY_SERVICES,
-        ) ?: return false
-        val service = "${ctx.packageName}/${DriveMindScraperService::class.java.name}"
-        return enabled.contains(service, ignoreCase = true)
+        val componentName = "${ctx.packageName}/${DriveMindScraperService::class.java.name}"
+        val flattened = "${ctx.packageName}/.${DriveMindScraperService::class.java.simpleName}"
+
+        return try {
+            val am = ctx.getSystemService(Context.ACCESSIBILITY_SERVICE) as? AccessibilityManager
+            if (am != null) {
+                if (!am.isEnabled) return false
+                val active = am.getEnabledAccessibilityServiceList(
+                    AccessibilityServiceInfo.FEEDBACK_ALL_MASK,
+                )
+                val hit = active.any { info ->
+                    val id = info.id ?: ""
+                    id.contains("DriveMindScraperService", ignoreCase = true) ||
+                        id.equals(componentName, ignoreCase = true) ||
+                        id.equals(flattened, ignoreCase = true)
+                }
+                if (hit) return true
+            }
+            // Fallback: Settings.Secure string (older devices / locked-down OEMs).
+            val raw = Secure.getString(ctx.contentResolver, Secure.ENABLED_ACCESSIBILITY_SERVICES)
+                ?: return false
+            raw.contains("DriveMindScraperService", ignoreCase = true)
+        } catch (e: Exception) {
+            android.util.Log.e("DriveMindNative", "isAccessibilityServiceEnabled failed", e)
+            false
+        }
     }
 
     private fun isIgnoringBatteryOptimizations(ctx: ReactApplicationContext): Boolean {

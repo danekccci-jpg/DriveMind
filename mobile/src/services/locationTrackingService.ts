@@ -10,6 +10,9 @@ export { LOCATION_TRACKING_TASK }
  * Starts high-priority location updates (foreground service on Android).
  * Safe to call repeatedly — no-op if already running.
  */
+let foregroundDeniedThisSession = false
+let backgroundPromptedThisSession = false
+
 export async function startLocationTracking(): Promise<boolean> {
   try {
     if (Platform.OS === 'web') return true
@@ -20,16 +23,30 @@ export async function startLocationTracking(): Promise<boolean> {
       return false
     }
 
-    const fg = await Location.requestForegroundPermissionsAsync()
-    if (fg.status !== 'granted') {
-      devWarn('[DriveMind Location]: foreground permission denied')
-      return false
+    const fgExisting = await Location.getForegroundPermissionsAsync()
+    let fgGranted = fgExisting.status === 'granted'
+    if (!fgGranted) {
+      if (foregroundDeniedThisSession) {
+        devWarn('[DriveMind Location]: foreground permission denied earlier this session')
+        return false
+      }
+      const fg = await Location.requestForegroundPermissionsAsync()
+      fgGranted = fg.status === 'granted'
+      if (!fgGranted) {
+        foregroundDeniedThisSession = true
+        devWarn('[DriveMind Location]: foreground permission denied')
+        return false
+      }
     }
 
     if (Platform.OS === 'android') {
-      const bg = await Location.requestBackgroundPermissionsAsync()
-      if (bg.status !== 'granted') {
-        devWarn('[DriveMind Location]: background permission not granted — OS may stop updates when backgrounded')
+      const bgExisting = await Location.getBackgroundPermissionsAsync()
+      if (bgExisting.status !== 'granted' && !backgroundPromptedThisSession) {
+        backgroundPromptedThisSession = true
+        const bg = await Location.requestBackgroundPermissionsAsync()
+        if (bg.status !== 'granted') {
+          devWarn('[DriveMind Location]: background permission not granted — OS may stop updates when backgrounded')
+        }
       }
     }
 

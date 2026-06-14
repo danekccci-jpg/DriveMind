@@ -9,8 +9,8 @@ import { computeProfitability } from '@drivemind/shared'
 import i18n from '../i18n'
 import type { Language } from '../store/languageStore'
 import {
-  isAllowedNotificationPackage,
   isAllowedScrapePackage,
+  resolveNotificationPackage,
 } from '../constants/allowedIngestPackages'
 import {
   parsePlnAmountFromText,
@@ -22,8 +22,9 @@ import { deriveSearchBlockedFromStore, syncOrderParsingGate } from './subscripti
 import { syncNativeOverlayRadarLabel, localizedProfitTierTitle, formatOverlayPrice, formatOverlayMetrics } from '../utils/overlayI18n'
 import { buildIngestOrderHash } from '../utils/orderIngestHash'
 import { useLanguageStore } from '../store/languageStore'
+import { EVENT_NOTIFICATION } from './notificationListener'
 
-export const EVENT_NOTIFICATION = 'DriveMindNotification'
+export { EVENT_NOTIFICATION }
 export const EVENT_SCRAPE = 'DriveMindScrape'
 export const EVENT_ORDER_SCRAPED = 'onOrderScraped'
 
@@ -77,20 +78,32 @@ export async function syncBufferedNotificationsIfNeeded(): Promise<void> {
   if (!native) return
   try {
     const raw = await native.getBufferedNotificationsJson()
-    const arr = JSON.parse(raw) as { title: string; text: string; timestamp: number; packageName: string }[]
+    const arr = JSON.parse(raw) as {
+      title: string
+      text: string
+      timestamp: number
+      packageName: string
+      sourcePackage?: string
+    }[]
     if (!Array.isArray(arr) || arr.length === 0) return
     const hourAgo = Date.now() - 60 * 60 * 1000
     const ingest = useDriverIngestStore.getState().ingestFromNotification
     for (const row of arr) {
-      if (!isAllowedNotificationPackage(row.packageName)) continue
-      const blob = [row.title ?? '', row.text ?? ''].filter(Boolean).join('\n')
-      if (!isValidOrderBlob(blob)) continue
+      const sourcePkg = row.sourcePackage ?? row.packageName
+      const routedPackage = resolveNotificationPackage(
+        row.packageName,
+        row.title,
+        row.text,
+        sourcePkg,
+      )
+      if (!routedPackage) continue
       if (typeof row.timestamp === 'number' && row.timestamp >= hourAgo) {
         ingest({
           title: row.title ?? '',
           text: row.text ?? '',
           timestamp: row.timestamp,
-          packageName: row.packageName ?? '',
+          packageName: routedPackage,
+          sourcePackage: sourcePkg,
         })
       }
     }
@@ -148,7 +161,7 @@ function packageToPlatformName(pkg: string): string {
 
 function packageToPlatformKey(pkg: string): string {
   if (pkg.includes('ubercab') || pkg.includes('uber')) return 'uber'
-  if (pkg.includes('bolt')) return 'bolt'
+  if (pkg.includes('bolt') || pkg.includes('mtakso')) return 'bolt'
   if (pkg.includes('glovo')) return 'glovo'
   if (pkg.includes('wolt')) return 'wolt'
   return 'unknown'
@@ -168,9 +181,10 @@ export function useDriverIngestBridge(enabled = true): void {
   const language = useLanguageStore((s) => s.language)
 
   const handlersRef = useRef({ ingestNotification, ingestScrape, removeExpired, showToast })
-  const overlayPermissionPromptedRef = useRef(false)
-  const usagePermissionPromptedRef = useRef(false)
   const orderDedupeRef = useRef({ sig: '', at: 0 })
+  // Tracks last value sent to setOverlayShiftActive so we avoid redundant native calls
+  // that would trigger unnecessary Android window redraws and flicker.
+  const lastOverlayActiveRef = useRef<boolean | null>(null)
   handlersRef.current = { ingestNotification, ingestScrape, removeExpired, showToast }
 
   useEffect(() => {
@@ -196,8 +210,15 @@ export function useDriverIngestBridge(enabled = true): void {
       if (typeof v === 'boolean') setSoundEnabled(v)
     }).catch(() => { /* noop */ })
 
-    void NetInfo.fetch().then((s) => {
-      if (s.isConnected) void syncBufferedNotificationsIfNeeded()
+    void NetInfo.fetch().then(() => {
+      void syncBufferedNotificationsIfNeeded()
+    })
+
+    // Replay notifications that arrived while RN bridge was inactive (background / cold start).
+    const flushBuffer = () => { void syncBufferedNotificationsIfNeeded() }
+    flushBuffer()
+    const appSub = AppState.addEventListener('change', (next) => {
+      if (next === 'active') flushBuffer()
     })
 
     // ── 1. Notification listener (Uber + Bolt pushes) ────────────────────────
@@ -208,36 +229,97 @@ export function useDriverIngestBridge(enabled = true): void {
         text: string
         timestamp: number
         packageName: string
+        sourcePackage?: string
+        brand?: string
         appName?: string
         price?: string
+        distanceKm?: string
+        etaMin?: string
+        pickup?: string
+        dropoff?: string
         currency?: string
       }) => {
-        if (deriveSearchBlockedFromStore()) return
-        if (!isAllowedNotificationPackage(payload.packageName)) {
-          dmDebug('ORDER_DROPPED', 'notification — package not whitelisted', {
+        // Kotlin always emits strings (never null); normalize for RN bridge edge cases.
+        const title = payload.title ?? ''
+        const text = payload.text ?? ''
+        const priceStr = payload.price ?? '0'
+        const distanceStr = payload.distanceKm ?? '0'
+        const etaStr = payload.etaMin ?? '0'
+        const timestamp = typeof payload.timestamp === 'number' ? payload.timestamp : Date.now()
+        const packageName = payload.packageName ?? ''
+
+        const routedPackage = resolveNotificationPackage(
+          packageName,
+          title,
+          text,
+          payload.sourcePackage,
+        )
+        if (!routedPackage) {
+          dmDebug('ORDER_DROPPED', 'notification — no brand match', {
             pkg: payload.packageName,
+            sourcePackage: payload.sourcePackage,
           })
           return
         }
         const nativeNow = getNative()
-        const blob = [payload.price ?? '', payload.title ?? '', payload.text ?? ''].join('\n')
-        if (!isValidOrderBlob(blob)) {
-          rejectInvalidOrder(nativeNow, 'notification failed order layout validator')
+        const blob = [priceStr, title, text].join('\n')
+        const layoutValid = isValidOrderBlob(blob)
+        dmDebug('ORDER_DETECTED', 'notification payload', {
+          pkg: routedPackage,
+          sourcePackage: payload.sourcePackage ?? packageName,
+          brand: payload.brand,
+          price: priceStr,
+          layoutValid,
+          title: title.slice(0, 80),
+        })
+        // Always list in OrderHub — subscription gate only blocks overlay / scrape.
+        handlersRef.current.ingestNotification({
+          title,
+          text,
+          timestamp,
+          packageName: routedPackage,
+          sourcePackage: payload.sourcePackage,
+          price: priceStr !== '0' ? priceStr : undefined,
+          distanceKm: distanceStr !== '0' ? distanceStr : undefined,
+          etaMin: etaStr !== '0' ? etaStr : undefined,
+          pickup: payload.pickup,
+          dropoff: payload.dropoff,
+        })
+
+        if (deriveSearchBlockedFromStore()) return
+
+        if (!layoutValid) {
+          warnIngestParse('notification layout weak — listed in OrderHub, overlay skipped')
           return
         }
-        dmDebug('ORDER_DETECTED', 'notification payload', {
-          pkg: payload.packageName,
-          price: payload.price,
-          title: payload.title?.slice(0, 80),
-        })
-        handlersRef.current.ingestNotification(payload)
+
+        // Auto-start shift on first valid intercepted order so the driver
+        // doesn't have to manually toggle the shift before receiving offers.
+        if (useOrdersStore.getState().shiftStats.startTime === null) {
+          useOrdersStore.getState().startShiftManually()
+        }
+
         if (!nativeNow) return
         const role = useRoleStore.getState().role ?? 'courier'
         dmDebug('PARSING_START', 'notification → profitability', { role })
         try {
-          const price = parsePlnAmountFromText(blob) || parsePlnAmountFromText(payload.price ?? '')
-          const distanceKm = parseDistanceKmFromText(payload.text)
-          const etaMin = parseEtaMinutesForPackage(payload.text, payload.packageName)
+          const price =
+            parsePlnAmountFromText(blob) ||
+            parsePlnAmountFromText(priceStr) ||
+            Number.parseFloat(priceStr) ||
+            0
+          const parsedDistance = parseDistanceKmFromText(text) ?? parseDistanceKmFromText(distanceStr)
+          const distanceKm =
+            parsedDistance != null && parsedDistance > 0
+              ? parsedDistance
+              : (Number.parseFloat(distanceStr) > 0 ? Number.parseFloat(distanceStr) : null)
+          const parsedEta =
+            parseEtaMinutesForPackage(text, routedPackage) ??
+            parseEtaMinutesForPackage(etaStr, routedPackage)
+          const etaMin =
+            parsedEta != null && parsedEta > 0
+              ? parsedEta
+              : (Number.parseInt(etaStr, 10) > 0 ? Number.parseInt(etaStr, 10) : null)
           if (price <= 0 || distanceKm == null || etaMin == null) {
             warnIngestParse('notification parse incomplete — skip profitability overlay')
             return
@@ -247,7 +329,7 @@ export function useDriverIngestBridge(enabled = true): void {
             pricePLN: price,
             distanceKm,
             etaMin,
-            dropoffLabel: payload.text,
+            dropoffLabel: text,
             isWeekendOrNight: isWeekendOrNightNow(),
           })
           dmDebug('PARSING_SUCCESS', 'notification parsed', {
@@ -444,10 +526,8 @@ export function useDriverIngestBridge(enabled = true): void {
       handlersRef.current.removeExpired()
     }, 10_000)
 
-    const unsubNet = NetInfo.addEventListener((state) => {
-      if (state.isConnected) {
-        void syncBufferedNotificationsIfNeeded()
-      }
+    const unsubNet = NetInfo.addEventListener(() => {
+      void syncBufferedNotificationsIfNeeded()
     })
 
     return () => {
@@ -455,6 +535,7 @@ export function useDriverIngestBridge(enabled = true): void {
       sub3.remove()
       clearInterval(ttl)
       unsubNet()
+      appSub.remove()
     }
   }, [setSoundEnabled, enabled])
 
@@ -467,51 +548,34 @@ export function useDriverIngestBridge(enabled = true): void {
     const syncOverlay = (state: ReturnType<typeof useOrdersStore.getState>) => {
       const isShiftOn = state.shiftStats.startTime !== null
       if (deriveSearchBlockedFromStore()) {
-        native.setOverlayShiftActive(false)
+        if (lastOverlayActiveRef.current !== false) {
+          lastOverlayActiveRef.current = false
+          native.setOverlayShiftActive(false)
+        }
         return
       }
       Promise.all([native.isOverlayPermissionGranted(), native.isUsageAccessGranted()]).then(
         ([overlayGranted, usageGranted]) => {
-          if (isShiftOn && !overlayGranted) {
-            if (!overlayPermissionPromptedRef.current) {
-              overlayPermissionPromptedRef.current = true
-              if (AppState.currentState === 'active') {
-                setTimeout(() => {
-                  try {
-                    if (AppState.currentState === 'active') native.requestOverlayPermission()
-                  } catch {
-                    /* noop */
-                  }
-                }, 500)
-              }
-            }
-            native.setOverlayShiftActive(false)
-            return
+          // Never auto-open system settings here — that caused GrantPermissionsActivity /
+          // settings activity loops and status-bar flicker. User grants via Permissions screen.
+          const nextActive = isShiftOn && overlayGranted && usageGranted
+          if (lastOverlayActiveRef.current !== nextActive) {
+            lastOverlayActiveRef.current = nextActive
+            native.setOverlayShiftActive(nextActive)
           }
-          if (isShiftOn && !usageGranted) {
-            if (!usagePermissionPromptedRef.current) {
-              usagePermissionPromptedRef.current = true
-              if (AppState.currentState === 'active') {
-                setTimeout(() => {
-                  try {
-                    if (AppState.currentState === 'active') native.requestUsageAccess()
-                  } catch {
-                    /* noop */
-                  }
-                }, 500)
-              }
-            }
-            native.setOverlayShiftActive(false)
-            return
-          }
-          if (overlayGranted) overlayPermissionPromptedRef.current = false
-          if (usageGranted) usagePermissionPromptedRef.current = false
-          native.setOverlayShiftActive(isShiftOn && overlayGranted && usageGranted)
         },
       )
     }
     syncOverlay(useOrdersStore.getState())
-    const unsub = useOrdersStore.subscribe(syncOverlay)
+    // Subscribe only to shift start/stop changes — navigation state noise (route polyline,
+    // GPS coords, etc.) must not re-trigger setOverlayShiftActive on every tick.
+    const unsub = useOrdersStore.subscribe(
+      (state, prev) => {
+        if (state.shiftStats.startTime !== prev.shiftStats.startTime) {
+          syncOverlay(state)
+        }
+      },
+    )
     return () => {
       unsub()
       try {
@@ -533,15 +597,9 @@ export function useDriverIngestBridge(enabled = true): void {
         syncOrderParsingGate()
       }
     })
-    const unsubShift = useOrdersStore.subscribe((state, prev) => {
-      if (state.shiftStats.startTime !== prev.shiftStats.startTime) {
-        syncOrderParsingGate()
-      }
-    })
     syncOrderParsingGate()
     return () => {
       unsubAuth()
-      unsubShift()
     }
   }, [enabled])
 

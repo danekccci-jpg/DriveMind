@@ -64,21 +64,30 @@ export type AccessibilitySettingsPromptResult = 'opened' | 'cancelled' | 'alread
  * Shows the prominent disclosure before opening Accessibility Settings when the
  * service is disabled. If already enabled, opens settings directly (manage flow).
  */
+let accessibilityPromptInFlight = false
+
 export async function promptAccessibilitySettingsWithDisclosure(): Promise<AccessibilitySettingsPromptResult> {
   if (Platform.OS !== 'android') return 'already-enabled'
+  if (accessibilityPromptInFlight) return 'cancelled'
 
   const needsDisclosure = await checkAndRequestAccessibility()
   if (!needsDisclosure) {
-    openAccessibilitySettings()
+    // Service already enabled — open settings only on explicit user action elsewhere.
     return 'already-enabled'
   }
 
-  const result = await useAccessibilityDisclosureStore.getState().requestDisclosure()
-  if (result === 'accepted') {
-    openAccessibilitySettings()
-    return 'opened'
+  accessibilityPromptInFlight = true
+
+  try {
+    const result = await useAccessibilityDisclosureStore.getState().requestDisclosure()
+    if (result === 'accepted') {
+      openAccessibilitySettings()
+      return 'opened'
+    }
+    return 'cancelled'
+  } finally {
+    accessibilityPromptInFlight = false
   }
-  return 'cancelled'
 }
 
 /**

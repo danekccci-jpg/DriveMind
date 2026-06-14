@@ -38,13 +38,31 @@ object DriveMindReactBridge {
     mainHandler.postDelayed(runnable, debounceMs)
   }
 
+  /** @return true when the event was delivered to JS. */
+  fun tryEmitImmediate(eventName: String, params: WritableMap?): Boolean {
+    val ctx = reactContext
+    if (ctx == null) {
+      android.util.Log.w(TAG, "emitImmediate($eventName) dropped — reactContext is null (RN bridge not wired)")
+      return false
+    }
+    if (!ctx.hasActiveReactInstance()) {
+      android.util.Log.w(TAG, "emitImmediate($eventName) dropped — no active React instance")
+      return false
+    }
+    return try {
+      ctx
+        .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+        .emit(eventName, params)
+      true
+    } catch (e: Throwable) {
+      android.util.Log.e(TAG, "emitImmediate($eventName) failed", e)
+      false
+    }
+  }
+
   /** Low-latency path for user-initiated actions (paywall tap, etc.). */
   fun emitImmediate(eventName: String, params: WritableMap?) {
-    val ctx = reactContext ?: return
-    if (!ctx.hasActiveReactInstance()) return
-    ctx
-      .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
-      .emit(eventName, params)
+    tryEmitImmediate(eventName, params)
   }
 
   fun emitMap(eventName: String, debounceMs: Long = EMIT_DEBOUNCE_MS, builder: (WritableMap) -> Unit) {
@@ -58,4 +76,6 @@ object DriveMindReactBridge {
     builder(map)
     emitImmediate(eventName, map)
   }
+
+  private const val TAG = "DriveMindBridge"
 }

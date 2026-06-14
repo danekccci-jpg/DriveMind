@@ -2,10 +2,11 @@ import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import {
-  isAllowedNotificationPackage,
   isAllowedScrapePackage,
+  resolveNotificationPackage,
 } from '../constants/allowedIngestPackages'
 import { buildIngestOrderHash } from '../utils/orderIngestHash'
+import i18n from '../i18n'
 
 export type IngestedSource = 'notification' | 'scrape'
 export type IngestedPlatform = 'uber' | 'bolt' | 'glovo' | 'wolt' | 'unknown'
@@ -14,6 +15,10 @@ export interface IngestedOffer {
   id: string
   source: IngestedSource
   platform: IngestedPlatform
+  /** Canonical routed package (com.ubercab.driver, com.bolt.driver, …). */
+  packageName: string
+  /** Raw posting app — use for openAppByPackage on Kraków QA mocks. */
+  launchPackage: string
   title: string
   text: string
   price?: string
@@ -34,10 +39,12 @@ function id(): string {
 }
 
 function platformFromPackage(pkg: string): IngestedPlatform {
-  if (pkg.includes('ubercab') || pkg.includes('uber')) return 'uber'
-  if (pkg.includes('bolt')) return 'bolt'
-  if (pkg.includes('glovo')) return 'glovo'
-  if (pkg.includes('wolt')) return 'wolt'
+  const p = pkg.toLowerCase()
+  if (p.includes('ubercab') || p.includes('uber')) return 'uber'
+  if (p.includes('delivery') || p.includes('boltfood') || p.includes('bolt_food')) return 'bolt'
+  if (p.includes('bolt') || p.includes('mtakso') || p.includes('taxify')) return 'bolt'
+  if (p.includes('glovo')) return 'glovo'
+  if (p.includes('wolt')) return 'wolt'
   return 'unknown'
 }
 
@@ -80,6 +87,12 @@ interface DriverIngestState {
     text: string
     timestamp: number
     packageName: string
+    sourcePackage?: string
+    price?: string
+    distanceKm?: string
+    etaMin?: string
+    pickup?: string
+    dropoff?: string
   }) => void
   ingestFromScrape: (payload: {
     price: string
@@ -119,23 +132,42 @@ export const useDriverIngestStore = create<DriverIngestState>()(
       clearToast: () => set({ lastToastMessage: null }),
 
       ingestFromNotification: (payload) => {
-        if (!isAllowedNotificationPackage(payload.packageName)) return
+        const routedPackage = resolveNotificationPackage(
+          payload.packageName,
+          payload.title,
+          payload.text,
+          payload.sourcePackage,
+        )
+        if (!routedPackage) return
         const now = Date.now()
-        const platform = platformFromPackage(payload.packageName)
+        const platform = platformFromPackage(routedPackage)
+        const price = payload.price?.trim() || undefined
         const contentHash = buildIngestOrderHash({
           platform,
-          price: '',
-          text: [payload.title, payload.text].filter(Boolean).join(' '),
+          price: price ?? '',
+          text: [payload.title, payload.text, price].filter(Boolean).join(' '),
         })
         const state = get()
         if (isDuplicateHash(state, contentHash)) return
+
+        const launchPackage =
+          payload.sourcePackage?.trim() ||
+          payload.packageName?.trim() ||
+          routedPackage
 
         const offer: IngestedOffer = {
           id: id(),
           source: 'notification',
           platform,
+          packageName: routedPackage,
+          launchPackage,
           title: payload.title,
           text: payload.text,
+          price,
+          pickup: payload.pickup?.trim() || undefined,
+          destination: payload.dropoff?.trim() || undefined,
+          distanceKm: payload.distanceKm?.trim() || undefined,
+          etaMin: payload.etaMin?.trim() || undefined,
           contentHash,
           capturedAt: payload.timestamp || now,
           expiresAt: now + TTL_MS,
@@ -171,7 +203,9 @@ export const useDriverIngestStore = create<DriverIngestState>()(
           id: id(),
           source: 'scrape',
           platform,
-          title: payload.destination ? 'Trip' : 'Scrape',
+          packageName: payload.packageName,
+          launchPackage: payload.packageName,
+          title: payload.destination ? i18n.t('ingest_title_trip') : i18n.t('ingest_title_scrape'),
           text,
           price: payload.price || undefined,
           pickup: payload.pickup || undefined,

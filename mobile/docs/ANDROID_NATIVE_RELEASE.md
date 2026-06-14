@@ -24,13 +24,14 @@ Copy-Item mobile\android\app\src\main\res\xml\accessibility_service_config.xml m
 
 `mobile/app.json` includes two DriveMind plugins that run on every `expo prebuild` and every EAS Build:
 
-### `./plugins/withDriveMindNative` (v2.0.2)
+### `./plugins/withDriveMindNative` (v2.0.3)
 
 1. Merges manifest entries via `withAndroidManifest` (`DriveMindScraperService`, `DriveMindNotificationService`, queries, usage stats permission)
 2. Copies Kotlin + `accessibility_service_config.xml` + strings
 3. Appends ProGuard keep rules from `drivemind-native/proguard-rules.pro`
 4. **Pins `android.enableMinifyInReleaseBuilds=false` and `android.enableR8.fullMode=false`** in `android/gradle.properties` (see Minification section below)
-5. **Fails the build** if `AndroidManifest.xml` is missing required service entries
+5. **Wires release signing** via `android/keystore.properties` (Play upload key — fails `bundleRelease` if missing)
+6. **Fails the build** if `AndroidManifest.xml` is missing required service entries
 
 ### `./plugins/withDriveMindIcons` (v1.0.0)
 
@@ -143,12 +144,45 @@ Reference: [Use of the AccessibilityService API](https://support.google.com/goog
    - `DriveMindScraperService`
    - `SYSTEM_ALERT_WINDOW` / usage access as required
 
+## Play upload signing (local AAB)
+
+Release builds must use the **Play upload key** (SHA-1 `7F:C9:1F:8A:…`), not `debug.keystore` (`5E:8F:16:06:…`).
+
+1. Download keystore from EAS (~2 min, no cloud build):
+   ```powershell
+   cd mobile
+   npx eas-cli credentials -p android
+   ```
+   → **production** → **Keystore** → **Download existing keystore**
+
+2. Save as `mobile/android/app/upload-key.jks` (gitignored). In `keystore.properties` use `storeFile=upload-key.jks` (path is relative to `android/app/`).
+
+3. Copy template and fill passwords:
+   ```powershell
+   Copy-Item docs\keystore.properties.example android\keystore.properties
+   notepad android\keystore.properties
+   ```
+
+4. Verify SHA-1:
+   ```powershell
+   npm run android:verify-keystore
+   ```
+
+5. Build signed AAB:
+   ```powershell
+   npm run android:bundle:release
+   ```
+   Output: `android/app/build/outputs/bundle/release/app-release.aab`
+
+Add the upload key SHA-1 to **Firebase → Project settings → Android app** so Google Sign-In works on Play builds.
+
 ## Local release APK
 
 ```powershell
 cd mobile
 $env:NODE_ENV = "production"
 npx expo prebuild --platform android
+npm run android:verify-keystore
 cd android
 .\gradlew assembleRelease
 ```

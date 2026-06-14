@@ -32,6 +32,16 @@ i18n
     },
     lng: getPersistedLanguage(),
     fallbackLng: 'en',
+    supportedLngs: ['en', 'pl', 'uk', 'ru'],
+    nonExplicitSupportedLngs: true,
+    returnEmptyString: false,
+    returnNull: false,
+    // Show English (never raw keys like "errors.network_fail") when a key is missing.
+    parseMissingKeyHandler: (key) => {
+      const fromEn = (en as Record<string, string>)[key]
+      if (fromEn) return fromEn
+      return key.split('.').pop() ?? key
+    },
     interpolation: {
       escapeValue: false,
     },

@@ -48,12 +48,13 @@ import { openPlatformDeepLink } from '../../utils/platformDeepLink'
 import { getTravelModeByVehicle } from '../../services/directionsService'
 import { navigationEngine } from '../../services/navigationEngine'
 import { triggerScraperWindow } from '../../services/driverIngestBridge'
-import { requestAllPermissions } from '../../services/permissionManager'
+import { checkPermissionsStatus } from '../../services/permissionManager'
+import { usePermissionOnboardingFocusCheck } from '../../hooks/usePermissionOnboardingFocusCheck'
 import { useDriverSessionStore } from '../../store/driverSessionStore'
 import { requestShiftAccessibilityDisclosure } from '../../services/accessibilityDisclosure'
+import { useShallow } from 'zustand/react/shallow'
 import { useDriverIngestStore } from '../../store/driverIngestStore'
 import { useAuthStore } from '../../store/authStore'
-import { syncOrderParsingGate } from '../../services/subscriptionGate'
 import { fonts } from '../../theme/typography'
 import { useTheme, type AppColors } from '../../theme/theme'
 import { computeProfitability } from '@drivemind/shared'
@@ -113,6 +114,8 @@ function dynamicNavZoom(speedMps: number | null, distToManeuverM: number, perspe
 }
 
 export default function DashboardScreen() {
+  usePermissionOnboardingFocusCheck()
+
   const { t } = useTranslation()
   const insets = useSafeAreaInsets()
   const navigation = useNavigation<any>()
@@ -165,20 +168,24 @@ export default function DashboardScreen() {
   const setIsDriverOnline = useDriverSessionStore((s) => s.setIsOnline)
   const setAccessibilityConsentGiven = useDriverSessionStore((s) => s.setAccessibilityConsentGiven)
 
-  const activeRideSnapshot = useDriverIngestStore((s) => {
-    const r = s.activeRide
-    if (!r) return null
-    return {
-      id: r.id,
-      platform: r.platform,
-      price: r.price,
-      pickup: r.pickup,
-      destination: r.destination,
-      text: r.text,
-      distanceKm: r.distanceKm,
-      etaMin: r.etaMin,
-    }
-  })
+  // Shallow compare — a plain selector returning `{ id, ... }` creates a new object every
+  // getSnapshot call and triggers "Maximum update depth exceeded" once activeRide is set.
+  const activeRideSnapshot = useDriverIngestStore(
+    useShallow((s) => {
+      const r = s.activeRide
+      if (!r) return null
+      return {
+        id: r.id,
+        platform: r.platform,
+        price: r.price,
+        pickup: r.pickup,
+        destination: r.destination,
+        text: r.text,
+        distanceKm: r.distanceKm,
+        etaMin: r.etaMin,
+      }
+    }),
+  )
   const dismissActiveRide = useDriverIngestStore((s) => s.dismissActiveRide)
   const removeIngestOffer = useDriverIngestStore((s) => s.removeOffer)
   const isSearchBlocked = useAuthStore((s) => s.isSearchBlocked)
@@ -186,10 +193,6 @@ export default function DashboardScreen() {
   const openPaywall = useCallback(() => {
     navigation.navigate('Paywall')
   }, [navigation])
-
-  useEffect(() => {
-    syncOrderParsingGate()
-  }, [isSearchBlocked])
 
   // Derived shift values — declared HERE so they are in scope for all useMemo/useCallback
   // hooks below. Declaring them after useMemo calls puts them in the TDZ (temporal dead zone)
@@ -358,8 +361,8 @@ export default function DashboardScreen() {
         if (NUCLEAR_DISABLE_GOOGLE_LOCATION_CALLS) return
         await new Promise((resolve) => setTimeout(resolve, 500))
         if (cancelled || AppState.currentState !== 'active') return
-        const { status } = await Location.requestForegroundPermissionsAsync()
-        if (status !== 'granted' || cancelled) return
+        const existing = await Location.getForegroundPermissionsAsync()
+        if (existing.status !== 'granted' || cancelled) return
         const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced })
         if (cancelled) return
         const first: LatLng = { latitude: loc.coords.latitude, longitude: loc.coords.longitude }
@@ -505,9 +508,10 @@ export default function DashboardScreen() {
   // Mount guard: delay native map attach on device boot/login transitions.
   const [isMapReady, setIsMapReady] = useState(false)
   const [isMapStyleReady, setIsMapStyleReady] = useState(false)
-  const [permissionsRequested, setPermissionsRequested] = useState(false)
+  const [permissionsChecked, setPermissionsChecked] = useState(false)
   const mapStyleReadyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const SHOWS_USER_LOCATION = false
+  // Native blue-dot follows expo-location watch — only show once we have a fix.
+  const showsUserLocationOnMap = !!userLocation
   useEffect(() => {
     const id = setTimeout(() => setIsMapReady(true), 1000)
     return () => clearTimeout(id)
@@ -534,11 +538,11 @@ export default function DashboardScreen() {
       mapStyleReadyTimeoutRef.current = null
       setIsMapStyleReady(true)
     }, 150)
-    if (!permissionsRequested) {
-      void requestAllPermissions()
-      setPermissionsRequested(true)
+    if (!permissionsChecked) {
+      void checkPermissionsStatus()
+      setPermissionsChecked(true)
     }
-  }, [permissionsRequested])
+  }, [permissionsChecked])
 
   useEffect(() => {
     if (Platform.OS === 'web') setIsMapStyleReady(true)
@@ -891,7 +895,7 @@ export default function DashboardScreen() {
         mapStyleForMap={mapStyleForMap}
         onMapReady={onMapReady}
         isNavigating={isNavigating}
-        showsUserLocation={!isNavigating && SHOWS_USER_LOCATION}
+        showsUserLocation={!isNavigating && showsUserLocationOnMap}
         mapBottomPadding={mapBottomPadding}
         initialRegion={mapInitialRegion}
         trimmedRoute={trimmedRoute}
@@ -996,7 +1000,7 @@ export default function DashboardScreen() {
       {isShiftActive && <View pointerEvents="none" style={[s.minimalHudWrap, { top: insets.top + 18 }]}>
         <View style={[s.speedChip, { backgroundColor: c.surface, borderColor: c.separator }]}>
           <Text style={[s.speedValue, { color: c.text }]}>{speedLabelKmh}</Text>
-          <Text style={[s.speedUnit, { color: c.textMuted }]}>km/h</Text>
+          <Text style={[s.speedUnit, { color: c.textMuted }]}>{t('speed_unit_kmh')}</Text>
         </View>
         <View style={[s.goalRingCard, { backgroundColor: c.surface, borderColor: c.separator }]}>
           <Svg width={GOAL_RING_SIZE} height={GOAL_RING_SIZE}>

@@ -2,6 +2,7 @@ import React, { memo, useEffect, useMemo, useRef } from 'react'
 import { View, Text, StyleSheet, Animated, Platform } from 'react-native'
 import { BlurView } from 'expo-blur'
 import Svg, { Path, G } from 'react-native-svg'
+import { useTranslation } from 'react-i18next'
 import { fonts } from '../../theme/typography'
 import { useTheme } from '../../theme/theme'
 
@@ -140,6 +141,7 @@ type Props = {
 }
 
 function WazeDirectionCardInner({ maneuver, distanceLine, streetName, etaText, topInset }: Props) {
+  const { t } = useTranslation()
   const { colors: c } = useTheme()
   const kind = classifyManeuver(maneuver)
   const slideY = useRef(new Animated.Value(-18)).current
@@ -171,7 +173,7 @@ function WazeDirectionCardInner({ maneuver, distanceLine, streetName, etaText, t
       </View>
 
       <View style={s.right}>
-        <Text style={[s.etaLabel, { color: c.textMuted }]}>ETA</Text>
+        <Text style={[s.etaLabel, { color: c.textMuted }]}>{t('nav_eta_label')}</Text>
         <Text style={[s.etaValue, { color: c.text }]} numberOfLines={1}>
           {etaText || '—'}
         </Text>

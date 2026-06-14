@@ -17,7 +17,11 @@ import { Feather } from '@expo/vector-icons'
 import * as Haptics from 'expo-haptics'
 import { useColors, type AppColors } from '../../theme/theme'
 import { fonts } from '../../theme/typography'
-import { openAccessibilitySettings, promptAccessibilitySettingsWithDisclosure } from '../../services/accessibilityDisclosure'
+import { openAccessibilitySettings } from '../../services/accessibilityDisclosure'
+import {
+  checkPermissionsStatus,
+  requestRuntimePermissionsOnUserAction,
+} from '../../services/permissionManager'
 
 // ── Native module types ───────────────────────────────────────────────────────
 
@@ -34,6 +38,7 @@ type DriveMindNativeType = {
   requestUsageAccess: () => void
   getServiceStatuses: () => Promise<ServiceStatuses>
   openAccessibilitySettings: () => void
+  openNotificationListenerSettings: () => void
 }
 
 function getNative(): DriveMindNativeType | null {
@@ -44,12 +49,22 @@ function getNative(): DriveMindNativeType | null {
 // ── Permission state ──────────────────────────────────────────────────────────
 
 type PermState = {
-  overlay: boolean | null         // SYSTEM_ALERT_WINDOW
-  accessibility: boolean | null   // AccessibilityService (scraper)
-  usageStats: boolean | null      // PACKAGE_USAGE_STATS
+  overlay: boolean | null
+  accessibility: boolean | null
+  usageStats: boolean | null
+  location: boolean | null
+  notifications: boolean | null
+  notificationListener: boolean | null
 }
 
-const PERM_INITIAL: PermState = { overlay: null, accessibility: null, usageStats: null }
+const PERM_INITIAL: PermState = {
+  overlay: null,
+  accessibility: null,
+  usageStats: null,
+  location: null,
+  notifications: null,
+  notificationListener: null,
+}
 
 // ── Screen ────────────────────────────────────────────────────────────────────
 
@@ -68,18 +83,26 @@ export default function PermissionsScreen() {
   }, [])
 
   const refresh = useCallback(async () => {
-    if (!native) {
-      setLoading(false)
-      return
-    }
     try {
-      const [overlay, usageStats, statuses] = await Promise.all([
-        native.isOverlayPermissionGranted(),
-        native.isUsageAccessGranted(),
-        native.getServiceStatuses(),
-      ])
+      const snapshot = await checkPermissionsStatus()
+      let notificationListener: boolean | null = null
+      if (native) {
+        try {
+          const statuses = await native.getServiceStatuses()
+          notificationListener = statuses.notificationListenerEnabled
+        } catch {
+          notificationListener = false
+        }
+      }
       if (!mountedRef.current) return
-      setPerms({ overlay, accessibility: statuses.accessibilityServiceEnabled, usageStats })
+      setPerms({
+        overlay: snapshot.overlayGranted,
+        accessibility: snapshot.accessibilityGranted,
+        usageStats: snapshot.usageStatsGranted,
+        location: snapshot.locationGranted,
+        notifications: snapshot.notificationsGranted,
+        notificationListener,
+      })
     } catch (e) {
       console.warn('[DriveMind] PermissionsScreen.refresh', e)
     } finally {
@@ -100,10 +123,14 @@ export default function PermissionsScreen() {
     return () => sub.remove()
   }, [refresh])
 
+  const runtimeGranted = perms.location === true && perms.notifications === true
+
   const allGranted =
     perms.overlay === true &&
     perms.accessibility === true &&
-    perms.usageStats === true
+    perms.usageStats === true &&
+    perms.notificationListener === true &&
+    perms.location === true
 
   return (
     <ScrollView
@@ -131,7 +158,46 @@ export default function PermissionsScreen() {
         <>
           <SectionLabel label={t('perm_section_required')} c={c} />
 
-          {/* Card 1 — Floating Window */}
+          {/* Card 0 — Runtime (location + notifications) — user-initiated request only */}
+          <PermCard
+            c={c}
+            icon="map-pin"
+            title={t('perm_runtime_title')}
+            subtitle={t('perm_runtime_desc')}
+            granted={runtimeGranted}
+            checkingLabel={t('perm_checking')}
+            grantedLabel={t('perm_runtime_granted')}
+            deniedLabel={t('perm_runtime_denied')}
+            actionLabel={runtimeGranted ? t('perm_runtime_action_manage') : t('perm_runtime_action_grant')}
+            onAction={() => {
+              void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+              if (runtimeGranted) {
+                void refresh()
+              } else {
+                void requestRuntimePermissionsOnUserAction().then(() => refresh())
+              }
+            }}
+          />
+
+          {/* Card 1 — Notification Listener (reads Uber/Bolt pushes) */}
+          <PermCard
+            c={c}
+            icon="bell"
+            title={t('perm_listener_title')}
+            subtitle={t('perm_listener_desc')}
+            granted={perms.notificationListener}
+            checkingLabel={t('perm_checking')}
+            grantedLabel={t('perm_listener_granted')}
+            deniedLabel={t('perm_listener_denied')}
+            actionLabel={perms.notificationListener ? t('perm_listener_action_manage') : t('perm_listener_action_grant')}
+            onAction={() => {
+              void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+              native?.openNotificationListenerSettings()
+            }}
+            danger={!perms.notificationListener}
+          />
+
+          {/* Card 2 — Floating Window */}
           <PermCard
             c={c}
             icon="layers"
@@ -148,7 +214,7 @@ export default function PermissionsScreen() {
             }}
           />
 
-          {/* Card 2 — Order Reader (Accessibility Service) */}
+          {/* Card 3 — Order Reader (Accessibility Service) */}
           <PermCard
             c={c}
             icon="eye"
@@ -161,16 +227,12 @@ export default function PermissionsScreen() {
             actionLabel={perms.accessibility ? t('perm_a11y_action_manage') : t('perm_a11y_action_grant')}
             onAction={() => {
               void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
-              if (perms.accessibility) {
-                openAccessibilitySettings()
-              } else {
-                void promptAccessibilitySettingsWithDisclosure()
-              }
+              openAccessibilitySettings()
             }}
             danger={!perms.accessibility}
           />
 
-          {/* Card 3 — App Usage Stats */}
+          {/* Card 4 — App Usage Stats */}
           <PermCard
             c={c}
             icon="bar-chart-2"

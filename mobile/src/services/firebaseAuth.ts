@@ -16,6 +16,12 @@ import {
   type PaywallMode,
 } from './userFirestoreService'
 import { signInWithGoogle, signOutGoogle, type GoogleSignInResult } from './googleAuth'
+import { getOrCreateDeviceFingerprint } from './deviceFingerprint'
+import {
+  linkUidToDevice,
+  isDeviceLinkedToOtherUid,
+} from './deviceFingerprintFirestore'
+import { useAuthStore } from '../store/authStore'
 
 export type FirebaseSignInResult =
   | {
@@ -34,7 +40,9 @@ export type FirebaseSignInResult =
 export async function signInWithGoogleAndEnsureUser(): Promise<FirebaseSignInResult> {
   const google: GoogleSignInResult = await signInWithGoogle()
   if (google.kind !== 'success') {
-    return google.kind === 'cancelled' ? { kind: 'cancelled' } : { kind: 'error', error: google.error }
+    return google.kind === 'cancelled'
+      ? { kind: 'cancelled' }
+      : { kind: 'error', error: google.error }
   }
   if (!google.idToken) {
     return { kind: 'error', error: new Error('Google sign-in did not return an id token') }
@@ -45,16 +53,37 @@ export async function signInWithGoogleAndEnsureUser(): Promise<FirebaseSignInRes
     const credential = GoogleAuthProvider.credential(google.idToken)
     const userCred = await signInWithCredential(auth, credential)
     const uid = userCred.user.uid
-    const session = await syncUserSession(uid)
+
+    // ── Anti-abuse: device fingerprint check (non-blocking on failure) ────────
+    let fingerprint: string | null = useAuthStore.getState().deviceFingerprint
+    let isAbuse = false
+    try {
+      fingerprint = await getOrCreateDeviceFingerprint()
+      useAuthStore.getState().setDeviceFingerprint(fingerprint)
+      isAbuse = await isDeviceLinkedToOtherUid(fingerprint, uid)
+      void linkUidToDevice(fingerprint, uid)
+    } catch (fpError) {
+      if (__DEV__) console.warn('[DriveMind] device fingerprint step failed', fpError)
+    }
+
+    // Sync the Firestore user document (creates it if missing, back-fills publicId
+    // and subscriptionEndsAt for older accounts). ensureUserDoc never throws.
+    const session = await syncUserSession(uid, fingerprint ?? undefined)
+
+    // Abuse detected: override the paywall state to force subscription
+    const paywallRequired = session.blocked || isAbuse
+    const searchBlocked = session.searchBlocked || isAbuse
+    const paywallMode: PaywallMode = isAbuse ? 'expired' : session.mode
+
     return {
       kind: 'success',
       name: google.name || google.email.split('@')[0],
       email: google.email,
       uid,
       userRecord: session.user,
-      paywallMode: session.mode,
-      paywallRequired: session.blocked,
-      searchBlocked: session.searchBlocked,
+      paywallMode,
+      paywallRequired,
+      searchBlocked,
     }
   } catch (error) {
     return { kind: 'error', error }
@@ -72,8 +101,15 @@ export async function syncCurrentUserSubscription(): Promise<{
   const firebaseUser = auth.currentUser
   if (!firebaseUser) return null
 
-  const session = await syncUserSession(firebaseUser.uid)
-  applyUserSessionToStore(firebaseUser.uid, session.user, session.mode, session.blocked, session.searchBlocked)
+  const fingerprint = useAuthStore.getState().deviceFingerprint
+  const session = await syncUserSession(firebaseUser.uid, fingerprint ?? undefined)
+  applyUserSessionToStore(
+    firebaseUser.uid,
+    session.user,
+    session.mode,
+    session.blocked,
+    session.searchBlocked,
+  )
   return {
     uid: firebaseUser.uid,
     userRecord: session.user,

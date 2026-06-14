@@ -11,7 +11,14 @@ private const val MAX_DIAGNOSTIC = 200
 private const val MAX_OFFLINE_ENTRIES = 50
 
 object NotificationBufferPrefs {
-  fun append(context: Context, title: String, text: String, timestampMs: Long, packageName: String) {
+  fun append(
+    context: Context,
+    title: String,
+    text: String,
+    timestampMs: Long,
+    packageName: String,
+    sourcePackage: String? = null,
+  ) {
     val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
     val raw = prefs.getString(KEY_ENTRIES, "[]") ?: "[]"
     val arr = try {
@@ -24,6 +31,9 @@ object NotificationBufferPrefs {
     o.put("text", text)
     o.put("timestamp", timestampMs)
     o.put("packageName", packageName)
+    if (!sourcePackage.isNullOrBlank()) {
+      o.put("sourcePackage", sourcePackage)
+    }
     arr.put(o)
     while (arr.length() > MAX_OFFLINE_ENTRIES) {
       arr.remove(0)

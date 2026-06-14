@@ -15,7 +15,6 @@ import Logo from './src/components/common/Logo'
 import { SPLASH_NAVY } from './src/theme/logoAssets'
 
 import { useRoleStore } from './src/store/roleStore'
-import { useDriverSessionStore } from './src/store/driverSessionStore'
 import { useLanguageStore } from './src/store/languageStore'
 import { useOrdersStore } from './src/store/ordersStore'
 import { useAuthStore, isGuestEmail } from './src/store/authStore'
@@ -26,6 +25,8 @@ import {
   syncCurrentUserSubscription,
   waitForFirebaseAuthUser,
 } from './src/services/firebaseAuth'
+import { getOrCreateDeviceFingerprint } from './src/services/deviceFingerprint'
+import { syncGuestOrderCountFromRemote, GUEST_ORDER_THRESHOLD } from './src/services/userFirestoreService'
 import LoginScreen from './src/screens/Login'
 import OnboardingScreen from './src/screens/Onboarding'
 import LanguageSelectionScreen from './src/screens/LanguageSelection'
@@ -36,6 +37,10 @@ import { DriverIngestToast } from './src/components/DriverIngestToast'
 import { AccessibilityDisclosureHost } from './src/components/AccessibilityDisclosureHost'
 import { useDriverIngestBridge } from './src/services/driverIngestBridge'
 import { startLocationTracking, stopLocationTracking } from './src/services/locationTrackingService'
+import {
+  checkPermissionsStatus,
+  onReturnedFromSystemSettings,
+} from './src/services/permissionManager'
 import i18n from './src/i18n'
 import './src/i18n'
 
@@ -63,9 +68,11 @@ export default function App() {
   const subscriptionLoaded = useAuthStore((s) => s.subscriptionLoaded)
   const setSubscription = useAuthStore((s) => s.setSubscription)
   const setSubscriptionLoaded = useAuthStore((s) => s.setSubscriptionLoaded)
+  const guestOrderCount = useAuthStore((s) => s.guestOrderCount)
   const needsNativeGoogleAuth = Platform.OS === 'android' || Platform.OS === 'ios'
   const [authHydrated, setAuthHydrated] = useState(!needsNativeGoogleAuth)
   const isGuest = isGuestEmail(userEmail)
+  const isGuestBlocked = isGuest && guestOrderCount >= GUEST_ORDER_THRESHOLD
 
   useEffect(() => {
     if (!NUCLEAR_DISABLE_GOOGLE_NATIVE_CALLS && needsNativeGoogleAuth) {
@@ -85,32 +92,58 @@ export default function App() {
     i18n.changeLanguage(language)
   }, [language])
 
+  // Startup: audit permissions only — never auto-request or open Settings.
+  useEffect(() => {
+    void checkPermissionsStatus()
+  }, [])
+
+  // Returning from Settings: re-check status only — never auto-open Settings.
+  const appStateRef = useRef(AppState.currentState)
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (next) => {
+      const prev = appStateRef.current
+      if (prev.match(/inactive|background/) && next === 'active') {
+        onReturnedFromSystemSettings()
+        void checkPermissionsStatus()
+      }
+      appStateRef.current = next
+    })
+    return () => sub.remove()
+  }, [])
+
   useEffect(() => {
     if (!onboardingComplete) return
     // Emergency switch: keep background TaskManager location tracking disabled
     // while investigating AppOps MONITOR_LOCATION crashes in release builds.
     const ENABLE_BACKGROUND_TRACKING = true
+    let lastShouldTrack: boolean | null = null
     const syncLocationTask = () => {
       if (!ENABLE_BACKGROUND_TRACKING) {
-        void stopLocationTracking()
+        if (lastShouldTrack !== false) {
+          lastShouldTrack = false
+          void stopLocationTracking()
+        }
         return
       }
       const nav = useOrdersStore.getState().isNavigating
       const inBackground = AppState.currentState !== 'active'
       // FGS only when navigating in background — avoids AppOps MONITOR_LOCATION crash on app switch.
-      if (nav && inBackground) {
+      const shouldTrack = nav && inBackground
+      if (shouldTrack === lastShouldTrack) return
+      lastShouldTrack = shouldTrack
+      if (shouldTrack) {
         void startLocationTracking()
       } else {
         void stopLocationTracking()
       }
     }
     syncLocationTask()
-    const unsubOrders = useOrdersStore.subscribe(syncLocationTask)
-    const unsubDriver = useDriverSessionStore.subscribe(syncLocationTask)
+    const unsubOrders = useOrdersStore.subscribe((state, prev) => {
+      if (state.isNavigating !== prev.isNavigating) syncLocationTask()
+    })
     const appSub = AppState.addEventListener('change', syncLocationTask)
     return () => {
       unsubOrders()
-      unsubDriver()
       appSub.remove()
     }
   }, [onboardingComplete])
@@ -130,6 +163,26 @@ export default function App() {
     const id = setTimeout(() => setSplashHoldDone(true), SPLASH_HOLD_MS)
     return () => clearTimeout(id)
   }, [fontsLoaded])
+
+  // ── Device fingerprint initialisation ─────────────────────────────────────
+  // Runs once on mount. Stores the UUID in authStore (persisted), then syncs
+  // the guest order count from Firestore so reinstalls don't reset the trial.
+  useEffect(() => {
+    void (async () => {
+      const fp = await getOrCreateDeviceFingerprint()
+      const store = useAuthStore.getState()
+      if (store.deviceFingerprint !== fp) {
+        store.setDeviceFingerprint(fp)
+      }
+      // If the user is currently a guest, sync their remote order count to catch
+      // devices that cleared AsyncStorage (the SecureStore UUID survived, so the
+      // Firestore record still has the true count).
+      if (isGuestEmail(store.userEmail)) {
+        await syncGuestOrderCountFromRemote()
+      }
+    })()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   useEffect(() => {
     if (!needsNativeGoogleAuth || !authHydrated || !isAuthenticated) return
@@ -155,6 +208,8 @@ export default function App() {
             completedOrdersCount: synced.userRecord.completedOrdersCount,
             isSubscribed: synced.userRecord.isSubscribed,
             trialEndsAt: synced.userRecord.trialEndsAt,
+            subscriptionEndsAt: synced.userRecord.subscriptionEndsAt,
+            publicId: synced.userRecord.publicId,
             paywallMode: synced.paywallMode,
             isPaywallBlocked: synced.paywallRequired,
             isSearchBlocked: synced.searchBlocked ?? false,
@@ -231,7 +286,6 @@ export default function App() {
       <SafeAreaProvider>
         <StatusBar style={isDark ? 'light' : 'dark'} backgroundColor={c.bg} />
         <OnboardingScreen />
-        <AccessibilityDisclosureHost />
       </SafeAreaProvider>
     )
   }
@@ -270,7 +324,11 @@ export default function App() {
     )
   }
 
-  if (needsNativeGoogleAuth && isAuthenticated && !isGuest && isPaywallBlocked) {
+  if (
+    needsNativeGoogleAuth &&
+    isAuthenticated &&
+    ((!isGuest && isPaywallBlocked) || isGuestBlocked)
+  ) {
     return (
       <SafeAreaProvider>
         <StatusBar style={isDark ? 'light' : 'dark'} backgroundColor={c.bg} />
@@ -304,9 +362,9 @@ function MainAppWithDriverIngest({ navTheme }: { navTheme: Theme }) {
   return (
     <>
       <DriverIngestToast />
-      <AccessibilityDisclosureHost />
       <NavigationContainer ref={navigationRef} theme={navTheme}>
         <RootNavigator />
+        <AccessibilityDisclosureHost />
       </NavigationContainer>
     </>
   )

@@ -1,5 +1,6 @@
 import React from 'react'
 import { Platform, View, Text, StyleSheet } from 'react-native'
+import i18n from '../i18n'
 
 let MapViewComponent: React.ComponentType<any>
 let MarkerComponent: React.ComponentType<any>
@@ -13,7 +14,7 @@ const NUCLEAR_DISABLE_NATIVE_MAPS = false
 if (Platform.OS === 'web' || NUCLEAR_DISABLE_NATIVE_MAPS) {
   MapViewComponent = ({ style, children }: any) => (
     <View style={[webStyles.container, style]}>
-      <Text style={webStyles.label}>Map not available on web</Text>
+      <Text style={webStyles.label}>{i18n.t('map_web_unavailable')}</Text>
       {children}
     </View>
   )
@@ -42,7 +43,7 @@ if (Platform.OS === 'web' || NUCLEAR_DISABLE_NATIVE_MAPS) {
     // Fallback stub (same as web branch) if native maps module is unavailable.
     MapViewComponent = ({ style, children }: any) => (
       <View style={[webStyles.container, style]}>
-        <Text style={webStyles.label}>Map temporarily disabled</Text>
+        <Text style={webStyles.label}>{i18n.t('map_web_disabled')}</Text>
         {children}
       </View>
     )

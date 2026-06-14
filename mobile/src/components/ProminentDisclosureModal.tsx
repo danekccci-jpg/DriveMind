@@ -8,49 +8,93 @@ import {
   Platform,
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
+import { useTranslation } from 'react-i18next'
 import { MaterialCommunityIcons, Feather } from '@expo/vector-icons'
 
 import AnimatedButton from './AnimatedButton'
 import { fonts } from '../theme/typography'
 import { useTheme, type AppColors } from '../theme/theme'
+import { navigationRef } from '../navigation/RootNavigator'
 
 interface Props {
   visible: boolean
+  /** When native ingest bridge is ready, the modal must not mount. */
+  bridgeActive?: boolean
   onAccept: () => void
   onCancel: () => void
 }
 
-interface BulletProps {
+interface PermissionCardProps {
   icon: string
   iconFamily: 'MaterialCommunityIcons' | 'Feather'
   title: string
-  body: string
+  whyLabel: string
+  whyBody: string
+  notLabel: string
+  notBody: string
   iconColor: string
   bgColor: string
   c: AppColors
 }
 
-function DisclosureBullet({ icon, iconFamily, title, body, iconColor, bgColor, c }: BulletProps) {
+function PermissionCard({
+  icon,
+  iconFamily,
+  title,
+  whyLabel,
+  whyBody,
+  notLabel,
+  notBody,
+  iconColor,
+  bgColor,
+  c,
+}: PermissionCardProps) {
   const Icon = iconFamily === 'Feather' ? Feather : MaterialCommunityIcons
   return (
-    <View style={styles.bulletRow}>
-      <View style={[styles.bulletIconWrap, { backgroundColor: bgColor }]}>
-        <Icon name={icon as any} size={20} color={iconColor} />
+    <View style={[styles.card, { backgroundColor: c.surface, borderColor: c.border }]}>
+      <View style={styles.cardHeader}>
+        <View style={[styles.cardIconWrap, { backgroundColor: bgColor }]}>
+          <Icon name={icon as any} size={22} color={iconColor} />
+        </View>
+        <Text style={[styles.cardTitle, { color: c.text }]}>{title}</Text>
       </View>
-      <View style={styles.bulletTextWrap}>
-        <Text style={[styles.bulletTitle, { color: c.text }]}>{title}</Text>
-        <Text style={[styles.bulletBody, { color: c.textSecondary }]}>{body}</Text>
+
+      <View style={styles.cardBlock}>
+        <Text style={[styles.cardLabel, { color: c.text }]}>{whyLabel}</Text>
+        <Text style={[styles.cardBody, { color: c.textSecondary }]}>{whyBody}</Text>
+      </View>
+
+      <View style={[styles.cardInnerSep, { backgroundColor: c.separator }]} />
+
+      <View style={styles.cardBlock}>
+        <Text style={[styles.cardLabel, styles.cardLabelNot, { color: c.warning }]}>{notLabel}</Text>
+        <Text style={[styles.cardBody, { color: c.textSecondary }]}>{notBody}</Text>
       </View>
     </View>
   )
 }
 
-export function ProminentDisclosureModal({ visible, onAccept, onCancel }: Props) {
+export function ProminentDisclosureModal({ visible, bridgeActive = false, onAccept, onCancel }: Props) {
   const insets = useSafeAreaInsets()
+  const { t } = useTranslation()
   const { colors: c, isDark } = useTheme()
 
-  const handleAccept = useCallback(() => { onAccept() }, [onAccept])
+  const handleAccept = useCallback(() => {
+    onAccept()
+    setTimeout(() => {
+      try {
+        if (navigationRef.isReady()) {
+          navigationRef.navigate('Permissions')
+        }
+      } catch {
+        /* noop — modal already closed */
+      }
+    }, 0)
+  }, [onAccept])
+
   const handleCancel = useCallback(() => { onCancel() }, [onCancel])
+
+  if (bridgeActive || !visible) return null
 
   return (
     <Modal
@@ -61,72 +105,60 @@ export function ProminentDisclosureModal({ visible, onAccept, onCancel }: Props)
       onRequestClose={handleCancel}
     >
       <View style={[styles.root, { backgroundColor: c.bg, paddingTop: insets.top, paddingBottom: insets.bottom }]}>
-        {/* Header bar */}
         <View style={[styles.headerBar, { borderBottomColor: c.separator }]}>
           <View style={[styles.shieldBadge, { backgroundColor: c.primaryDim }]}>
             <MaterialCommunityIcons name="shield-check" size={22} color={c.primary} />
           </View>
           <Text style={[styles.headerLabel, { color: c.textMuted }]}>
-            WYMAGANIE GOOGLE PLAY
+            {t('perm_onboarding_header')}
           </Text>
         </View>
 
-        {/* Scrollable content */}
         <ScrollView
           style={styles.scroll}
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
           bounces={false}
         >
-          <Text style={[styles.headline, { color: c.text }]}>Usługa{'\n'}Dostępności</Text>
+          <Text style={[styles.headline, { color: c.text }]}>
+            {t('perm_onboarding_title')}
+          </Text>
           <Text style={[styles.subheadline, { color: c.textSecondary }]}>
-            Accessibility Service Disclosure
+            {t('perm_onboarding_subtitle')}
           </Text>
 
           <View style={[styles.divider, { backgroundColor: c.separator }]} />
 
-          <Text style={[styles.intro, { color: c.textSecondary }]}>
-            Przed aktywacją zmiany DriveMind wymaga włączenia{' '}
-            <Text style={{ color: c.text, fontFamily: fonts.semiBold }}>
-              Usługi Dostępności systemu Android.
-            </Text>
-            {' '}Poniżej znajdziesz pełne wyjaśnienie, do czego służy ta funkcja.
+          <Text style={[styles.valueProp, { color: c.textSecondary }]}>
+            {t('perm_onboarding_value_prop')}
           </Text>
 
-          {/* Disclosure bullets */}
-          <View style={[styles.card, { backgroundColor: c.surface, borderColor: c.border }]}>
-            <DisclosureBullet
-              c={c}
-              icon="magnify-scan"
-              iconFamily="MaterialCommunityIcons"
-              title="Co odczytuje aplikacja?"
-              body="DriveMind odczytuje dane aktywnego zlecenia bezpośrednio z ekranu aplikacji kurierskich (Bolt Driver, Uber Driver, Glovo, Wolt) wyświetlanych na pierwszym planie — cenę, adres odbioru i adres dostawy."
-              iconColor={c.primary}
-              bgColor={c.primaryDim}
-            />
-            <View style={[styles.cardSep, { backgroundColor: c.separator }]} />
-            <DisclosureBullet
-              c={c}
-              icon="chart-line"
-              iconFamily="MaterialCommunityIcons"
-              title="Dlaczego te dane są potrzebne?"
-              body="Odczytane dane są natychmiast używane wyłącznie do obliczenia opłacalności trasy i wyświetlenia pływającej nakładki z wynikiem — abyś mógł bezpiecznie ocenić zlecenie bez przełączania aplikacji."
-              iconColor={c.success}
-              bgColor={isDark ? 'rgba(34,197,94,0.12)' : 'rgba(34,197,94,0.10)'}
-            />
-            <View style={[styles.cardSep, { backgroundColor: c.separator }]} />
-            <DisclosureBullet
-              c={c}
-              icon="server-off"
-              iconFamily="MaterialCommunityIcons"
-              title="Prywatność i bezpieczeństwo"
-              body="Dane o zamówieniach z Usługi Dostępności są przetwarzane lokalnie na urządzeniu w celu obliczenia rentowności. Wybrane dane konta, status subskrypcji oraz zapytania nawigacyjne są bezpiecznie przesyłane do usług Firebase i Google Maps Platform."
-              iconColor={c.warning}
-              bgColor={isDark ? 'rgba(245,158,11,0.12)' : 'rgba(245,158,11,0.10)'}
-            />
-          </View>
+          <PermissionCard
+            c={c}
+            icon="bell-ring-outline"
+            iconFamily="MaterialCommunityIcons"
+            title={t('perm_onboarding_notif_title')}
+            whyLabel={t('perm_onboarding_why_label')}
+            whyBody={t('perm_onboarding_notif_why_body')}
+            notLabel={t('perm_onboarding_not_label')}
+            notBody={t('perm_onboarding_notif_not_body')}
+            iconColor={c.primary}
+            bgColor={c.primaryDim}
+          />
 
-          {/* English summary for Google Play policy compliance */}
+          <PermissionCard
+            c={c}
+            icon="crosshairs-gps"
+            iconFamily="MaterialCommunityIcons"
+            title={t('perm_onboarding_loc_title')}
+            whyLabel={t('perm_onboarding_why_label')}
+            whyBody={t('perm_onboarding_loc_why_body')}
+            notLabel={t('perm_onboarding_not_label')}
+            notBody={t('perm_onboarding_loc_not_body')}
+            iconColor={c.success}
+            bgColor={isDark ? 'rgba(34,197,94,0.12)' : 'rgba(34,197,94,0.10)'}
+          />
+
           <View style={[
             styles.policyBox,
             {
@@ -136,37 +168,39 @@ export function ProminentDisclosureModal({ visible, onAccept, onCancel }: Props)
           ]}>
             <Feather name="info" size={14} color={c.primary} style={styles.policyIcon} />
             <Text style={[styles.policyText, { color: isDark ? '#94B4FF' : '#2750B5' }]}>
-              <Text style={{ fontFamily: fonts.semiBold }}>Purpose: </Text>
-              DriveMind uses the Android Accessibility API solely to read active delivery order details (price, pickup address, destination) from supported courier apps running in the foreground.
-              {'\n\n'}
-              <Text style={{ fontFamily: fonts.semiBold }}>Data use: </Text>
-              Order data is processed locally on the device to compute profitability. Minimal account details, subscription status, and navigation routing preferences are transmitted securely to Firebase and Google Maps Platform services.
+              <Text style={{ fontFamily: fonts.semiBold }}>{t('perm_onboarding_policy_label')} </Text>
+              {t('perm_onboarding_policy_body')}
             </Text>
           </View>
 
           <View style={styles.scrollSpacer} />
         </ScrollView>
 
-        {/* Sticky action buttons */}
         <View style={[styles.buttonArea, { backgroundColor: c.bg, borderTopColor: c.separator }]}>
           <AnimatedButton
             style={[styles.btnAccept, { backgroundColor: c.primary }]}
             activeOpacity={0.85}
             onPress={handleAccept}
-            accessibilityLabel="Akceptuję i kontynuuję"
+            accessibilityLabel={t('perm_onboarding_cta_primary')}
           >
             <MaterialCommunityIcons name="shield-check" size={18} color="#FFFFFF" />
-            <Text style={styles.btnAcceptText}>Akceptuję i kontynuuję</Text>
+            <Text style={styles.btnAcceptText}>{t('perm_onboarding_cta_primary')}</Text>
           </AnimatedButton>
 
           <AnimatedButton
-            style={[styles.btnCancel, { borderColor: c.border }]}
+            style={styles.btnCancel}
             activeOpacity={0.75}
             onPress={handleCancel}
-            accessibilityLabel="Anuluj"
+            accessibilityLabel={t('perm_onboarding_cta_secondary')}
           >
-            <Text style={[styles.btnCancelText, { color: c.textSecondary }]}>Anuluj</Text>
+            <Text style={[styles.btnCancelText, { color: c.textSecondary }]}>
+              {t('perm_onboarding_cta_secondary')}
+            </Text>
           </AnimatedButton>
+
+          <Text style={[styles.helperText, { color: c.textMuted }]}>
+            {t('perm_onboarding_cta_helper')}
+          </Text>
         </View>
       </View>
     </Modal>
@@ -206,45 +240,44 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
   },
   headline: {
-    fontSize: 30,
+    fontSize: 26,
     fontFamily: fonts.bold,
     fontWeight: '700',
-    lineHeight: 36,
+    lineHeight: 32,
   },
   subheadline: {
     fontSize: 14,
     fontFamily: fonts.regular,
-    marginTop: 6,
-    marginBottom: 2,
+    marginTop: 8,
+    lineHeight: 20,
   },
   divider: {
     height: 1,
-    marginVertical: 22,
+    marginVertical: 20,
     borderRadius: 1,
   },
-  intro: {
+  valueProp: {
     fontSize: 14,
     fontFamily: fonts.regular,
-    lineHeight: 22,
+    lineHeight: 21,
     marginBottom: 20,
   },
   card: {
     borderRadius: 16,
     borderWidth: 1,
     overflow: 'hidden',
-    marginBottom: 16,
+    marginBottom: 14,
+    paddingBottom: 4,
   },
-  cardSep: {
-    height: StyleSheet.hairlineWidth,
-    marginLeft: 70,
-  },
-  bulletRow: {
+  cardHeader: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    padding: 16,
-    gap: 14,
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingTop: 14,
+    paddingBottom: 10,
   },
-  bulletIconWrap: {
+  cardIconWrap: {
     width: 40,
     height: 40,
     borderRadius: 10,
@@ -252,20 +285,37 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     flexShrink: 0,
   },
-  bulletTextWrap: {
-    flex: 1,
-  },
-  bulletTitle: {
-    fontSize: 14,
+  cardTitle: {
+    fontSize: 15,
     fontFamily: fonts.semiBold,
     fontWeight: '600',
-    marginBottom: 5,
+    flex: 1,
     lineHeight: 20,
   },
-  bulletBody: {
+  cardBlock: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  cardLabel: {
+    fontSize: 12,
+    fontFamily: fonts.semiBold,
+    fontWeight: '600',
+    letterSpacing: 0.3,
+    marginBottom: 4,
+  },
+  cardLabelNot: {
+    textTransform: 'uppercase',
+    fontSize: 11,
+    letterSpacing: 0.6,
+  },
+  cardBody: {
     fontSize: 13,
     fontFamily: fonts.regular,
     lineHeight: 19,
+  },
+  cardInnerSep: {
+    height: StyleSheet.hairlineWidth,
+    marginHorizontal: 16,
   },
   policyBox: {
     borderRadius: 12,
@@ -274,6 +324,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 10,
     marginBottom: 8,
+    marginTop: 4,
   },
   policyIcon: {
     marginTop: 2,
@@ -293,7 +344,7 @@ const styles = StyleSheet.create({
     paddingTop: 14,
     paddingBottom: Platform.OS === 'android' ? 18 : 8,
     borderTopWidth: StyleSheet.hairlineWidth,
-    gap: 10,
+    gap: 6,
   },
   btnAccept: {
     flexDirection: 'row',
@@ -310,14 +361,22 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
   },
   btnCancel: {
-    height: 46,
-    borderRadius: 14,
-    borderWidth: 1,
+    height: 42,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
   },
   btnCancelText: {
-    fontSize: 15,
+    fontSize: 14,
     fontFamily: fonts.medium,
+    textDecorationLine: 'underline',
+  },
+  helperText: {
+    fontSize: 11,
+    fontFamily: fonts.regular,
+    textAlign: 'center',
+    lineHeight: 16,
+    marginTop: 2,
+    paddingHorizontal: 12,
   },
 })

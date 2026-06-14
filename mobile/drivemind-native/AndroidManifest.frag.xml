@@ -12,6 +12,7 @@
   <queries>
     <package android:name="com.ubercab.driver" />
     <package android:name="com.bolt.driver" />
+    <package android:name="ee.mtakso.driver" />
     <package android:name="com.bolt.delivery" />
     <package android:name="com.glovoapp.courier" />
     <package android:name="com.wolt.handler" />

@@ -13,15 +13,42 @@ interface NotificationItem {
   id: string
   type: NotificationType
   title: string
-  desc: string
+  descKey: string
+  descParams?: Record<string, string | number>
   time: string
 }
 
 const MOCK_NOTIFICATIONS: NotificationItem[] = [
-  { id: '1', type: 'demand', title: 'high_demand', desc: 'high_demand_desc', time: '2m' },
-  { id: '2', type: 'platform', title: 'better_platform', desc: 'better_platform_desc', time: '14m' },
-  { id: '3', type: 'milestone', title: 'earnings_milestone', desc: 'earnings_milestone_desc', time: '1h' },
-  { id: '4', type: 'review', title: 'shift_review', desc: 'shift_review_desc', time: '3h' },
+  {
+    id: '1',
+    type: 'demand',
+    title: 'high_demand',
+    descKey: 'high_demand_desc',
+    descParams: { zone: 'Kazimierz' },
+    time: '2m',
+  },
+  {
+    id: '2',
+    type: 'platform',
+    title: 'better_platform',
+    descKey: 'better_platform_desc_tmpl',
+    descParams: { p1: 'Wolt', p2: 'Glovo', percent: 18 },
+    time: '14m',
+  },
+  {
+    id: '3',
+    type: 'milestone',
+    title: 'earnings_milestone',
+    descKey: 'earnings_milestone_desc',
+    time: '1h',
+  },
+  {
+    id: '4',
+    type: 'review',
+    title: 'shift_review',
+    descKey: 'shift_review_desc',
+    time: '3h',
+  },
 ]
 
 export default function NotificationsScreen() {
@@ -60,9 +87,15 @@ export default function NotificationsScreen() {
           <View style={[s.dot, { backgroundColor: dotColor(n.type) }]} />
           <View style={s.itemBody}>
             <Text style={[s.itemTitle, { color: c.text }]}>{t(n.title)}</Text>
-            <Text style={[s.itemDesc, { color: c.textSecondary }]}>{t(n.desc)}</Text>
+            <Text style={[s.itemDesc, { color: c.textSecondary }]}>
+              {t(n.descKey, n.descParams)}
+            </Text>
           </View>
-          <Text style={[s.itemTime, { color: c.textMuted }]}>{n.time.endsWith('m') ? `${n.time.replace('m', '')} ${t('min_ago_short')}` : `${n.time.replace('h', '')} ${t('hr_ago_short')}`}</Text>
+          <Text style={[s.itemTime, { color: c.textMuted }]}>
+            {n.time.endsWith('m')
+              ? `${n.time.replace('m', '')} ${t('min_ago_short')}`
+              : `${n.time.replace('h', '')} ${t('hr_ago_short')}`}
+          </Text>
         </View>
       ))}
     </ScrollView>

@@ -99,17 +99,21 @@ export function normalizeDecimalToFloat(raw: string): number {
 export function parsePlnAmountFromText(text: string): number {
   if (!text?.trim()) return 0
   const normalized = text.replace(/\s+/g, ' ')
-  const re = /(\d+(?:[.,]\d+)?)\s*(?:zł|PLN|zlotych|zl)\b/gi
+  const patterns = [
+    /\(\s*(\d+(?:[.,]\d+)?)\s*(?:zł|PLN|zlotych|zl)\s*\)/gi,
+    /(\d+(?:[.,]\d+)?)\s*(?:zł|PLN|zlotych|zl)\b/gi,
+    /(?:zł|PLN|zl)\s*(\d+(?:[.,]\d+)?)/gi,
+  ]
   let best = 0
-  const matches = [...normalized.matchAll(re)]
-  for (const m of matches) {
-    if (!m[1]) continue
-    const v = normalizeDecimalToFloat(m[1])
-    if (v > best) best = v
+  for (const re of patterns) {
+    re.lastIndex = 0
+    for (const m of normalized.matchAll(re)) {
+      if (!m[1]) continue
+      const v = normalizeDecimalToFloat(m[1])
+      if (v > best) best = v
+    }
   }
-  if (best > 0) return best
-  const lone = normalized.match(/(\d+(?:[.,]\d+)?)/)
-  return lone?.[1] ? normalizeDecimalToFloat(lone[1]) : 0
+  return best > 0 ? best : 0
 }
 
 /**
@@ -117,6 +121,7 @@ export function parsePlnAmountFromText(text: string): number {
  * Keeps standalone metres (Latin `m` only) to avoid `min`.
  */
 export function parseDistanceKmFromText(text: string): number | null {
+  if (!text?.trim()) return null
   const s = text.replace(/\s+/g, ' ')
   const kmLat = s.match(/(\d+(?:[.,]\d+)?)\s*km\b/i)
   if (kmLat?.[1]) {
@@ -173,9 +178,17 @@ export function parseEtaMinutesFromText(text: string): number | null {
   return mins.length > 0 ? mins[0] : null
 }
 
-export function parseEtaMinutesForPackage(text: string, packageName: string): number | null {
-  if (packageName.includes('bolt')) return parseBoltEtaMinutesFromText(text)
-  return parseEtaMinutesFromText(text)
+export function parseEtaMinutesForPackage(
+  text: string | null | undefined,
+  packageName: string | null | undefined,
+): number | null {
+  const blob = (text ?? '').trim()
+  if (!blob) return null
+  const pkg = (packageName ?? '').toLowerCase()
+  if (pkg.includes('bolt') || pkg.includes('mtakso') || pkg.includes('delivery')) {
+    return parseBoltEtaMinutesFromText(blob)
+  }
+  return parseEtaMinutesFromText(blob)
 }
 
 const PRICE_TOKENS = ['zł', 'pln', 'eur', '€', '$', 'usd'] as const

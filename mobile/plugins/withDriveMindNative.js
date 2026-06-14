@@ -28,6 +28,7 @@ const GOOGLE_SERVICES_CLASSPATH = "classpath('com.google.gms:google-services:4.4
 const DRIVER_PACKAGES = [
   'com.ubercab.driver',
   'com.bolt.driver',
+  'ee.mtakso.driver',
   'com.bolt.delivery',
   'com.glovoapp.courier',
   'com.wolt.handler',
@@ -218,6 +219,77 @@ function patchGradleProperties(gradlePropertiesPath) {
     fs.writeFileSync(gradlePropertiesPath, content, 'utf8')
     console.log('[with-drivemind-native] patched gradle.properties: minify=false, R8.fullMode=false')
   }
+}
+
+const RELEASE_SIGNING_MARKER = '// DriveMind release signing (keystore.properties)'
+
+/**
+ * Wires android/app/build.gradle to sign release AAB/APK with Play upload key
+ * from android/keystore.properties (not debug.keystore).
+ */
+function patchReleaseSigning(appGradlePath) {
+  if (!fs.existsSync(appGradlePath)) return
+  let gradle = fs.readFileSync(appGradlePath, 'utf8')
+  if (gradle.includes(RELEASE_SIGNING_MARKER)) return
+
+  const keystoreBlock = `
+${RELEASE_SIGNING_MARKER} — Play upload key, NOT debug.
+def drivemindKeystorePropertiesFile = rootProject.file("keystore.properties")
+def drivemindKeystoreProperties = new Properties()
+if (drivemindKeystorePropertiesFile.exists()) {
+    drivemindKeystoreProperties.load(new FileInputStream(drivemindKeystorePropertiesFile))
+}
+`
+
+  const jscIdx = gradle.indexOf('def jscFlavor = ')
+  if (jscIdx === -1) {
+    console.warn('[with-drivemind-native] patchReleaseSigning: jscFlavor anchor not found')
+    return
+  }
+  const insertAt = gradle.indexOf('\n', jscIdx) + 1
+  gradle = gradle.slice(0, insertAt) + keystoreBlock + gradle.slice(insertAt)
+
+  gradle = gradle.replace(
+    /(signingConfigs \{\s*\n\s*debug \{[\s\S]*?\n\s*\})/,
+    `$1
+        release {
+            if (drivemindKeystorePropertiesFile.exists()) {
+                storeFile file(drivemindKeystoreProperties['storeFile'])
+                storePassword drivemindKeystoreProperties['storePassword']
+                keyAlias drivemindKeystoreProperties['keyAlias']
+                keyPassword drivemindKeystoreProperties['keyPassword']
+            }
+        }`,
+  )
+
+  gradle = gradle.replace(
+    /(buildTypes \{\s*debug \{[\s\S]*?\}\s*release \{[\s\S]*?)signingConfig signingConfigs\.debug/,
+    `$1signingConfig drivemindKeystorePropertiesFile.exists()
+                ? signingConfigs.release
+                : signingConfigs.debug`,
+  )
+
+  const taskGraphGuard = `
+gradle.taskGraph.whenReady { graph ->
+    def releaseTasks = [':app:bundleRelease', ':app:assembleRelease']
+    if (releaseTasks.any { graph.hasTask(it) } && !drivemindKeystorePropertiesFile.exists()) {
+        throw new GradleException(
+            "Missing android/keystore.properties — Play upload AAB/APK requires the upload key. " +
+            "See mobile/docs/keystore.properties.example"
+        )
+    }
+}
+`
+  if (!gradle.includes('gradle.taskGraph.whenReady')) {
+    const androidBlockEnd = gradle.indexOf('\n}\n\n// Apply static values')
+    if (androidBlockEnd !== -1) {
+      gradle =
+        gradle.slice(0, androidBlockEnd + 2) + taskGraphGuard + gradle.slice(androidBlockEnd + 2)
+    }
+  }
+
+  fs.writeFileSync(appGradlePath, gradle, 'utf8')
+  console.log('[with-drivemind-native] patched app/build.gradle: release signing via keystore.properties')
 }
 
 /** Appends DriveMind ProGuard keeps if not already present. */
@@ -483,6 +555,7 @@ function withDriveMindNative(config) {
       ensureGoogleServicesPlugin(rootGradle, appGradle, path.join(appDir, 'google-services.json'))
       if (fs.existsSync(appGradle)) {
         ensureDriveMindGradleDeps(appGradle, hasGoogleServices)
+        patchReleaseSigning(appGradle)
       }
 
       const proguardSrc = path.join(NATIVE_SRC, 'proguard-rules.pro')
@@ -500,4 +573,4 @@ function withDriveMindNative(config) {
   ])
 }
 
-module.exports = createRunOncePlugin(withDriveMindNative, 'with-drivemind-native', '2.0.2')
+module.exports = createRunOncePlugin(withDriveMindNative, 'with-drivemind-native', '2.0.3')

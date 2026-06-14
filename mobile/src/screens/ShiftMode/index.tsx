@@ -185,7 +185,7 @@ export default function ShiftModeScreen() {
       <Text style={[s.sectionLabel, { marginTop: 20, color: c.textMuted }]}>{t('shift_calculator').toUpperCase()}</Text>
       <View style={s.calcGrid}>
         <StatCard label={t('orders_to_goal')} value={String(ordersToGoal)} c={c} />
-        <StatCard label={t('estimated_time')} value={`${estMinutes} min`} c={c} />
+        <StatCard label={t('estimated_time')} value={t('time_minutes_short', { count: estMinutes })} c={c} />
         <StatCard label={t('daily_goal')} value={`${Math.round((shiftStats.totalEarnings / dailyGoal) * 100)}%`} c={c} />
       </View>
       <TouchableOpacity style={s.goalBtn} activeOpacity={0.7} onPress={() => setDailyGoal(dailyGoal === 300 ? 400 : 300)}>

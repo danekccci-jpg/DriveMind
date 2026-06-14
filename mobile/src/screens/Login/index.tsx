@@ -64,6 +64,8 @@ export default function LoginScreen() {
           completedOrdersCount: result.userRecord.completedOrdersCount,
           isSubscribed: result.userRecord.isSubscribed,
           trialEndsAt: result.userRecord.trialEndsAt,
+          subscriptionEndsAt: result.userRecord.subscriptionEndsAt,
+          publicId: result.userRecord.publicId,
           paywallMode: result.paywallMode,
           isPaywallBlocked: result.paywallRequired,
           isSearchBlocked: result.searchBlocked ?? false,
@@ -77,7 +79,10 @@ export default function LoginScreen() {
           (devErr ? t('login_developer_error') : t('login_failed')) +
           formatGoogleSignInErrorDebug(result.error)
         Alert.alert(t('login_error_title'), body)
-        console.warn('[DriveMind] Google sign-in failed', result.error)
+        console.warn(
+          '[DriveMind] Google sign-in failed',
+          result.error instanceof Error ? result.error.message : result.error,
+        )
       }
     } catch (e) {
       Alert.alert(t('login_error_title'), t('login_failed'))

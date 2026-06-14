@@ -1,6 +1,6 @@
 {
   "name": "mobile",
-  "version": "1.0.1",
+  "version": "1.0.13",
   "main": "index.ts",
   "scripts": {
     "start": "expo start",
@@ -13,6 +13,9 @@
     "android:logcat-clear": "powershell -ExecutionPolicy Bypass -File ./scripts/clear-logcat.ps1",
     "android:crash-log": "powershell -ExecutionPolicy Bypass -File ./scripts/capture-release-crash-log.ps1",
     "android:install-release": "powershell -ExecutionPolicy Bypass -File ./scripts/install-release-apk.ps1",
+    "android:verify-keystore": "powershell -ExecutionPolicy Bypass -File ./scripts/verify-upload-keystore.ps1",
+    "android:bundle:release": "cross-env NODE_ENV=production powershell -ExecutionPolicy Bypass -Command \"Set-Location android; .\\gradlew bundleRelease\"",
+    "android:bundle:release:fresh": "cross-env NODE_ENV=production powershell -ExecutionPolicy Bypass -File ./scripts/build-aab-fresh.ps1",
     "ios": "expo run:ios",
     "web": "expo start --web"
   },
@@ -35,6 +38,7 @@
     "expo-font": "~55.0.4",
     "expo-haptics": "~55.0.9",
     "expo-location": "~55.1.4",
+    "expo-secure-store": "~55.0.14",
     "expo-status-bar": "~55.0.4",
     "expo-task-manager": "~55.0.10",
     "firebase": "^11.10.0",

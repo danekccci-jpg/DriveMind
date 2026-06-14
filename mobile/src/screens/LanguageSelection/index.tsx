@@ -27,16 +27,16 @@ export default function LanguageSelectionScreen() {
         <Text style={[s.subtitle, { color: c.textSecondary }]}>{t('choose_language_subtitle')}</Text>
         <View style={s.langGrid}>
           <TouchableOpacity style={[s.button, { borderColor: c.primary }]} activeOpacity={0.7} onPress={() => applyLanguage('en')}>
-            <Text style={[s.buttonText, { color: c.text }]}>English</Text>
+            <Text style={[s.buttonText, { color: c.text }]}>{t('language_en')}</Text>
           </TouchableOpacity>
           <TouchableOpacity style={[s.button, { borderColor: c.primary }]} activeOpacity={0.7} onPress={() => applyLanguage('pl')}>
-            <Text style={[s.buttonText, { color: c.text }]}>Polski</Text>
+            <Text style={[s.buttonText, { color: c.text }]}>{t('language_pl')}</Text>
           </TouchableOpacity>
           <TouchableOpacity style={[s.button, { borderColor: c.primary }]} activeOpacity={0.7} onPress={() => applyLanguage('uk')}>
-            <Text style={[s.buttonText, { color: c.text }]}>Українська</Text>
+            <Text style={[s.buttonText, { color: c.text }]}>{t('language_uk')}</Text>
           </TouchableOpacity>
           <TouchableOpacity style={[s.button, { borderColor: c.primary }]} activeOpacity={0.7} onPress={() => applyLanguage('ru')}>
-            <Text style={[s.buttonText, { color: c.text }]}>Русский</Text>
+            <Text style={[s.buttonText, { color: c.text }]}>{t('language_ru')}</Text>
           </TouchableOpacity>
         </View>
       </View>

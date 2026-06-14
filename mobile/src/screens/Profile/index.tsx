@@ -46,7 +46,11 @@ const VEHICLE_OPTIONS: { id: VehicleType; icon: string; label: string }[] = [
   { id: 'car', icon: 'car-outline', label: 'car' },
 ]
 
-const THEME_LABELS: Record<string, string> = { dark: 'Dark', light: 'Light', system: 'System' }
+const THEME_I18N_KEY: Record<string, 'theme_dark' | 'theme_light' | 'theme_system'> = {
+  dark: 'theme_dark',
+  light: 'theme_light',
+  system: 'theme_system',
+}
 
 export default function ProfileScreen() {
   const { t } = useTranslation()
@@ -158,7 +162,9 @@ export default function ProfileScreen() {
                 {userName?.trim() || 'DriveMind'}
               </Text>
               <View style={[s.rolePill, { backgroundColor: c.surfaceAlt }]}>
-                <Text style={[s.rolePillText, { color: c.textSecondary }]}>{role ?? 'courier'}</Text>
+                <Text style={[s.rolePillText, { color: c.textSecondary }]}>
+                  {role === 'taxi' ? t('taxi') : t('courier')}
+                </Text>
               </View>
             </View>
             <Text style={[s.memberSince, { color: c.textSecondary }]} numberOfLines={1}>
@@ -328,7 +334,7 @@ export default function ProfileScreen() {
               style={[s.themeToggle, { backgroundColor: c.surfaceAlt }]}
             >
               <Text style={[s.themeToggleText, { color: c.text }]}>
-                {THEME_LABELS[themeMode]}
+                {t(THEME_I18N_KEY[themeMode] ?? 'theme_system')}
               </Text>
             </TouchableOpacity>
           }
@@ -340,7 +346,7 @@ export default function ProfileScreen() {
       <View style={s.aboutBlock}>
         <Logo theme="auto" variant="symbol" size={56} />
         <Text style={[s.aboutVersion, { color: c.textMuted }]}>
-          {`DriveMind v${Constants.expoConfig?.version ?? '1.0.0'}`}
+          {t('app_version', { version: Constants.expoConfig?.version ?? '1.0.0' })}
         </Text>
       </View>
 

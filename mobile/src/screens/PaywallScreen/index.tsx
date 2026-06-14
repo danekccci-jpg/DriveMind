@@ -15,8 +15,9 @@ import { useNavigation } from '@react-navigation/native'
 
 import { fonts } from '../../theme/typography'
 import { signOutFirebase } from '../../services/firebaseAuth'
-import { useAuthStore } from '../../store/authStore'
+import { useAuthStore, isGuestEmail } from '../../store/authStore'
 import { PRIVACY_POLICY_URL, TERMS_OF_SERVICE_URL } from '../../constants/legalUrls'
+import GoogleGIcon from '../../components/common/GoogleGIcon'
 
 const BG = '#F3F4F6'
 const CARD = '#FFFFFF'
@@ -41,6 +42,8 @@ export default function PaywallScreen() {
   const navigation = useNavigation<PaywallNav>()
   const signOut = useAuthStore((s) => s.signOut)
   const isPaywallBlocked = useAuthStore((s) => s.isPaywallBlocked)
+  const userEmail = useAuthStore((s) => s.userEmail)
+  const isGuest = isGuestEmail(userEmail)
   const [subscribing, setSubscribing] = useState(false)
 
   const onSubscribe = useCallback(() => {
@@ -54,6 +57,12 @@ export default function PaywallScreen() {
 
   const onSignOut = useCallback(async () => {
     await signOutFirebase()
+    signOut()
+  }, [signOut])
+
+  // For guests: sign out so App.tsx routes back to LoginScreen where they
+  // can tap "Sign in with Google" to register and unlock the full trial.
+  const onGuestRegister = useCallback(() => {
     signOut()
   }, [signOut])
 
@@ -77,14 +86,34 @@ export default function PaywallScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {!isPaywallBlocked ? (
+        {!isPaywallBlocked && !isGuest ? (
           <TouchableOpacity style={styles.closeBtn} onPress={onClose} activeOpacity={0.7}>
             <Text style={styles.closeLabel}>✕</Text>
           </TouchableOpacity>
         ) : null}
 
+        {/* ── Guest trial exhausted section ────────────────────────────────── */}
+        {isGuest ? (
+          <View style={styles.guestCard}>
+            <Text style={styles.guestEmoji}>🏁</Text>
+            <Text style={styles.guestTitle}>{t('guest_trial_exhausted_title')}</Text>
+            <Text style={styles.guestBody}>{t('guest_trial_exhausted_body')}</Text>
+            <TouchableOpacity
+              style={styles.googleBtn}
+              onPress={onGuestRegister}
+              activeOpacity={0.86}
+            >
+              <GoogleGIcon size={20} />
+              <Text style={styles.googleBtnLabel}>{t('guest_trial_register_cta')}</Text>
+            </TouchableOpacity>
+            <Text style={styles.guestHint}>{t('guest_trial_register_hint')}</Text>
+          </View>
+        ) : null}
+
         <View style={styles.progressCard}>
-          <Text style={styles.gratulations}>{t('gratulations')}</Text>
+          <Text style={styles.gratulations}>
+            {isGuest ? t('guest_trial_progress_label') : t('gratulations')}
+          </Text>
           <View style={styles.progressTrack}>
             <View style={styles.progressFill} />
           </View>
@@ -124,7 +153,7 @@ export default function PaywallScreen() {
           {subscribing ? (
             <ActivityIndicator color="#FFFFFF" />
           ) : (
-            <Text style={styles.ctaLabel}>{t('ctaButton')}</Text>
+            <Text style={styles.ctaLabel}>{t('paywall_checkout_cta')}</Text>
           )}
         </TouchableOpacity>
 
@@ -140,9 +169,11 @@ export default function PaywallScreen() {
           </TouchableOpacity>
         </View>
 
-        <TouchableOpacity style={styles.signOutBtn} onPress={onSignOut} activeOpacity={0.7}>
-          <Text style={styles.signOutLabel}>{t('sign_out')}</Text>
-        </TouchableOpacity>
+        {!isGuest ? (
+          <TouchableOpacity style={styles.signOutBtn} onPress={onSignOut} activeOpacity={0.7}>
+            <Text style={styles.signOutLabel}>{t('sign_out')}</Text>
+          </TouchableOpacity>
+        ) : null}
       </ScrollView>
     </View>
   )
@@ -350,5 +381,61 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontFamily: fonts.medium,
     color: TEXT_MUTED,
+  },
+  guestCard: {
+    backgroundColor: CARD,
+    borderRadius: 20,
+    padding: 22,
+    marginBottom: 18,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.06,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 3,
+  },
+  guestEmoji: {
+    fontSize: 36,
+    marginBottom: 10,
+  },
+  guestTitle: {
+    fontSize: 18,
+    fontFamily: fonts.bold,
+    fontWeight: '700',
+    color: TEXT_DARK,
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  guestBody: {
+    fontSize: 14,
+    lineHeight: 20,
+    fontFamily: fonts.regular,
+    color: TEXT_MUTED,
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  googleBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    height: 52,
+    width: '100%',
+    borderRadius: 14,
+    backgroundColor: BLUE,
+    marginBottom: 10,
+  },
+  googleBtnLabel: {
+    fontSize: 15,
+    fontFamily: fonts.semiBold,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  guestHint: {
+    fontSize: 12,
+    lineHeight: 17,
+    fontFamily: fonts.regular,
+    color: TEXT_LEGAL,
+    textAlign: 'center',
   },
 })

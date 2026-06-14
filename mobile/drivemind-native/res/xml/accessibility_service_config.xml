@@ -4,5 +4,5 @@
     android:accessibilityFeedbackType="feedbackGeneric"
     android:notificationTimeout="100"
     android:canRetrieveWindowContent="true"
-    android:packageNames="com.ubercab.driver,com.bolt.driver,com.bolt.delivery,com.glovoapp.courier,com.wolt.handler"
+    android:packageNames="com.ubercab.driver,com.bolt.driver,ee.mtakso.driver,com.bolt.delivery,com.glovoapp.courier,com.wolt.handler"
     android:description="@string/accessibility_service_description" />

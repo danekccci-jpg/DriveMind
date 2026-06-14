@@ -17,7 +17,7 @@ import { useRoleStore } from '../../store/roleStore'
 import PlatformIcon from '../../components/PlatformIcon'
 import { fonts } from '../../theme/typography'
 import { useColors } from '../../theme/theme'
-import { requestAllPermissions } from '../../services/permissionManager'
+import { checkPermissionsStatus } from '../../services/permissionManager'
 import AnimatedButton from '../../components/AnimatedButton'
 import Logo from '../../components/common/Logo'
 import { PRIVACY_POLICY_URL, TERMS_OF_SERVICE_URL } from '../../constants/legalUrls'
@@ -82,7 +82,7 @@ export default function OnboardingScreen() {
     setRole(selectedRole)
     setVehicleType(selectedRole === 'taxi' ? 'car' : 'bike')
     setSelectedServices(platforms)
-    void requestAllPermissions()
+    void checkPermissionsStatus()
     setOnboardingComplete(true)
   }, [
     selectedRole,
