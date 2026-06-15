@@ -1,10 +1,11 @@
 import { useEffect, useRef } from 'react'
 import { AppState, type AppStateStatus, DeviceEventEmitter, NativeModules, Platform } from 'react-native'
 import NetInfo from '@react-native-community/netinfo'
-import { useDriverIngestStore } from '../store/driverIngestStore'
+import { useDriverIngestStore, selectAvailableIngestOffers, type IngestedOffer } from '../store/driverIngestStore'
 import { useAuthStore } from '../store/authStore'
 import { useOrdersStore } from '../store/ordersStore'
 import { useRoleStore } from '../store/roleStore'
+import { ingestOfferToOrder, passiveAcceptToOrder } from '../utils/ingestToOrder'
 import { computeProfitability } from '@drivemind/shared'
 import i18n from '../i18n'
 import type { Language } from '../store/languageStore'
@@ -19,7 +20,14 @@ import {
   isValidOrderBlob,
 } from './orderScrapeNormalize'
 import { deriveSearchBlockedFromStore, syncOrderParsingGate } from './subscriptionGate'
-import { syncNativeOverlayRadarLabel, localizedProfitTierTitle, formatOverlayPrice, formatOverlayMetrics } from '../utils/overlayI18n'
+import {
+  syncNativeOverlayRadarLabel,
+  syncNativeOverlayButtonLabels,
+  localizedProfitTierTitle,
+  formatOverlayPrice,
+  formatOverlayMetrics,
+  formatOverlayPrimaryRate,
+} from '../utils/overlayI18n'
 import { buildIngestOrderHash } from '../utils/orderIngestHash'
 import { useLanguageStore } from '../store/languageStore'
 import { EVENT_NOTIFICATION } from './notificationListener'
@@ -27,6 +35,7 @@ import { EVENT_NOTIFICATION } from './notificationListener'
 export { EVENT_NOTIFICATION }
 export const EVENT_SCRAPE = 'DriveMindScrape'
 export const EVENT_ORDER_SCRAPED = 'onOrderScraped'
+export const EVENT_ORDER_ACCEPTED = 'onOrderAccepted'
 
 type DriveMindNativeType = {
   getBufferedNotificationsJson: () => Promise<string>
@@ -42,11 +51,15 @@ type DriveMindNativeType = {
   notifyAppLifecycleState: (state: string) => void
   updateOverlayProfitability: (
     tierTitle: string,
+    primaryRateLine: string,
     formattedPrice: string,
     formattedMetrics: string,
     tierColorHex: string,
+    packageName: string,
+    contentHash: string,
   ) => void
   setOverlayRadarLabel: (label: string) => void
+  setOverlayButtonLabels?: (acceptLabel: string, dismissLabel: string) => void
   setOrderParsingEnabled: (enabled: boolean) => void
   /** Show (or update) the floating tier pill with an explicit label + hex colour. */
   showOverlay: (text: string, color: string) => void
@@ -190,6 +203,7 @@ export function useDriverIngestBridge(enabled = true): void {
   useEffect(() => {
     if (!enabled || Platform.OS !== 'android') return
     syncNativeOverlayRadarLabel()
+    syncNativeOverlayButtonLabels()
     syncOrderParsingGate()
   }, [language, enabled])
 
@@ -205,6 +219,7 @@ export function useDriverIngestBridge(enabled = true): void {
     }
 
     syncNativeOverlayRadarLabel()
+    syncNativeOverlayButtonLabels()
 
     void native.getSoundEnabled().then((v) => {
       if (typeof v === 'boolean') setSoundEnabled(v)
@@ -339,6 +354,12 @@ export function useDriverIngestBridge(enabled = true): void {
             tier: result.profitTier,
           })
           const tierTitle = localizedProfitTierTitle(result.profitTier)
+          const ingestPrice = priceStr !== '0' ? priceStr : undefined
+          const overlayHash = buildIngestOrderHash({
+            platform: packageToPlatformKey(routedPackage),
+            price: ingestPrice ?? '',
+            text: [title, text, ingestPrice].filter(Boolean).join(' '),
+          })
           void nativeNow.isOverlayPermissionGranted().then((granted) => {
             if (!granted) {
               dmDebug('WIDGET_TRIGGERED', 'skipped — overlay not granted', {})
@@ -347,9 +368,12 @@ export function useDriverIngestBridge(enabled = true): void {
             try {
               nativeNow.updateOverlayProfitability(
                 tierTitle,
+                formatOverlayPrimaryRate(result.złPerKm ?? price / Math.max(0.2, distanceKm)),
                 formatOverlayPrice(price),
                 formatOverlayMetrics(distanceKm, etaMin),
                 result.tierColor,
+                routedPackage,
+                overlayHash,
               )
               dmDebug('WIDGET_TRIGGERED', 'updateOverlayProfitability', {
                 tier: result.profitTier,
@@ -492,9 +516,12 @@ export function useDriverIngestBridge(enabled = true): void {
             try {
               nativeNow.updateOverlayProfitability(
                 tierTitle,
+                formatOverlayPrimaryRate(result.złPerKm ?? price / safeDist),
                 formatOverlayPrice(price),
                 formatOverlayMetrics(safeDist, safeEta),
                 result.tierColor,
+                payload.packageName ?? '',
+                contentHash,
               )
               dmDebug('WIDGET_TRIGGERED', 'updateOverlayProfitability', {
                 tier: result.profitTier,
@@ -522,6 +549,171 @@ export function useDriverIngestBridge(enabled = true): void {
       },
     )
 
+    // ── 3. onOrderAccepted — passive accept attribution ──────────────────────
+    //
+    // Native scraper detects the offer-screen → active-trip-screen transition
+    // (no clicks, READ-ONLY). We match against the live ingest queue by
+    // content hash, then commit the trip to history + stats + wallet.
+    const sub4 = DeviceEventEmitter.addListener(
+      EVENT_ORDER_ACCEPTED,
+      (payload: {
+        price?: string
+        distanceKm?: string
+        etaMin?: string
+        pickup?: string
+        dropoff?: string
+        surge?: string
+        packageName?: string
+        contentHash?: string
+        acceptedAt?: number
+      }) => {
+        try {
+          if (!isAllowedScrapePackage(payload.packageName ?? '')) {
+            dmDebug('ORDER_ACCEPTED_DROPPED', 'package not whitelisted', {
+              pkg: payload.packageName,
+            })
+            return
+          }
+
+          const platform = packageToPlatformKey(payload.packageName ?? '')
+          const price = parsePlnAmountFromText(
+            [payload.price, payload.distanceKm, payload.etaMin, payload.dropoff, payload.pickup]
+              .filter(Boolean)
+              .join(' '),
+          )
+          const distKm =
+            parseDistanceKmFromText(payload.distanceKm ?? '') ??
+            parseDistanceKmFromText(payload.dropoff ?? '')
+          const etaMin =
+            parseEtaMinutesForPackage(payload.etaMin ?? '', payload.packageName ?? '') ??
+            parseEtaMinutesForPackage(payload.dropoff ?? '', payload.packageName ?? '')
+
+          // Match incoming Accept against the live ingest queue. The scrape
+          // ingest used the same `buildIngestOrderHash` shape, so recomputing
+          // here gives us a one-to-one correspondence when the offer is still
+          // alive in the queue.
+          const expectedHash = buildIngestOrderHash({
+            platform,
+            price: payload.price ?? '',
+            pickup: payload.pickup,
+            destination: payload.dropoff,
+            text: [payload.price, payload.pickup, payload.dropoff, payload.surge]
+              .filter(Boolean)
+              .join(' · '),
+          })
+
+          const offers = selectAvailableIngestOffers(useDriverIngestStore.getState())
+          const matched: IngestedOffer | undefined =
+            offers.find((o) => o.contentHash === expectedHash) ??
+            (payload.contentHash
+              ? offers.find((o) => o.contentHash === payload.contentHash)
+              : undefined) ??
+            offers.find(
+              (o) =>
+                o.platform === platform &&
+                Math.abs(parseFloat((o.price ?? '0').replace(',', '.')) - (price || 0)) < 0.51,
+            )
+
+          const stableTripId = matched?.id ?? `accepted-${expectedHash}`
+
+          const order = matched
+            ? { ...ingestOfferToOrder(matched), id: stableTripId }
+            : passiveAcceptToOrder({
+                pricePLN: price || 0,
+                distanceKm: distKm ?? 0,
+                durationMin: etaMin ?? 0,
+                platform,
+                pickup: payload.pickup ?? '',
+                dropoff: payload.dropoff ?? '',
+                packageName: payload.packageName ?? '',
+                id: stableTripId,
+                contentHash: expectedHash,
+              })
+
+          // Override earnings/distance/duration with the latest native values
+          // (they may be more accurate than the captured ingest snapshot).
+          const finalOrder = {
+            ...order,
+            earnings: price > 0 ? price : order.earnings,
+            distanceKm: distKm && distKm > 0 ? distKm : order.distanceKm,
+            durationMin: etaMin && etaMin > 0 ? etaMin : order.durationMin,
+          }
+
+          dmDebug('ORDER_ACCEPTED', 'recording passive accept', {
+            id: finalOrder.id,
+            platform,
+            price: finalOrder.earnings,
+            distanceKm: finalOrder.distanceKm,
+            durationMin: finalOrder.durationMin,
+            matched: !!matched,
+          })
+
+          useOrdersStore.getState().recordAcceptedTrip(finalOrder)
+
+          if (matched) {
+            useDriverIngestStore.getState().removeOffer(matched.id)
+          }
+        } catch (e) {
+          dmDebug('ORDER_ACCEPTED_ERROR', 'pipeline failed', { reason: String(e) })
+        }
+      },
+    )
+
+    // ── 4. Overlay button events ─────────────────────────────────────────────
+    //
+    // Native overlay buttons emit these events when the driver taps them on
+    // the floating widget. We use them to keep JS state (driverIngestStore,
+    // scraper window) consistent with the user's intent.
+
+    // Accept: native already deep-launches the driver app + extends the scan
+    // window. JS just needs to clear the matched offer from the live queue so
+    // it doesn't keep showing in the OrderHub "Live offers" list.
+    const sub5 = DeviceEventEmitter.addListener(
+      'DriveMindOverlayAccept',
+      (payload: { packageName?: string; contentHash?: string }) => {
+        try {
+          const hash = payload.contentHash ?? ''
+          if (!hash) return
+          const offers = selectAvailableIngestOffers(useDriverIngestStore.getState())
+          const matched = offers.find((o) => o.contentHash === hash)
+          if (matched) {
+            useDriverIngestStore.getState().removeOffer(matched.id)
+          }
+          // Belt-and-suspenders: also extend the scan window from JS in case
+          // the native side was throttled.
+          triggerScraperWindow()
+          dmDebug('OVERLAY_ACCEPT', 'native overlay accept handled', {
+            packageName: payload.packageName,
+            matched: !!matched,
+          })
+        } catch (e) {
+          dmDebug('OVERLAY_ACCEPT_ERROR', 'failed', { reason: String(e) })
+        }
+      },
+    )
+
+    // Dismiss: remove the offer from the live queue. The overlay has already
+    // collapsed itself back to the IDLE pill on the native side.
+    const sub6 = DeviceEventEmitter.addListener(
+      'DriveMindOverlayDismiss',
+      (payload: { contentHash?: string; packageName?: string }) => {
+        try {
+          const hash = payload.contentHash ?? ''
+          if (!hash) return
+          const offers = selectAvailableIngestOffers(useDriverIngestStore.getState())
+          const matched = offers.find((o) => o.contentHash === hash)
+          if (matched) {
+            useDriverIngestStore.getState().removeOffer(matched.id)
+          }
+          dmDebug('OVERLAY_DISMISS', 'native overlay dismiss handled', {
+            matched: !!matched,
+          })
+        } catch (e) {
+          dmDebug('OVERLAY_DISMISS_ERROR', 'failed', { reason: String(e) })
+        }
+      },
+    )
+
     const ttl = setInterval(() => {
       handlersRef.current.removeExpired()
     }, 10_000)
@@ -533,6 +725,9 @@ export function useDriverIngestBridge(enabled = true): void {
     return () => {
       sub1.remove()
       sub3.remove()
+      sub4.remove()
+      sub5.remove()
+      sub6.remove()
       clearInterval(ttl)
       unsubNet()
       appSub.remove()
@@ -556,8 +751,6 @@ export function useDriverIngestBridge(enabled = true): void {
       }
       Promise.all([native.isOverlayPermissionGranted(), native.isUsageAccessGranted()]).then(
         ([overlayGranted, usageGranted]) => {
-          // Never auto-open system settings here — that caused GrantPermissionsActivity /
-          // settings activity loops and status-bar flicker. User grants via Permissions screen.
           const nextActive = isShiftOn && overlayGranted && usageGranted
           if (lastOverlayActiveRef.current !== nextActive) {
             lastOverlayActiveRef.current = nextActive
@@ -567,8 +760,6 @@ export function useDriverIngestBridge(enabled = true): void {
       )
     }
     syncOverlay(useOrdersStore.getState())
-    // Subscribe only to shift start/stop changes — navigation state noise (route polyline,
-    // GPS coords, etc.) must not re-trigger setOverlayShiftActive on every tick.
     const unsub = useOrdersStore.subscribe(
       (state, prev) => {
         if (state.shiftStats.startTime !== prev.shiftStats.startTime) {
@@ -576,8 +767,14 @@ export function useDriverIngestBridge(enabled = true): void {
         }
       },
     )
+    const appSub = AppState.addEventListener('change', (next) => {
+      if (next === 'active') {
+        syncOverlay(useOrdersStore.getState())
+      }
+    })
     return () => {
       unsub()
+      appSub.remove()
       try {
         native.setOverlayShiftActive(false)
       } catch {
@@ -630,7 +827,7 @@ export function useDriverIngestBridge(enabled = true): void {
         } catch {
           /* noop */
         }
-      } else if (state === 'background') {
+      } else if (state === 'background' || state === 'inactive') {
         try {
           native.notifyAppLifecycleState('background')
         } catch {

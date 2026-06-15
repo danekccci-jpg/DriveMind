@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
+import { useShallow } from 'zustand/react/shallow'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import {
   isAllowedScrapePackage,
@@ -36,6 +37,22 @@ const TTL_MS = 180_000
 
 function id(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+}
+
+function normalizeIngestedOffer(offer: IngestedOffer): IngestedOffer {
+  const safeId = offer.id?.trim() || id()
+  return {
+    ...offer,
+    id: safeId,
+    title: offer.title?.trim() || offer.text?.trim() || '',
+    text: offer.text?.trim() || offer.title?.trim() || '',
+    platform: offer.platform ?? 'unknown',
+    packageName: offer.packageName?.trim() || 'unknown',
+    launchPackage: offer.launchPackage?.trim() || offer.packageName?.trim() || 'unknown',
+    contentHash: offer.contentHash?.trim() || safeId,
+    capturedAt: typeof offer.capturedAt === 'number' ? offer.capturedAt : Date.now(),
+    expiresAt: typeof offer.expiresAt === 'number' ? offer.expiresAt : Date.now() + TTL_MS,
+  }
 }
 
 function platformFromPackage(pkg: string): IngestedPlatform {
@@ -113,6 +130,16 @@ export function selectAvailableIngestOffers(state: DriverIngestState): IngestedO
   return allOffers(state)
 }
 
+/** Stable subscription — shallow-compares offer rows to avoid re-render loops in lists. */
+export function useAvailableIngestOffers(): IngestedOffer[] {
+  return useDriverIngestStore(
+    useShallow((state) => {
+      const { activeRide, backgroundOrders } = state
+      return activeRide ? [activeRide, ...backgroundOrders] : backgroundOrders
+    }),
+  )
+}
+
 export function selectAvailableIngestCount(state: DriverIngestState): number {
   return (state.activeRide ? 1 : 0) + state.backgroundOrders.length
 }
@@ -155,14 +182,14 @@ export const useDriverIngestStore = create<DriverIngestState>()(
           payload.packageName?.trim() ||
           routedPackage
 
-        const offer: IngestedOffer = {
+        const offer = normalizeIngestedOffer({
           id: id(),
           source: 'notification',
           platform,
           packageName: routedPackage,
           launchPackage,
-          title: payload.title,
-          text: payload.text,
+          title: payload.title ?? '',
+          text: payload.text ?? '',
           price,
           pickup: payload.pickup?.trim() || undefined,
           destination: payload.dropoff?.trim() || undefined,
@@ -171,7 +198,7 @@ export const useDriverIngestStore = create<DriverIngestState>()(
           contentHash,
           capturedAt: payload.timestamp || now,
           expiresAt: now + TTL_MS,
-        }
+        })
         set((s) => queueOffer(s, offer))
       },
 
@@ -199,7 +226,7 @@ export const useDriverIngestStore = create<DriverIngestState>()(
         const state = get()
         if (isDuplicateHash(state, contentHash)) return
 
-        const offer: IngestedOffer = {
+        const offer = normalizeIngestedOffer({
           id: id(),
           source: 'scrape',
           platform,
@@ -216,7 +243,7 @@ export const useDriverIngestStore = create<DriverIngestState>()(
           contentHash,
           capturedAt: now,
           expiresAt: now + TTL_MS,
-        }
+        })
 
         set((s) => queueOffer(s, offer))
       },
@@ -224,16 +251,28 @@ export const useDriverIngestStore = create<DriverIngestState>()(
       removeExpiredFromQueue: () => {
         const now = Date.now()
         set((state) => {
-          const next: Partial<DriverIngestState> = {
-            backgroundOrders: state.backgroundOrders.filter((o) => o.expiresAt > now),
-          }
+          const nextBg = state.backgroundOrders.filter((o) => o.expiresAt > now)
+          let nextActive = state.activeRide
+          let finalBg = nextBg
+
           if (state.activeRide != null && state.activeRide.expiresAt <= now) {
-            const validQueue = state.backgroundOrders.filter((o) => o.expiresAt > now)
-            const [promoted, ...rest] = validQueue
-            next.activeRide = promoted ?? null
-            next.backgroundOrders = rest
+            const [promoted, ...rest] = nextBg
+            nextActive = promoted ?? null
+            finalBg = rest
           }
-          return next
+
+          if (
+            nextActive === state.activeRide &&
+            finalBg.length === state.backgroundOrders.length &&
+            finalBg.every((o, i) => o === state.backgroundOrders[i])
+          ) {
+            return state
+          }
+
+          return {
+            activeRide: nextActive,
+            backgroundOrders: finalBg,
+          }
         })
       },
 

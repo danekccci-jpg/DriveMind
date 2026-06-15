@@ -81,3 +81,60 @@ export const MAP_STYLE_DARK: MapStyleElement[] = [
   { featureType: 'administrative.locality', elementType: 'labels.text.fill',    stylers: [{ color: '#6b83a8' }] },
   { featureType: 'administrative.neighborhood', elementType: 'labels',          stylers: [{ visibility: 'off' }] },
 ]
+
+// ── POI driver overrides — applied on top of base styles in idle (non-nav) mode ──
+//
+// Design rationale:
+//  • ONLY restaurants/cafes (poi.business), hotels (lodging), and some
+//    attractions (poi.attraction) are surfaced — useful pickup/dropoff refs.
+//  • Icons are heavily desaturated so they don't compete with route overlays.
+//  • Rules are appended AFTER the base style array so they override the earlier
+//    blanket `poi: all: visibility: off` rules.
+
+const POI_DRIVER_OVERRIDES_DARK: MapStyleElement[] = [
+  { featureType: 'poi.business', elementType: 'geometry',           stylers: [{ visibility: 'on' }] },
+  { featureType: 'poi.business', elementType: 'labels.icon',        stylers: [{ visibility: 'on' }, { saturation: -85 }, { lightness: -25 }] },
+  { featureType: 'poi.business', elementType: 'labels.text.fill',   stylers: [{ color: '#4a5c72' }, { visibility: 'on' }] },
+  { featureType: 'poi.business', elementType: 'labels.text.stroke', stylers: [{ color: '#0d1117' }] },
+
+  { featureType: 'poi.attraction', elementType: 'geometry',           stylers: [{ visibility: 'on' }] },
+  { featureType: 'poi.attraction', elementType: 'labels.icon',        stylers: [{ visibility: 'on' }, { saturation: -80 }, { lightness: -20 }] },
+  { featureType: 'poi.attraction', elementType: 'labels.text.fill',   stylers: [{ color: '#4a5c72' }, { visibility: 'on' }] },
+  { featureType: 'poi.attraction', elementType: 'labels.text.stroke', stylers: [{ color: '#0d1117' }] },
+
+  { featureType: 'lodging', elementType: 'geometry',           stylers: [{ visibility: 'on' }] },
+  { featureType: 'lodging', elementType: 'labels.icon',        stylers: [{ visibility: 'on' }, { saturation: -80 }, { lightness: -20 }] },
+  { featureType: 'lodging', elementType: 'labels.text.fill',   stylers: [{ color: '#4a5c72' }, { visibility: 'on' }] },
+  { featureType: 'lodging', elementType: 'labels.text.stroke', stylers: [{ color: '#0d1117' }] },
+]
+
+const POI_DRIVER_OVERRIDES_LIGHT: MapStyleElement[] = [
+  { featureType: 'poi.business', elementType: 'geometry',           stylers: [{ visibility: 'on' }] },
+  { featureType: 'poi.business', elementType: 'labels.icon',        stylers: [{ visibility: 'on' }, { saturation: -70 }] },
+  { featureType: 'poi.business', elementType: 'labels.text.fill',   stylers: [{ color: '#8ca0b2' }, { visibility: 'on' }] },
+  { featureType: 'poi.business', elementType: 'labels.text.stroke', stylers: [{ color: '#f0f0f0' }] },
+
+  { featureType: 'poi.attraction', elementType: 'geometry',           stylers: [{ visibility: 'on' }] },
+  { featureType: 'poi.attraction', elementType: 'labels.icon',        stylers: [{ visibility: 'on' }, { saturation: -65 }] },
+  { featureType: 'poi.attraction', elementType: 'labels.text.fill',   stylers: [{ color: '#8ca0b2' }, { visibility: 'on' }] },
+  { featureType: 'poi.attraction', elementType: 'labels.text.stroke', stylers: [{ color: '#f0f0f0' }] },
+
+  { featureType: 'lodging', elementType: 'geometry',           stylers: [{ visibility: 'on' }] },
+  { featureType: 'lodging', elementType: 'labels.icon',        stylers: [{ visibility: 'on' }, { saturation: -65 }] },
+  { featureType: 'lodging', elementType: 'labels.text.fill',   stylers: [{ color: '#8ca0b2' }, { visibility: 'on' }] },
+  { featureType: 'lodging', elementType: 'labels.text.stroke', stylers: [{ color: '#f0f0f0' }] },
+]
+
+/**
+ * Idle variants — base styles plus muted poi.business, poi.attraction, and
+ * lodging markers. Applied by DashboardMap when the driver is NOT navigating.
+ */
+export const MAP_STYLE_DARK_IDLE: MapStyleElement[] = [
+  ...MAP_STYLE_DARK,
+  ...POI_DRIVER_OVERRIDES_DARK,
+]
+
+export const MAP_STYLE_LIGHT_IDLE: MapStyleElement[] = [
+  ...MAP_STYLE_LIGHT,
+  ...POI_DRIVER_OVERRIDES_LIGHT,
+]

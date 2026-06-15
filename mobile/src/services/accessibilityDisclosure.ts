@@ -1,7 +1,5 @@
 import { NativeModules, Platform } from 'react-native'
 
-import { useAccessibilityDisclosureStore } from '../store/accessibilityDisclosureStore'
-
 type DriveMindNativeType = {
   isAccessibilityServiceEnabled?: () => Promise<boolean>
   getServiceStatuses: () => Promise<{ accessibilityServiceEnabled: boolean }>
@@ -16,9 +14,7 @@ function getNative(): DriveMindNativeType | null {
 /**
  * Checks whether the DriveMind Accessibility Service is currently active.
  *
- * Returns `true` when the Prominent Disclosure screen MUST be shown
- * (i.e. the service is disabled), `false` when the service is already
- * active and the user can proceed directly.
+ * Returns `true` when the service is disabled, `false` when already enabled.
  */
 export async function checkAndRequestAccessibility(): Promise<boolean> {
   const native = getNative()
@@ -40,11 +36,8 @@ export async function checkAndRequestAccessibility(): Promise<boolean> {
 }
 
 /**
- * Opens the Android system Accessibility Settings screen so the user
- * can enable the DriveMind Accessibility Service.
- *
- * Call only after the user has accepted the prominent disclosure, or when
- * the service is already enabled (manage flow).
+ * Opens the Android system settings so the user can enable the DriveMind
+ * Accessibility Service. Uses a defensive native intent cascade.
  */
 export function openAccessibilitySettings(): void {
   const native = getNative()
@@ -61,49 +54,37 @@ export function openAccessibilitySettings(): void {
 export type AccessibilitySettingsPromptResult = 'opened' | 'cancelled' | 'already-enabled'
 
 /**
- * Shows the prominent disclosure before opening Accessibility Settings when the
- * service is disabled. If already enabled, opens settings directly (manage flow).
+ * Explicit Order Reader toggle — always fires settings intent instantly when disabled.
+ * No disclosure modal on this path (cold-start auto-prompt handled separately).
  */
-let accessibilityPromptInFlight = false
-
-export async function promptAccessibilitySettingsWithDisclosure(): Promise<AccessibilitySettingsPromptResult> {
+export async function openOrderReaderAccessibilityExplicit(): Promise<AccessibilitySettingsPromptResult> {
   if (Platform.OS !== 'android') return 'already-enabled'
-  if (accessibilityPromptInFlight) return 'cancelled'
 
-  const needsDisclosure = await checkAndRequestAccessibility()
-  if (!needsDisclosure) {
-    // Service already enabled — open settings only on explicit user action elsewhere.
+  const needsSettings = await checkAndRequestAccessibility()
+  if (!needsSettings) {
     return 'already-enabled'
   }
 
-  accessibilityPromptInFlight = true
-
-  try {
-    const result = await useAccessibilityDisclosureStore.getState().requestDisclosure()
-    if (result === 'accepted') {
-      openAccessibilitySettings()
-      return 'opened'
-    }
-    return 'cancelled'
-  } finally {
-    accessibilityPromptInFlight = false
-  }
+  openAccessibilitySettings()
+  return 'opened'
 }
 
 /**
- * Shift start flow: disclosure when a11y is off; returns whether the caller may proceed.
- * On accept, opens system settings (user may enable the service there).
+ * @deprecated Use openOrderReaderAccessibilityExplicit — same instant behavior.
+ */
+export async function promptAccessibilitySettingsWithDisclosure(): Promise<AccessibilitySettingsPromptResult> {
+  return openOrderReaderAccessibilityExplicit()
+}
+
+/**
+ * Shift start flow: open accessibility settings when service is disabled.
  */
 export async function requestShiftAccessibilityDisclosure(): Promise<boolean> {
   if (Platform.OS !== 'android') return true
 
-  const needsDisclosure = await checkAndRequestAccessibility()
-  if (!needsDisclosure) return true
+  const needsSettings = await checkAndRequestAccessibility()
+  if (!needsSettings) return true
 
-  const result = await useAccessibilityDisclosureStore.getState().requestDisclosure()
-  if (result === 'accepted') {
-    openAccessibilitySettings()
-    return true
-  }
-  return false
+  openAccessibilitySettings()
+  return true
 }

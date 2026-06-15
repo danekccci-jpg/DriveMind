@@ -1,11 +1,10 @@
-import React, { useCallback, useState } from 'react'
+import React, { useCallback } from 'react'
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
   ActivityIndicator,
-  Alert,
   ScrollView,
   Linking,
 } from 'react-native'
@@ -16,17 +15,19 @@ import { useNavigation } from '@react-navigation/native'
 import { fonts } from '../../theme/typography'
 import { signOutFirebase } from '../../services/firebaseAuth'
 import { useAuthStore, isGuestEmail } from '../../store/authStore'
+import { useSubscription } from '../../context/SubscriptionContext'
+import { SUBSCRIPTION_PRICE_LABEL } from '../../constants/subscription'
 import { PRIVACY_POLICY_URL, TERMS_OF_SERVICE_URL } from '../../constants/legalUrls'
 import GoogleGIcon from '../../components/common/GoogleGIcon'
 
-const BG = '#F3F4F6'
-const CARD = '#FFFFFF'
-const TEXT_DARK = '#111827'
-const TEXT_MUTED = '#6B7280'
-const TEXT_LEGAL = '#9CA3AF'
-const BLUE = '#2563EB'
-const BLUE_SOFT = '#EFF6FF'
-const GREEN = '#10B981'
+const BG = '#121212'
+const CARD = '#1A1A1D'
+const BORDER = '#27272A'
+const TEXT_PRIMARY = '#FAFAFA'
+const TEXT_MUTED = '#A1A1AA'
+const TEXT_SOFT = '#71717A'
+const ACCENT = '#22C55E'
+const ACCENT_DIM = 'rgba(34, 197, 94, 0.12)'
 
 const FEATURES = [
   { icon: '📈', titleKey: 'feature1Title', subKey: 'feature1Sub' },
@@ -44,24 +45,20 @@ export default function PaywallScreen() {
   const isPaywallBlocked = useAuthStore((s) => s.isPaywallBlocked)
   const userEmail = useAuthStore((s) => s.userEmail)
   const isGuest = isGuestEmail(userEmail)
-  const [subscribing, setSubscribing] = useState(false)
+
+  const { buySubscription, isPurchasing, lastError, clearError, subscriptionStatus } =
+    useSubscription()
 
   const onSubscribe = useCallback(() => {
-    setSubscribing(true)
-    try {
-      Alert.alert(t('paywall_subscribe_title'), t('paywall_subscribe_body'))
-    } finally {
-      setSubscribing(false)
-    }
-  }, [t])
+    clearError()
+    void buySubscription()
+  }, [buySubscription, clearError])
 
   const onSignOut = useCallback(async () => {
     await signOutFirebase()
     signOut()
   }, [signOut])
 
-  // For guests: sign out so App.tsx routes back to LoginScreen where they
-  // can tap "Sign in with Google" to register and unlock the full trial.
   const onGuestRegister = useCallback(() => {
     signOut()
   }, [signOut])
@@ -80,19 +77,20 @@ export default function PaywallScreen() {
     void Linking.openURL(PRIVACY_POLICY_URL)
   }, [])
 
+  const showClose = !isPaywallBlocked && !isGuest
+
   return (
     <View style={[styles.root, { paddingTop: insets.top, paddingBottom: insets.bottom + 12 }]}>
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {!isPaywallBlocked && !isGuest ? (
+        {showClose ? (
           <TouchableOpacity style={styles.closeBtn} onPress={onClose} activeOpacity={0.7}>
             <Text style={styles.closeLabel}>✕</Text>
           </TouchableOpacity>
         ) : null}
 
-        {/* ── Guest trial exhausted section ────────────────────────────────── */}
         {isGuest ? (
           <View style={styles.guestCard}>
             <Text style={styles.guestEmoji}>🏁</Text>
@@ -109,15 +107,6 @@ export default function PaywallScreen() {
             <Text style={styles.guestHint}>{t('guest_trial_register_hint')}</Text>
           </View>
         ) : null}
-
-        <View style={styles.progressCard}>
-          <Text style={styles.gratulations}>
-            {isGuest ? t('guest_trial_progress_label') : t('gratulations')}
-          </Text>
-          <View style={styles.progressTrack}>
-            <View style={styles.progressFill} />
-          </View>
-        </View>
 
         <View style={styles.badge}>
           <Text style={styles.badgeText}>{t('premiumBadge')}</Text>
@@ -140,18 +129,30 @@ export default function PaywallScreen() {
 
         <View style={styles.pricingCard}>
           <Text style={styles.pricingTitle}>{t('pricingTitle')}</Text>
-          <Text style={styles.pricingValue}>{t('pricingValue')}</Text>
+          <Text style={styles.pricingValue}>{SUBSCRIPTION_PRICE_LABEL}</Text>
           <Text style={styles.pricingSub}>{t('pricingSub')}</Text>
         </View>
 
+        {subscriptionStatus === 'pending' ? (
+          <View style={styles.pendingBanner}>
+            <Text style={styles.pendingText}>{t('paywall_pending_payment')}</Text>
+          </View>
+        ) : null}
+
+        {lastError ? (
+          <View style={styles.errorBanner}>
+            <Text style={styles.errorText}>{lastError}</Text>
+          </View>
+        ) : null}
+
         <TouchableOpacity
-          style={styles.ctaBtn}
+          style={[styles.ctaBtn, isPurchasing && styles.ctaBtnDisabled]}
           onPress={onSubscribe}
           activeOpacity={0.88}
-          disabled={subscribing}
+          disabled={isPurchasing}
         >
-          {subscribing ? (
-            <ActivityIndicator color="#FFFFFF" />
+          {isPurchasing ? (
+            <ActivityIndicator color="#0A0A0A" />
           ) : (
             <Text style={styles.ctaLabel}>{t('paywall_checkout_cta')}</Text>
           )}
@@ -160,11 +161,19 @@ export default function PaywallScreen() {
         <Text style={styles.footerLegal}>{t('footerLegal')}</Text>
 
         <View style={styles.legalLinksRow}>
-          <TouchableOpacity activeOpacity={0.7} onPress={openTerms} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}>
+          <TouchableOpacity
+            activeOpacity={0.7}
+            onPress={openTerms}
+            hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+          >
             <Text style={styles.legalLink}>{t('profile_legal_terms')}</Text>
           </TouchableOpacity>
           <Text style={styles.legalDot}>•</Text>
-          <TouchableOpacity activeOpacity={0.7} onPress={openPrivacyPolicy} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}>
+          <TouchableOpacity
+            activeOpacity={0.7}
+            onPress={openPrivacyPolicy}
+            hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+          >
             <Text style={styles.legalLink}>{t('profile_legal_privacy')}</Text>
           </TouchableOpacity>
         </View>
@@ -198,58 +207,29 @@ const styles = StyleSheet.create({
     color: TEXT_MUTED,
     fontFamily: fonts.medium,
   },
-  progressCard: {
-    backgroundColor: CARD,
-    borderRadius: 20,
-    padding: 18,
-    marginBottom: 18,
-    shadowColor: '#000',
-    shadowOpacity: 0.06,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 3,
-  },
-  gratulations: {
-    fontSize: 15,
-    lineHeight: 22,
-    fontFamily: fonts.semiBold,
-    fontWeight: '600',
-    color: TEXT_DARK,
-    marginBottom: 12,
-  },
-  progressTrack: {
-    height: 8,
-    borderRadius: 999,
-    backgroundColor: '#E5E7EB',
-    overflow: 'hidden',
-  },
-  progressFill: {
-    width: '100%',
-    height: 8,
-    borderRadius: 999,
-    backgroundColor: GREEN,
-  },
   badge: {
     alignSelf: 'flex-start',
-    backgroundColor: BLUE_SOFT,
+    backgroundColor: ACCENT_DIM,
     borderRadius: 999,
     paddingHorizontal: 14,
     paddingVertical: 7,
     marginBottom: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(34, 197, 94, 0.25)',
   },
   badgeText: {
     fontSize: 12,
     fontFamily: fonts.semiBold,
     fontWeight: '600',
-    color: BLUE,
+    color: ACCENT,
     letterSpacing: 0.3,
   },
   mainTitle: {
-    fontSize: 26,
-    lineHeight: 32,
+    fontSize: 28,
+    lineHeight: 34,
     fontFamily: fonts.bold,
     fontWeight: '700',
-    color: TEXT_DARK,
+    color: TEXT_PRIMARY,
     marginBottom: 8,
   },
   subtitle: {
@@ -257,7 +237,7 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     fontFamily: fonts.regular,
     color: TEXT_MUTED,
-    marginBottom: 18,
+    marginBottom: 20,
   },
   featureCard: {
     flexDirection: 'row',
@@ -265,19 +245,16 @@ const styles = StyleSheet.create({
     gap: 12,
     backgroundColor: CARD,
     borderRadius: 16,
+    borderWidth: 1,
+    borderColor: BORDER,
     padding: 14,
     marginBottom: 10,
-    shadowColor: '#000',
-    shadowOpacity: 0.04,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
   },
   featureIconWrap: {
     width: 42,
     height: 42,
     borderRadius: 21,
-    backgroundColor: '#F3F4F6',
+    backgroundColor: '#242428',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -292,7 +269,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontFamily: fonts.semiBold,
     fontWeight: '600',
-    color: TEXT_DARK,
+    color: TEXT_PRIMARY,
     marginBottom: 4,
   },
   featureSub: {
@@ -304,9 +281,9 @@ const styles = StyleSheet.create({
   pricingCard: {
     backgroundColor: CARD,
     borderRadius: 16,
-    borderWidth: 2,
-    borderColor: BLUE,
-    padding: 18,
+    borderWidth: 1,
+    borderColor: ACCENT,
+    padding: 20,
     marginTop: 8,
     marginBottom: 18,
   },
@@ -314,16 +291,16 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontFamily: fonts.semiBold,
     fontWeight: '600',
-    color: BLUE,
+    color: ACCENT,
     letterSpacing: 1,
     textTransform: 'uppercase',
     marginBottom: 8,
   },
   pricingValue: {
-    fontSize: 28,
+    fontSize: 32,
     fontFamily: fonts.bold,
     fontWeight: '700',
-    color: TEXT_DARK,
+    color: TEXT_PRIMARY,
     marginBottom: 6,
   },
   pricingSub: {
@@ -332,26 +309,59 @@ const styles = StyleSheet.create({
     fontFamily: fonts.regular,
     color: TEXT_MUTED,
   },
+  pendingBanner: {
+    backgroundColor: 'rgba(234, 179, 8, 0.12)',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(234, 179, 8, 0.35)',
+    padding: 12,
+    marginBottom: 12,
+  },
+  pendingText: {
+    fontSize: 13,
+    lineHeight: 18,
+    fontFamily: fonts.medium,
+    color: '#FACC15',
+    textAlign: 'center',
+  },
+  errorBanner: {
+    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(239, 68, 68, 0.35)',
+    padding: 12,
+    marginBottom: 12,
+  },
+  errorText: {
+    fontSize: 13,
+    lineHeight: 18,
+    fontFamily: fonts.medium,
+    color: '#F87171',
+    textAlign: 'center',
+  },
   ctaBtn: {
     height: 56,
     borderRadius: 16,
-    backgroundColor: BLUE,
+    backgroundColor: ACCENT,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 16,
+  },
+  ctaBtnDisabled: {
+    opacity: 0.7,
   },
   ctaLabel: {
     fontSize: 17,
     fontFamily: fonts.semiBold,
     fontWeight: '600',
-    color: '#FFFFFF',
+    color: '#0A0A0A',
   },
   footerLegal: {
     fontSize: 12,
     lineHeight: 18,
     textAlign: 'center',
     fontFamily: fonts.regular,
-    color: TEXT_LEGAL,
+    color: TEXT_SOFT,
     marginBottom: 10,
   },
   legalLinksRow: {
@@ -365,13 +375,13 @@ const styles = StyleSheet.create({
   legalLink: {
     fontSize: 12,
     fontFamily: fonts.medium,
-    color: BLUE,
+    color: ACCENT,
     textDecorationLine: 'underline',
   },
   legalDot: {
     fontSize: 12,
     fontFamily: fonts.regular,
-    color: TEXT_LEGAL,
+    color: TEXT_SOFT,
   },
   signOutBtn: {
     alignItems: 'center',
@@ -385,14 +395,11 @@ const styles = StyleSheet.create({
   guestCard: {
     backgroundColor: CARD,
     borderRadius: 20,
+    borderWidth: 1,
+    borderColor: BORDER,
     padding: 22,
     marginBottom: 18,
     alignItems: 'center',
-    shadowColor: '#000',
-    shadowOpacity: 0.06,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 3,
   },
   guestEmoji: {
     fontSize: 36,
@@ -402,7 +409,7 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontFamily: fonts.bold,
     fontWeight: '700',
-    color: TEXT_DARK,
+    color: TEXT_PRIMARY,
     textAlign: 'center',
     marginBottom: 8,
   },
@@ -422,20 +429,20 @@ const styles = StyleSheet.create({
     height: 52,
     width: '100%',
     borderRadius: 14,
-    backgroundColor: BLUE,
+    backgroundColor: ACCENT,
     marginBottom: 10,
   },
   googleBtnLabel: {
     fontSize: 15,
     fontFamily: fonts.semiBold,
     fontWeight: '600',
-    color: '#FFFFFF',
+    color: '#0A0A0A',
   },
   guestHint: {
     fontSize: 12,
     lineHeight: 17,
     fontFamily: fonts.regular,
-    color: TEXT_LEGAL,
+    color: TEXT_SOFT,
     textAlign: 'center',
   },
 })

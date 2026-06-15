@@ -29,7 +29,7 @@ const COURIER_PLATFORMS: PlatformId[] = ['glovo', 'uber', 'bolt', 'wolt']
 const TAXI_PLATFORMS: PlatformId[] = ['uber', 'bolt']
 const PLATFORM_LABEL: Record<string, string> = { glovo: 'Glovo', uber: 'Uber', bolt: 'Bolt', wolt: 'Wolt' }
 
-function useShiftTimer(startTime: number | null): string {
+function useShiftTimer(startTime: number | null): { label: string; elapsedMs: number } {
   const [elapsed, setElapsed] = useState(startTime ? Date.now() - startTime : 0)
   useEffect(() => {
     if (!startTime) { setElapsed(0); return }
@@ -40,7 +40,10 @@ function useShiftTimer(startTime: number | null): string {
   const h = Math.floor(totalSeconds / 3600)
   const m = Math.floor((totalSeconds % 3600) / 60)
   const sec = totalSeconds % 60
-  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
+  return {
+    label: `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`,
+    elapsedMs: elapsed,
+  }
 }
 
 export default function ShiftModeScreen() {
@@ -56,7 +59,7 @@ export default function ShiftModeScreen() {
 
   const platforms = role === 'taxi' ? TAXI_PLATFORMS : COURIER_PLATFORMS
   const isActive = shiftStats.startTime !== null
-  const timer = useShiftTimer(shiftStats.startTime)
+  const { label: timer, elapsedMs } = useShiftTimer(shiftStats.startTime)
 
   const [activePlatforms, setActivePlatforms] = useState<Record<string, boolean>>(
     Object.fromEntries(platforms.map((p) => [p, true])),
@@ -73,6 +76,11 @@ export default function ShiftModeScreen() {
   }, [orderHistory, shiftStats.startTime])
 
   const avgRate = shiftStats.totalKm > 0 ? (shiftStats.totalEarnings / shiftStats.totalKm).toFixed(2) : '—'
+
+  // PLN/hour — recomputed every second via useShiftTimer elapsedMs.
+  const hoursOnline = elapsedMs / 3_600_000
+  const plnPerHour =
+    hoursOnline > 0.0167 ? (shiftStats.totalEarnings / hoursOnline).toFixed(2) : '—'
 
   const bestPlatform = useMemo(() => {
     if (shiftOrders.length === 0) return '—'
@@ -179,6 +187,9 @@ export default function ShiftModeScreen() {
       <View style={s.statsRow}>
         <StatCard label={t('orders_this_shift')} value={String(shiftStats.completedOrders)} c={c} />
         <StatCard label={t('avg_pln_km')} value={`${avgRate}`} c={c} />
+        <StatCard label={t('avg_pln_hour')} value={`${plnPerHour}`} c={c} />
+      </View>
+      <View style={[s.statsRow, { marginTop: 8 }]}>
         <StatCard label={t('best_platform')} value={bestPlatform} c={c} />
       </View>
 

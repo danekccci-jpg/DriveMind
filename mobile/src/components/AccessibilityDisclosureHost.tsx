@@ -3,7 +3,10 @@ import { AppState, Platform } from 'react-native'
 
 import { ProminentDisclosureModal } from './ProminentDisclosureModal'
 import { useAccessibilityDisclosureStore } from '../store/accessibilityDisclosureStore'
-import { usePermissionOnboardingStore } from '../store/permissionOnboardingStore'
+import {
+  MAX_PERMISSION_AUTO_PROMPTS,
+  usePermissionOnboardingStore,
+} from '../store/permissionOnboardingStore'
 import { isNativeIngestBridgeActive } from '../services/permissionManager'
 import { suppressAllDisclosureUI } from '../services/disclosureCoordinator'
 
@@ -11,9 +14,9 @@ import { suppressAllDisclosureUI } from '../services/disclosureCoordinator'
  * App-wide host for the permissions onboarding modal.
  *
  * Visibility:
- * - Auto: missing notification-listener OR background location (map focus check).
- * - Explicit: shift / accessibility flows call requestDisclosure() (Google Play compliance).
- * - Session dismiss ("Maybe later") suppresses auto only until cold start.
+ * - Auto: cold start only when ingest permissions missing and shown < 3 times total.
+ * - Explicit: shift / Order Reader flows call requestDisclosure() (first app open only).
+ * - Session dismiss ("Maybe later") suppresses auto until next cold start.
  * - Native bridge active: host returns null — no overlay can mount.
  */
 export function AccessibilityDisclosureHost() {
@@ -22,6 +25,7 @@ export function AccessibilityDisclosureHost() {
   const cancelDisclosure = useAccessibilityDisclosureStore((s) => s.cancel)
 
   const autoVisible = usePermissionOnboardingStore((s) => s.autoVisible)
+  const permissionsShownCount = usePermissionOnboardingStore((s) => s.permissionsShownCount)
   const sessionDismissed = usePermissionOnboardingStore((s) => s.sessionDismissed)
   const dismissForSession = usePermissionOnboardingStore((s) => s.dismissForSession)
 
@@ -49,9 +53,14 @@ export function AccessibilityDisclosureHost() {
     return () => sub.remove()
   }, [syncBridgeState])
 
+  const canAutoShowOnColdStart =
+    permissionsShownCount > 0 && permissionsShownCount <= MAX_PERMISSION_AUTO_PROMPTS
+
   const visible = useMemo(
-    () => !bridgeActive && (explicitVisible || (autoVisible && !sessionDismissed)),
-    [bridgeActive, explicitVisible, autoVisible, sessionDismissed],
+    () =>
+      !bridgeActive &&
+      (explicitVisible || (autoVisible && !sessionDismissed && canAutoShowOnColdStart)),
+    [bridgeActive, explicitVisible, autoVisible, sessionDismissed, canAutoShowOnColdStart],
   )
 
   const handleAccept = useCallback(() => {

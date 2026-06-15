@@ -1,4 +1,4 @@
-import React, { memo } from 'react'
+import React, { memo, useMemo } from 'react'
 import { StyleSheet, Platform, Animated } from 'react-native'
 import MapView, {
   Marker,
@@ -9,6 +9,7 @@ import { NavigationMapLayers } from '../../components/navigation/NavigationMapLa
 import { PlayerNavMarker } from '../../components/navigation/PlayerNavMarker'
 import type { LatLng } from '../../navigation/navigationGeometry'
 import type { MarkerStyleId } from '../../store/navigationSettingsStore'
+import { MAP_STYLE_DARK_IDLE, MAP_STYLE_LIGHT_IDLE } from '../../map/mapStyles'
 
 type DashboardMapProps = {
   mapRef: React.RefObject<any>
@@ -51,6 +52,20 @@ function DashboardMapInner({
   smoothHeading,
   userLocation,
 }: DashboardMapProps) {
+  // Idle mode: surface poi.business (restaurants/cafes) and poi.attraction
+  // (hotels/guest houses) as muted reference markers — useful for pickup/dropoff
+  // planning without cluttering the screen. During active navigation the base
+  // style (all POIs off) is restored to keep the route overlay readable.
+  const navStyle = useMemo(() => mapStyleForMap, [mapStyleForMap])
+  const idleStyle = useMemo(
+    () => (isDark ? MAP_STYLE_DARK_IDLE : MAP_STYLE_LIGHT_IDLE),
+    [isDark],
+  )
+  const effectiveMapStyle = useMemo(() => {
+    if (!isMapStyleReady) return undefined
+    return isNavigating ? navStyle : idleStyle
+  }, [isMapStyleReady, isNavigating, navStyle, idleStyle])
+
   return (
     <MapView
       key={isDark ? 'map-dark' : 'map-light'}
@@ -60,7 +75,7 @@ function DashboardMapInner({
       mapType="standard"
       googleRenderer={Platform.OS === 'android' ? 'LEGACY' : undefined}
       userInterfaceStyle="light"
-      customMapStyle={isMapStyleReady ? mapStyleForMap : undefined}
+      customMapStyle={effectiveMapStyle}
       onMapReady={onMapReady}
       showsScale={false}
       showsPointsOfInterests={false}

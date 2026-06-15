@@ -6,7 +6,7 @@ import { useColors } from '../theme/theme'
 import { fonts } from '../theme/typography'
 import { useDriverIngestStore } from '../store/driverIngestStore'
 import { devWarn } from '../utils/devLog'
-import { promptAccessibilitySettingsWithDisclosure } from '../services/accessibilityDisclosure'
+import { openAccessibilitySettings } from '../services/accessibilityDisclosure'
 
 type ServiceStatuses = {
   notificationListenerEnabled: boolean
@@ -97,7 +97,7 @@ export function IntegrationHealthCard() {
       title: t('integration_accessibility'),
       ok: statuses.accessibilityServiceEnabled,
       action: () => {
-        void promptAccessibilitySettingsWithDisclosure()
+        openAccessibilitySettings()
       },
     },
     {

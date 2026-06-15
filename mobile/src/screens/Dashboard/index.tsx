@@ -853,7 +853,7 @@ export default function DashboardScreen() {
       uber: 'com.ubercab.driver',
       bolt: 'com.bolt.driver',
       glovo: 'com.glovo',
-      wolt: 'com.wolt.handler',
+      wolt: 'com.wolt.courier.android',
     }
     const deepLinkByPlatform: Record<string, string> = {
       uber: 'uber://',

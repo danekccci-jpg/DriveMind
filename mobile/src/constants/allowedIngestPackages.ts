@@ -2,15 +2,26 @@
 export const ALLOWED_NOTIFICATION_PACKAGES = [
   'com.ubercab.driver',
   'com.bolt.driver',
-  'ee.mtakso.driver', // legacy Taxify / Kraków QA mocks
+  'ee.mtakso.driver', // Kraków / EU Bolt (Taxify)
   'com.bolt.delivery',
+  'com.glovoapp.courier',
+  'com.wolt.courier.android',
+  'com.wolt.handler', // legacy Wolt
+  'pl.pyszne',
+  'com.justeattakeaway.courier',
 ] as const
 
 /** Accessibility scrape — driver/courier apps only. */
 export const ALLOWED_SCRAPE_PACKAGES = [
   ...ALLOWED_NOTIFICATION_PACKAGES,
-  'com.glovoapp.courier',
-  'com.wolt.handler',
+] as const
+
+/** Guessxx Kraków mock APKs with non-production applicationIds. */
+export const GUESSXX_MOCK_PACKAGES = [
+  'com.guessxx.mock.uber',
+  'com.guessxx.mock.bolt',
+  'com.guessxx.mock.boltfood',
+  'com.guessxx.krakowmocks',
 ] as const
 
 const BRAND_TO_NOTIFICATION_PACKAGE: Record<string, string> = {
@@ -18,21 +29,41 @@ const BRAND_TO_NOTIFICATION_PACKAGE: Record<string, string> = {
   bolt: 'com.bolt.driver',
   bolt_food: 'com.bolt.delivery',
   glovo: 'com.glovoapp.courier',
-  wolt: 'com.wolt.handler',
+  wolt: 'com.wolt.courier.android',
+  pyszne: 'pl.pyszne',
+  just_eat: 'com.justeattakeaway.courier',
 }
 
 /** Legacy poster IDs → canonical ingest package (mirrors Kotlin NotificationBrandRouter). */
 const PACKAGE_ALIASES: Record<string, string> = {
   'ee.mtakso.driver': 'com.bolt.driver',
+  'com.wolt.handler': 'com.wolt.courier.android',
 }
 
 export function toCanonicalNotificationPackage(packageName: string): string {
   return PACKAGE_ALIASES[packageName] ?? packageName
 }
 
+/** Mirrors Kotlin [NotificationBrandRouter.isMockOrTestPackage]. */
+export function isMockOrTestPackage(packageName: string | undefined | null): boolean {
+  const p = (packageName ?? '').toLowerCase()
+  if (!p || p === 'com.guessxx.drivemind') return false
+  if ((GUESSXX_MOCK_PACKAGES as readonly string[]).includes(packageName ?? '')) return true
+  return (
+    p.includes('mock') ||
+    p.includes('krakowmock') ||
+    p.includes('drivermock') ||
+    p.startsWith('com.guessxx.mock') ||
+    p.includes('.mock.')
+  )
+}
+
 const NOTIFICATION_BRAND_KEYWORDS: { keyword: string; brand: keyof typeof BRAND_TO_NOTIFICATION_PACKAGE }[] = [
   { keyword: 'glovo', brand: 'glovo' },
   { keyword: 'wolt', brand: 'wolt' },
+  { keyword: 'pyszne', brand: 'pyszne' },
+  { keyword: 'just eat', brand: 'just_eat' },
+  { keyword: 'justeat', brand: 'just_eat' },
   { keyword: 'uber', brand: 'uber' },
   { keyword: 'bolt food', brand: 'bolt_food' },
   { keyword: 'bolt delivery', brand: 'bolt_food' },
@@ -58,6 +89,11 @@ export function matchPackageHint(sourcePackage: string | undefined | null): stri
   }
   if (p.includes('glovo')) return BRAND_TO_NOTIFICATION_PACKAGE.glovo
   if (p.includes('wolt')) return BRAND_TO_NOTIFICATION_PACKAGE.wolt
+  if (p.includes('pyszne')) return BRAND_TO_NOTIFICATION_PACKAGE.pyszne
+  if (p.includes('justeat') || p.includes('just_eat') || p.includes('justeattakeaway')) {
+    return BRAND_TO_NOTIFICATION_PACKAGE.just_eat
+  }
+  if (isMockOrTestPackage(p)) return BRAND_TO_NOTIFICATION_PACKAGE.uber
   return null
 }
 
@@ -86,7 +122,11 @@ export function resolveNotificationPackage(
   text?: string | null,
   sourcePackage?: string | null,
 ): string | null {
-  // Trust canonical/native-routed package first (mirrors Kotlin package-first whitelist).
+  if (isMockOrTestPackage(packageName ?? sourcePackage)) {
+    const fromMock = matchPackageHint(sourcePackage ?? packageName)
+    if (fromMock) return fromMock
+  }
+
   if (packageName) {
     const canonical = toCanonicalNotificationPackage(packageName)
     if ((ALLOWED_NOTIFICATION_PACKAGES as readonly string[]).includes(packageName) ||
@@ -116,7 +156,12 @@ export function isAllowedNotificationPackage(
   return resolveNotificationPackage(packageName, title, text) != null
 }
 
+/** Mirrors Kotlin [NotificationBrandRouter.isMonitoredDriverPackage]. */
 export function isAllowedScrapePackage(packageName: string | undefined | null): boolean {
   if (!packageName) return false
-  return (ALLOWED_SCRAPE_PACKAGES as readonly string[]).includes(packageName)
+  const canonical = toCanonicalNotificationPackage(packageName)
+  if ((ALLOWED_SCRAPE_PACKAGES as readonly string[]).includes(packageName)) return true
+  if ((ALLOWED_SCRAPE_PACKAGES as readonly string[]).includes(canonical)) return true
+  if (isMockOrTestPackage(packageName)) return true
+  return matchPackageHint(packageName) != null
 }

@@ -31,7 +31,14 @@ const DRIVER_PACKAGES = [
   'ee.mtakso.driver',
   'com.bolt.delivery',
   'com.glovoapp.courier',
+  'com.wolt.courier.android',
   'com.wolt.handler',
+  'pl.pyszne',
+  'com.justeattakeaway.courier',
+  'com.guessxx.mock.uber',
+  'com.guessxx.mock.bolt',
+  'com.guessxx.mock.boltfood',
+  'com.guessxx.krakowmocks',
 ]
 
 const DRIVEMIND_PERMISSIONS = ['android.permission.PACKAGE_USAGE_STATS']

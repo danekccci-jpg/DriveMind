@@ -66,9 +66,9 @@ const SVG_MAP: Record<Platform, React.FC<{ size: number; fill: string }>> = {
 
 export default function PlatformIcon({ platform, size = 24, active = false }: Props) {
   const c = useColors()
-  const Icon = SVG_MAP[platform]
+  const Icon = SVG_MAP[platform] ?? UberSvg
   const brand: Record<Platform, string> = { glovo: c.glovo, uber: c.uber, bolt: c.bolt, wolt: c.wolt }
-  const fill = active ? brand[platform] : c.secondary
+  const fill = active ? (brand[platform] ?? c.uber) : c.secondary
 
   return (
     <View style={[st.container, { width: size, height: size }]}>

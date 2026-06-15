@@ -24,10 +24,11 @@ import { useDriverSessionStore } from '../../store/driverSessionStore'
 import { useAuthStore, isGuestEmail } from '../../store/authStore'
 import { deleteUserAccount, signOutFirebase } from '../../services/firebaseAuth'
 import { useThemeStore } from '../../store/themeStore'
-import { useLanguageStore, cycleDriveMindLanguage, type Language } from '../../store/languageStore'
+import { useLanguageStore, type Language } from '../../store/languageStore'
 import { useColors, type AppColors } from '../../theme/theme'
 import { fonts } from '../../theme/typography'
 import Logo from '../../components/common/Logo'
+import { LanguagePickerModal } from '../../components/LanguagePickerModal'
 import { PRIVACY_POLICY_URL, TERMS_OF_SERVICE_URL } from '../../constants/legalUrls'
 
 const LANG_I18N_KEY: Record<Language, 'language_en' | 'language_pl' | 'language_uk' | 'language_ru'> = {
@@ -79,6 +80,7 @@ export default function ProfileScreen() {
 
   const [fuelInput, setFuelInput] = useState(String(fuelConsumption))
   const [deletingAccount, setDeletingAccount] = useState(false)
+  const [languageModalVisible, setLanguageModalVisible] = useState(false)
 
   const canDeleteAccount = Boolean(firebaseUid) && !isGuestEmail(userEmail)
 
@@ -88,12 +90,22 @@ export default function ProfileScreen() {
     if (!isNaN(n) && n > 0) setFuelConsumption(n)
   }
 
-  const handleLanguageToggle = () => {
+  const openLanguageModal = useCallback(() => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
-    const next = cycleDriveMindLanguage(language)
-    setLanguage(next)
-    i18n.changeLanguage(next)
-  }
+    setLanguageModalVisible(true)
+  }, [])
+
+  const closeLanguageModal = useCallback(() => {
+    setLanguageModalVisible(false)
+  }, [])
+
+  const handleLanguageSelect = useCallback(
+    (next: Language) => {
+      setLanguage(next)
+      i18n.changeLanguage(next)
+    },
+    [setLanguage],
+  )
 
   const openTerms = useCallback(() => {
     void Linking.openURL(TERMS_OF_SERVICE_URL)
@@ -145,7 +157,8 @@ export default function ProfileScreen() {
   }, [deletingAccount, performDeleteAccount, t])
 
   return (
-    <ScrollView
+    <>
+      <ScrollView
       style={[s.root, { backgroundColor: c.bg }]}
       contentContainerStyle={[s.content, { paddingTop: insets.top + 12, paddingBottom: 40 }]}
       showsVerticalScrollIndicator={false}
@@ -312,12 +325,14 @@ export default function ProfileScreen() {
         <SettingsRow
           icon={<Feather name="globe" size={20} color={c.secondary} />}
           label={t('language')}
+          onPress={openLanguageModal}
           right={
-            <TouchableOpacity onPress={handleLanguageToggle} activeOpacity={0.7}>
+            <View style={s.languageValueRow}>
               <Text style={[s.settingsValue, { color: c.textMuted }]}>
                 {t(LANG_I18N_KEY[language])}
               </Text>
-            </TouchableOpacity>
+              <Feather name="chevron-right" size={18} color={c.textMuted} />
+            </View>
           }
           separatorColor={c.separator}
         />
@@ -390,7 +405,15 @@ export default function ProfileScreen() {
           </TouchableOpacity>
         </View>
       </View>
-    </ScrollView>
+      </ScrollView>
+
+      <LanguagePickerModal
+        visible={languageModalVisible}
+        activeLanguage={language}
+        onClose={closeLanguageModal}
+        onSelect={handleLanguageSelect}
+      />
+    </>
   )
 }
 
@@ -471,6 +494,7 @@ const s = StyleSheet.create({
   settingsLabel: { flex: 1, fontSize: 15, fontFamily: fonts.regular },
   settingsRight: { alignItems: 'flex-end' },
   settingsValue: { fontSize: 14, fontFamily: fonts.regular },
+  languageValueRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   themeToggle: { paddingHorizontal: 12, paddingVertical: 5, borderRadius: 10 },
   themeToggleText: { fontSize: 13, fontFamily: fonts.medium },
   aboutBlock: { alignItems: 'center', marginTop: 8, marginBottom: 4, gap: 10 },

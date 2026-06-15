@@ -94,6 +94,16 @@ function emptyRouteState() {
   }
 }
 
+/** Stable fingerprint for passive-accept idempotency across re-emits. */
+function acceptedTripFingerprint(order: Order): string {
+  return [
+    order.platform,
+    order.earnings.toFixed(2),
+    order.pickupAddress.trim(),
+    order.dropoffAddress.trim(),
+  ].join('|')
+}
+
 interface OrdersState {
   activeOrders: Order[]
   pendingConfirmation: Order | null
@@ -129,6 +139,13 @@ interface OrdersState {
   /** Removes an active order without completing it; promotes the next one if navigating. */
   dismissOrder: (orderId: string) => void
   completeOrder: (orderId: string) => void
+  /**
+   * Record a passively-accepted trip detected by the Accessibility scraper.
+   * Bypasses the DriveMind navigation pipeline (driver navigates inside
+   * Uber/Bolt) and pushes the order straight into history + shift stats +
+   * wallet, mirroring the side-effects of `completeOrder`.
+   */
+  recordAcceptedTrip: (order: Order) => void
   setOrderStatus: (orderId: string, status: Order['status']) => void
   setDailyGoal: (goal: number) => void
   startNavigation: (order: Order) => void
@@ -358,6 +375,67 @@ export const useOrdersStore = create<OrdersState>()(
         set((state) => ({
           activeOrders: state.activeOrders.map((o) => (o.id === orderId ? { ...o, status } : o)),
         })),
+
+      recordAcceptedTrip: (order) => {
+        const { orderHistory, shiftStats, dailyGoal } = get()
+        const fingerprint = acceptedTripFingerprint(order)
+
+        // Idempotency: ignore re-emits for the same order id or content fingerprint.
+        if (
+          orderHistory.some(
+            (o) => o.id === order.id || acceptedTripFingerprint(o) === fingerprint,
+          )
+        ) {
+          devLog('[DriveMind Nav]: recordAcceptedTrip — duplicate ignored', {
+            id: order.id,
+            fingerprint,
+          })
+          return
+        }
+
+        const completed: CompletedOrder = {
+          ...order,
+          status: 'completed',
+          completedAt: Date.now(),
+        }
+        const trimmedHistory = [completed, ...orderHistory].slice(0, 50)
+
+        const nextStats: ShiftStats = {
+          ...shiftStats,
+          // Auto-start the shift on the first passive accept so the timer +
+          // earnings counters reflect the real working session even when the
+          // driver never opened DriveMind during the shift.
+          startTime: shiftStats.startTime ?? Date.now(),
+          totalEarnings: shiftStats.totalEarnings + order.earnings,
+          totalKm: shiftStats.totalKm + order.distanceKm,
+          totalMinutes: shiftStats.totalMinutes + order.durationMin,
+          completedOrders: shiftStats.completedOrders + 1,
+          lastOrderDropoffLat: order.dropoffLat,
+          lastOrderDropoffLng: order.dropoffLng,
+        }
+        const remainingToGoal = Math.max(0, dailyGoal - nextStats.totalEarnings)
+
+        useWalletStore.getState().recordOrderPayout(order.id, order.earnings, {
+          pickupAddress: order.pickupAddress,
+          dropoffAddress: order.dropoffAddress,
+          distanceKm: order.distanceKm,
+        })
+        void playWalletCreditSound()
+        void notifyOrderCompletedForUser()
+
+        set({
+          orderHistory: trimmedHistory,
+          shiftStats: nextStats,
+          remainingToGoal,
+        })
+
+        devLog('[DriveMind Nav]: recordAcceptedTrip stored', {
+          id: order.id,
+          platform: order.platform,
+          earnings: order.earnings,
+          distanceKm: order.distanceKm,
+        })
+      },
 
       setDailyGoal: (dailyGoal) =>
         set((state) => ({

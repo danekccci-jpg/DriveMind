@@ -24,7 +24,7 @@ export function localizedProfitTierTitle(tier: string): string {
   return i18n.t('tier_neutral')
 }
 
-/** Prominent price line for overlay card row 2. */
+/** Gross fare line for the OFFER card secondary row. */
 export function formatOverlayPrice(price: number): string {
   const lng = driveMindUiLanguage()
   const rawAmt = price > 0 ? price.toFixed(2) : '--'
@@ -32,7 +32,7 @@ export function formatOverlayPrice(price: number): string {
   return i18n.t('widget_price_pln', { amount })
 }
 
-/** Muted metrics line for overlay card row 3. */
+/** ETA + distance secondary row for the OFFER card. */
 export function formatOverlayMetrics(distKm: number, etaMin: number): string {
   const lng = driveMindUiLanguage()
   const kmStr = lng === 'pl' ? distKm.toFixed(1).replace('.', ',') : distKm.toFixed(1)
@@ -41,14 +41,47 @@ export function formatOverlayMetrics(distKm: number, etaMin: number): string {
   return `${dLine} · ${tLine}`
 }
 
+/**
+ * Primary headline metric for the OFFER card — "4,20 zł/km".
+ * This is the single most important number a driver evaluates when triaging
+ * an offer at speed, so it gets the largest font + accent color treatment in
+ * the native overlay.
+ */
+export function formatOverlayPrimaryRate(zlPerKm: number): string {
+  const lng = driveMindUiLanguage()
+  if (!Number.isFinite(zlPerKm) || zlPerKm <= 0) return ''
+  const raw = zlPerKm.toFixed(2)
+  const amount = lng === 'pl' ? raw.replace('.', ',') : raw
+  return i18n.t('widget_zl_per_km', { rate: amount, defaultValue: `${amount} zł/km` })
+}
+
 export function syncNativeOverlayRadarLabel(): void {
   if (Platform.OS !== 'android') return
   try {
-    const native = NativeModules.DriveMindNative as { setOverlayRadarLabel?: (l: string) => void } | undefined
+    const native = NativeModules.DriveMindNative as {
+      setOverlayRadarLabel?: (l: string) => void
+    } | undefined
+    // IDLE pill label — "Online" when the radar is active, blocked-label when
+    // the subscription gate has paused ingest.
     const label = deriveSearchBlockedFromStore()
       ? i18n.t('searchStatusBlocked')
-      : i18n.t('searchStatusActive')
+      : i18n.t('overlay_online', { defaultValue: i18n.t('searchStatusActive') })
     native?.setOverlayRadarLabel?.(label)
+  } catch {
+    /* noop */
+  }
+}
+
+/** Sync the localized labels for the Accept & Dismiss buttons. */
+export function syncNativeOverlayButtonLabels(): void {
+  if (Platform.OS !== 'android') return
+  try {
+    const native = NativeModules.DriveMindNative as {
+      setOverlayButtonLabels?: (accept: string, dismiss: string) => void
+    } | undefined
+    const accept = i18n.t('overlay_accept', { defaultValue: 'Accept & Go' })
+    const dismiss = i18n.t('overlay_dismiss', { defaultValue: 'Dismiss' })
+    native?.setOverlayButtonLabels?.(accept, dismiss)
   } catch {
     /* noop */
   }

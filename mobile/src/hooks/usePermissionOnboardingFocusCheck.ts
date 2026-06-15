@@ -7,11 +7,11 @@ import { suppressAllDisclosureUI } from '../services/disclosureCoordinator'
 import { usePermissionOnboardingStore } from '../store/permissionOnboardingStore'
 
 /**
- * Re-evaluates core ingest permissions every time the map screen gains focus
- * and when the app returns to the foreground. No AsyncStorage — cold start resets session dismiss.
+ * Re-evaluates core ingest permissions when the map screen gains focus or the app
+ * returns from background. Does NOT auto-open the permission modal — that is
+ * cold-start only (see permissionColdStart.ts).
  *
- * When the native bridge reports ingest-ready, all disclosure overlays are suppressed
- * immediately so a stale JS permission read cannot reopen the modal on cold start.
+ * When ingest becomes ready, disclosure overlays are suppressed immediately.
  */
 export function usePermissionOnboardingFocusCheck(): void {
   const setAutoVisible = usePermissionOnboardingStore((s) => s.setAutoVisible)
@@ -29,7 +29,10 @@ export function usePermissionOnboardingFocusCheck(): void {
     }
 
     const snapshot = await checkCoreIngestPermissions()
-    setAutoVisible(!snapshot.allGranted)
+    if (snapshot.allGranted) {
+      setAutoVisible(false)
+    }
+    // Never set autoVisible true here — cold start owns the entry prompt.
   }, [setAutoVisible])
 
   useFocusEffect(

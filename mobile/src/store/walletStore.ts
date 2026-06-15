@@ -35,6 +35,7 @@ export const useWalletStore = create<WalletState>()(
 
       recordOrderPayout: (orderId, amount, trip) => {
         if (amount <= 0) return
+        if (get().transactions.some((t) => t.orderId === orderId)) return
         const id = `tx-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
         const next: WalletTransaction = {
           id,

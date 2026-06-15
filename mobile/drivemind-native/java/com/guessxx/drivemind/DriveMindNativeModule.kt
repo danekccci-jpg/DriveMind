@@ -3,6 +3,7 @@ package com.guessxx.drivemind
 import android.Manifest
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.app.AppOpsManager
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -185,17 +186,55 @@ class DriveMindNativeModule(reactContext: ReactApplicationContext) :
     }
 
     @ReactMethod
-    fun openAccessibilitySettings() {
-        // ACCESSIBILITY_DETAILS_SETTINGS requires the system-only
-        // OPEN_ACCESSIBILITY_DETAILS_SETTINGS permission (API 33+). Normal apps must
-        // open the general accessibility list; the user selects DriveMind manually.
-        val ctx = reactApplicationContext
-        val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    fun isAccessibilityServiceEnabled(promise: Promise) {
         try {
-            ctx.startActivity(intent)
+            promise.resolve(isAccessibilityServiceEnabled(reactApplicationContext))
         } catch (e: Exception) {
-            android.util.Log.e("DriveMindNative", "openAccessibilitySettings failed", e)
+            promise.reject("E_A11Y", e.message, e)
+        }
+    }
+
+    /**
+     * Defensive intent cascade — avoids the full accessibility dashboard on emulators
+     * where missing Google system packages (Tips, Magnifier) crash Settings.
+     */
+    @ReactMethod
+    fun openAccessibilitySettings() {
+        val ctx = reactApplicationContext
+        val pkg = ctx.packageName
+        val flags = Intent.FLAG_ACTIVITY_NEW_TASK
+
+        // Primary: App Info — user taps Accessibility / Installed services (never crashes dashboard).
+        try {
+            val appDetails = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$pkg"))
+                .addFlags(flags)
+            ctx.startActivity(appDetails)
+            android.util.Log.d("DriveMindNative", "openAccessibilitySettings: APPLICATION_DETAILS_SETTINGS")
+            return
+        } catch (e: Exception) {
+            android.util.Log.w("DriveMindNative", "openAccessibilitySettings: app details failed", e)
+        }
+
+        // Secondary: accessibility list with our service component highlighted (some OEMs).
+        try {
+            val component = ComponentName(pkg, DriveMindScraperService::class.java.name)
+            val withComponent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                .addFlags(flags)
+                .putExtra(Intent.EXTRA_COMPONENT_NAME, component)
+            ctx.startActivity(withComponent)
+            android.util.Log.d("DriveMindNative", "openAccessibilitySettings: ACCESSIBILITY_SETTINGS+component")
+            return
+        } catch (e: Exception) {
+            android.util.Log.w("DriveMindNative", "openAccessibilitySettings: component intent failed", e)
+        }
+
+        // Last resort: bare accessibility list.
+        try {
+            val fallback = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(flags)
+            ctx.startActivity(fallback)
+            android.util.Log.d("DriveMindNative", "openAccessibilitySettings: bare ACCESSIBILITY_SETTINGS")
+        } catch (e: Exception) {
+            android.util.Log.e("DriveMindNative", "openAccessibilitySettings: all intents failed", e)
         }
     }
 
@@ -252,10 +291,25 @@ class DriveMindNativeModule(reactContext: ReactApplicationContext) :
      * @param text  Display string, e.g. "✅ VERY GOOD\n14.50 zł"
      * @param color Hex background colour, e.g. "#22C55E"
      */
+    /**
+     * Legacy entry — kept for JS callers that still use the simple text+color
+     * surface. Maps to the new offer-card flow with an empty primary rate.
+     */
     @ReactMethod
     fun showOverlay(text: String, color: String) {
         if (!Settings.canDrawOverlays(reactApplicationContext)) return
-        DriveMindOverlay.show(reactApplicationContext, text, color)
+        DriveMindOverlay.showProfitability(
+            reactApplicationContext,
+            OverlayProfitFields(
+                tierTitle = text,
+                primaryRateLine = "",
+                priceLine = "",
+                metricsLine = "",
+                accentColorHex = color,
+                packageName = "",
+                contentHash = "",
+            ),
+        )
     }
 
     /** Remove the floating interactive widget from the screen. */
@@ -309,41 +363,63 @@ class DriveMindNativeModule(reactContext: ReactApplicationContext) :
     }
 
     /**
-     * Shows the structured profitability card overlay (tier badge, price, metrics).
+     * Shows the premium profitability card overlay.
+     *
+     * @param tierTitle        Localized tier label, e.g. "✅ Bardzo dobry".
+     * @param primaryRateLine  Headline value, e.g. "4,20 zł/km".
+     * @param formattedPrice   Gross fare line, e.g. "35,00 zł".
+     * @param formattedMetrics ETA + distance row, e.g. "12 min · 3,2 km".
+     * @param tierColorHex     Accent color for primary rate + Accept button.
+     * @param packageName      Driver-app package for `Accept & Go` deep-launch.
+     * @param contentHash      Stable hash JS uses to reconcile driverIngestStore.
      */
     @ReactMethod
     fun updateOverlayProfitability(
         tierTitle: String,
+        primaryRateLine: String,
         formattedPrice: String,
         formattedMetrics: String,
         tierColorHex: String,
+        packageName: String,
+        contentHash: String,
     ) {
         if (!Settings.canDrawOverlays(reactApplicationContext)) return
         val title = tierTitle.trim()
+        val primary = primaryRateLine.trim()
         val price = formattedPrice.trim()
         val metrics = formattedMetrics.trim()
-        if (title.isEmpty() && price.isEmpty() && metrics.isEmpty()) return
+        if (title.isEmpty() && primary.isEmpty() && price.isEmpty() && metrics.isEmpty()) return
         val color = try {
             android.graphics.Color.parseColor(tierColorHex.trim())
             tierColorHex.trim()
         } catch (_: Exception) {
-            "#374151"
+            "#22C55E"
         }
         DriveMindOverlay.showProfitability(
             reactApplicationContext,
             OverlayProfitFields(
                 tierTitle = title,
+                primaryRateLine = primary,
                 priceLine = price,
                 metricsLine = metrics,
-                colorHex = color,
+                accentColorHex = color,
+                packageName = packageName.trim(),
+                contentHash = contentHash.trim(),
             ),
         )
     }
 
-    /** Pushes the localized "scanning" label for [DriveMindOverlay.showRadar]. */
+    /** Localized "Online" label for the IDLE micro-pill. */
     @ReactMethod
     fun setOverlayRadarLabel(label: String) {
-        DriveMindOverlay.radarLabel = label.ifBlank { "Radar" }
+        DriveMindOverlay.idleLabel = label.ifBlank { "Online" }
+    }
+
+    /** Localized labels for the Accept & Dismiss buttons on the offer card. */
+    @ReactMethod
+    fun setOverlayButtonLabels(acceptLabel: String, dismissLabel: String) {
+        DriveMindOverlay.acceptLabel = acceptLabel.ifBlank { "Accept & Go" }
+        DriveMindOverlay.dismissLabel = dismissLabel.ifBlank { "Dismiss" }
     }
 
     private fun checkUsageAccessGranted(): Boolean {

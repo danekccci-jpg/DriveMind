@@ -15,7 +15,14 @@
     <package android:name="ee.mtakso.driver" />
     <package android:name="com.bolt.delivery" />
     <package android:name="com.glovoapp.courier" />
+    <package android:name="com.wolt.courier.android" />
     <package android:name="com.wolt.handler" />
+    <package android:name="pl.pyszne" />
+    <package android:name="com.justeattakeaway.courier" />
+    <package android:name="com.guessxx.mock.uber" />
+    <package android:name="com.guessxx.mock.bolt" />
+    <package android:name="com.guessxx.mock.boltfood" />
+    <package android:name="com.guessxx.krakowmocks" />
   </queries>
 
   <application>

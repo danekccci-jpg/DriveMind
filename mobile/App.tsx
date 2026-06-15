@@ -21,10 +21,6 @@ import { useAuthStore, isGuestEmail } from './src/store/authStore'
 import { useTheme } from './src/theme/theme'
 import { configureGoogleSignIn } from './src/services/googleAuth'
 import { isFirebaseConfigured } from './src/config/firebase'
-import {
-  syncCurrentUserSubscription,
-  waitForFirebaseAuthUser,
-} from './src/services/firebaseAuth'
 import { getOrCreateDeviceFingerprint } from './src/services/deviceFingerprint'
 import { syncGuestOrderCountFromRemote, GUEST_ORDER_THRESHOLD } from './src/services/userFirestoreService'
 import LoginScreen from './src/screens/Login'
@@ -32,10 +28,12 @@ import OnboardingScreen from './src/screens/Onboarding'
 import LanguageSelectionScreen from './src/screens/LanguageSelection'
 import RootNavigator, { navigationRef } from './src/navigation/RootNavigator'
 import PaywallScreen from './src/screens/PaywallScreen'
-import { EVENT_OPEN_PAYWALL, syncOrderParsingGate } from './src/services/subscriptionGate'
+import { EVENT_OPEN_PAYWALL } from './src/services/subscriptionGate'
+import { SubscriptionProvider, useSubscription } from './src/context/SubscriptionContext'
 import { DriverIngestToast } from './src/components/DriverIngestToast'
 import { AccessibilityDisclosureHost } from './src/components/AccessibilityDisclosureHost'
 import { useDriverIngestBridge } from './src/services/driverIngestBridge'
+import { runPermissionColdStartAfterHydration } from './src/services/permissionColdStart'
 import { startLocationTracking, stopLocationTracking } from './src/services/locationTrackingService'
 import {
   checkPermissionsStatus,
@@ -64,10 +62,6 @@ export default function App() {
   const fadeAnim = useRef(new Animated.Value(0)).current
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated || s.isLoggedIn)
   const userEmail = useAuthStore((s) => s.userEmail)
-  const isPaywallBlocked = useAuthStore((s) => s.isPaywallBlocked)
-  const subscriptionLoaded = useAuthStore((s) => s.subscriptionLoaded)
-  const setSubscription = useAuthStore((s) => s.setSubscription)
-  const setSubscriptionLoaded = useAuthStore((s) => s.setSubscriptionLoaded)
   const guestOrderCount = useAuthStore((s) => s.guestOrderCount)
   const needsNativeGoogleAuth = Platform.OS === 'android' || Platform.OS === 'ios'
   const [authHydrated, setAuthHydrated] = useState(!needsNativeGoogleAuth)
@@ -184,57 +178,6 @@ export default function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  useEffect(() => {
-    if (!needsNativeGoogleAuth || !authHydrated || !isAuthenticated) return
-    if (isGuest) {
-      setSubscriptionLoaded(true)
-      return
-    }
-    if (!isFirebaseConfigured()) {
-      setSubscriptionLoaded(true)
-      return
-    }
-
-    let cancelled = false
-    void (async () => {
-      setSubscriptionLoaded(false)
-      try {
-        await waitForFirebaseAuthUser()
-        const synced = await syncCurrentUserSubscription()
-        if (cancelled) return
-        if (synced) {
-          setSubscription({
-            firebaseUid: synced.uid,
-            completedOrdersCount: synced.userRecord.completedOrdersCount,
-            isSubscribed: synced.userRecord.isSubscribed,
-            trialEndsAt: synced.userRecord.trialEndsAt,
-            subscriptionEndsAt: synced.userRecord.subscriptionEndsAt,
-            publicId: synced.userRecord.publicId,
-            paywallMode: synced.paywallMode,
-            isPaywallBlocked: synced.paywallRequired,
-            isSearchBlocked: synced.searchBlocked ?? false,
-          })
-          syncOrderParsingGate(synced.userRecord)
-        } else {
-          setSubscriptionLoaded(true)
-        }
-      } catch {
-        if (!cancelled) setSubscriptionLoaded(true)
-      }
-    })()
-
-    return () => {
-      cancelled = true
-    }
-  }, [
-    needsNativeGoogleAuth,
-    authHydrated,
-    isAuthenticated,
-    isGuest,
-    setSubscription,
-    setSubscriptionLoaded,
-  ])
-
   if (!fontsLoaded || !splashHoldDone) {
     const splashW = Dimensions.get('window').width - 40
     return (
@@ -313,42 +256,84 @@ export default function App() {
     )
   }
 
-  if (needsNativeGoogleAuth && isAuthenticated && !isGuest && !subscriptionLoaded) {
-    return (
-      <SafeAreaProvider>
-        <StatusBar style={isDark ? 'light' : 'dark'} backgroundColor={c.bg} />
-        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: c.bg }}>
-          <ActivityIndicator size="large" color={c.primary} />
-        </View>
-      </SafeAreaProvider>
-    )
-  }
+  return (
+    <SafeAreaProvider>
+      <StatusBar style={isDark ? 'light' : 'dark'} backgroundColor={c.tabBar} />
+      <SubscriptionProvider>
+        <AuthenticatedAppShell
+          navTheme={navTheme}
+          fadeAnim={fadeAnim}
+          needsNativeGoogleAuth={needsNativeGoogleAuth}
+          isAuthenticated={isAuthenticated}
+          isGuest={isGuest}
+          isGuestBlocked={isGuestBlocked}
+        />
+      </SubscriptionProvider>
+    </SafeAreaProvider>
+  )
+}
+
+type AuthenticatedAppShellProps = {
+  navTheme: Theme
+  fadeAnim: Animated.Value
+  needsNativeGoogleAuth: boolean
+  isAuthenticated: boolean
+  isGuest: boolean
+  isGuestBlocked: boolean
+}
+
+function AuthenticatedAppShell({
+  navTheme,
+  fadeAnim,
+  needsNativeGoogleAuth,
+  isAuthenticated,
+  isGuest,
+  isGuestBlocked,
+}: AuthenticatedAppShellProps) {
+  const { colors: c } = useTheme()
+  const { isLoading, hasAppAccess } = useSubscription()
+  const firebaseEnabled = isFirebaseConfigured()
 
   if (
     needsNativeGoogleAuth &&
     isAuthenticated &&
-    ((!isGuest && isPaywallBlocked) || isGuestBlocked)
+    !isGuest &&
+    firebaseEnabled &&
+    isLoading
   ) {
     return (
-      <SafeAreaProvider>
-        <StatusBar style={isDark ? 'light' : 'dark'} backgroundColor={c.bg} />
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: c.bg }}>
+        <ActivityIndicator size="large" color={c.primary} />
+      </View>
+    )
+  }
+
+  const blocked =
+    (needsNativeGoogleAuth && isAuthenticated && !isGuest && firebaseEnabled && !hasAppAccess) ||
+    isGuestBlocked
+
+  if (blocked) {
+    return (
+      <>
+        <StatusBar style="light" backgroundColor="#121212" />
         <PaywallScreen />
-      </SafeAreaProvider>
+      </>
     )
   }
 
   return (
-    <SafeAreaProvider>
-      <StatusBar style={isDark ? 'light' : 'dark'} backgroundColor={c.tabBar} />
-      <Animated.View style={{ flex: 1, opacity: fadeAnim }}>
-        <MainAppWithDriverIngest navTheme={navTheme} />
-      </Animated.View>
-    </SafeAreaProvider>
+    <Animated.View style={{ flex: 1, opacity: fadeAnim }}>
+      <MainAppWithDriverIngest navTheme={navTheme} />
+    </Animated.View>
   )
 }
 
 function MainAppWithDriverIngest({ navTheme }: { navTheme: Theme }) {
   useDriverIngestBridge(true)
+
+  useEffect(() => {
+    runPermissionColdStartAfterHydration()
+  }, [])
 
   useEffect(() => {
     const sub = DeviceEventEmitter.addListener(EVENT_OPEN_PAYWALL, () => {

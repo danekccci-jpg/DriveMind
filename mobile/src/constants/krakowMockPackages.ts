@@ -1,17 +1,20 @@
 /**
  * Kraków QA mock APKs (built from C:\Users\dan1\MockApps\KrakowMocks\dist).
- * They intentionally reuse production package IDs so DriveMind routes them
- * like real Uber/Bolt posters.
  *
- * | APK file           | applicationId        | Variant    |
- * |--------------------|----------------------|------------|
- * | UberDriverMock.apk | com.ubercab.driver   | uberdriver |
- * | BoltDriverMock.apk | com.bolt.driver      | boltdriver |
- * | BoltFoodMock.apk   | com.bolt.delivery    | boltfood   |
+ * Production-ID mocks reuse real applicationIds so DriveMind routes them like Uber/Bolt.
+ * Alternate Guessxx mock IDs are matched via `isMockOrTestPackage()` in Kotlin + TS.
+ *
+ * | APK file           | applicationId (typical)     | Variant    |
+ * |--------------------|-----------------------------|------------|
+ * | UberDriverMock.apk | com.ubercab.driver          | uberdriver |
+ * | BoltDriverMock.apk | com.bolt.driver / ee.mtakso | boltdriver |
+ * | BoltFoodMock.apk   | com.bolt.delivery           | boltfood   |
+ * | *Mock*.apk         | com.guessxx.mock.*          | dev QA     |
  */
 export const KRAKOW_MOCK_PACKAGES = {
   uber: 'com.ubercab.driver',
   bolt: 'com.bolt.driver',
+  boltMtakso: 'ee.mtakso.driver',
   boltFood: 'com.bolt.delivery',
 } as const
 

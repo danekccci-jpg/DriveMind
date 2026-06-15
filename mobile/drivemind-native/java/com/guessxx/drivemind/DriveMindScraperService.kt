@@ -30,10 +30,21 @@ class DriveMindScraperService : AccessibilityService() {
 
     private var tickRunnable: Runnable? = null
     private var debouncedParseRunnable: Runnable? = null
+    private var acceptanceCheckRunnable: Runnable? = null
     private var foundThisWindow = false
-    private var parseInFlight = false
+    @Volatile private var parseInFlight = false
     private var currentPackage = ""
     private var topPackageName = ""
+
+    // Cached last successfully scraped offer — used to attribute a subsequent
+    // offer-screen-to-trip-screen UI transition as a passive Accept event.
+    private data class CachedOffer(
+        val data: ScrapeExtract,
+        val capturedAt: Long,
+        val hash: String,
+    )
+    @Volatile private var lastOffer: CachedOffer? = null
+    @Volatile private var acceptedHash: String? = null
     // ── AccessibilityService callbacks ────────────────────────────────────────
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -46,19 +57,33 @@ class DriveMindScraperService : AccessibilityService() {
             if (!DriveMindScraperState.isOrderParsingEnabled()) {
                 cancelTickLoop()
                 cancelDebouncedParse()
+                cancelAcceptanceCheck()
                 return
             }
 
             val pkg = event.packageName?.toString() ?: return
             topPackageName = pkg
 
-            if (pkg !in OVERLAY_TARGET_PACKAGES) {
+            if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+                NotificationBrandRouter.logWindowPackage(
+                    pkg,
+                    gate = "overlay",
+                    accepted = NotificationBrandRouter.isOverlayTargetPackage(pkg),
+                )
+                if (NotificationBrandRouter.isOverlayTargetPackage(pkg)) {
+                    DriveMindOverlay.onDriverAppForegrounded(this@DriveMindScraperService)
+                }
+            }
+
+            if (!NotificationBrandRouter.isOverlayTargetPackage(pkg)) {
                 cancelTickLoop()
                 return
             }
 
-            // Lazy scraping: full tree analysis only for whitelisted driver apps.
-            if (pkg !in MONITORED_PACKAGES) {
+            if (!NotificationBrandRouter.isMonitoredDriverPackage(pkg)) {
+                if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+                    NotificationBrandRouter.logWindowPackage(pkg, gate = "scrape", accepted = false)
+                }
                 cancelTickLoop()
                 return
             }
@@ -69,6 +94,7 @@ class DriveMindScraperService : AccessibilityService() {
                 AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
                     DriveMindScraperState.extendScanWindow(10_000L)
                     foundThisWindow = false
+                    scheduleAcceptanceCheck(pkg)
                     requestDebouncedParse(immediate = true)
                 }
                 AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
@@ -86,11 +112,13 @@ class DriveMindScraperService : AccessibilityService() {
     override fun onInterrupt() {
         cancelTickLoop()
         cancelDebouncedParse()
+        cancelAcceptanceCheck()
     }
 
     override fun onDestroy() {
         cancelTickLoop()
         cancelDebouncedParse()
+        cancelAcceptanceCheck()
         parseExecutor.shutdownNow()
         super.onDestroy()
     }
@@ -104,6 +132,11 @@ class DriveMindScraperService : AccessibilityService() {
     private fun cancelDebouncedParse() {
         debouncedParseRunnable?.let { mainHandler.removeCallbacks(it) }
         debouncedParseRunnable = null
+    }
+
+    private fun cancelAcceptanceCheck() {
+        acceptanceCheckRunnable?.let { mainHandler.removeCallbacks(it) }
+        acceptanceCheckRunnable = null
     }
 
     private fun requestDebouncedParse(immediate: Boolean) {
@@ -174,6 +207,7 @@ class DriveMindScraperService : AccessibilityService() {
                 if (data != null && data.isValidOrder()) {
                     foundThisWindow = true
                     emitOrderScraped(data)
+                    cacheLastOffer(data)
                     try { DriveMindSound.playSoftClick(applicationContext) } catch (_: Exception) { }
                     tickRunnable = null
                     return@post
@@ -208,6 +242,117 @@ class DriveMindScraperService : AccessibilityService() {
         map.putString("surge", data.surge)
         map.putString("packageName", data.packageHint)
         DriveMindReactBridge.emit(EVENT_ORDER_SCRAPED, map)
+    }
+
+    private fun emitOrderAccepted(cached: CachedOffer, acceptedAt: Long) {
+        val data = cached.data
+        val map = Arguments.createMap()
+        map.putString("price", data.price)
+        map.putString("distanceKm", data.distanceKmText)
+        map.putString("etaMin", data.etaMinText)
+        map.putString("pickup", data.pickup)
+        map.putString("dropoff", data.dropoff)
+        map.putString("surge", data.surge)
+        map.putString("packageName", data.packageHint)
+        map.putString("contentHash", cached.hash)
+        map.putDouble("acceptedAt", acceptedAt.toDouble())
+        DriveMindReactBridge.emitImmediate(EVENT_ORDER_ACCEPTED, map)
+        android.util.Log.d(
+            "DriveMindScraper",
+            "onOrderAccepted emitted pkg=${data.packageHint} price=${data.price} hash=${cached.hash}",
+        )
+    }
+
+    private fun cacheLastOffer(data: ScrapeExtract) {
+        val hash = buildOfferHash(data)
+        lastOffer = CachedOffer(data = data, capturedAt = System.currentTimeMillis(), hash = hash)
+        // Allow a fresh acceptance check for a new offer with a different hash.
+        if (acceptedHash != hash) acceptedHash = null
+    }
+
+    private fun buildOfferHash(data: ScrapeExtract): String {
+        val pkg = data.packageHint
+        val price = data.price.replace(",", ".").trim()
+        val dist = data.distanceKmText.replace(",", ".").trim()
+        val eta = data.etaMinText.trim()
+        return "$pkg|$price|$dist|$eta"
+    }
+
+    /**
+     * Schedule a one-shot transition check after a window state change.
+     *
+     * Heuristic for passive Accept detection (READ-ONLY — never simulates input):
+     *  1. A valid offer was scraped within the last [ACCEPT_WINDOW_MS].
+     *  2. After the transition, the new window does NOT contain a valid offer layout
+     *     (i.e. price + currency + km/min layout is gone).
+     *  3. The new window contains trip / navigation keywords (pickup, drop-off,
+     *     navigate, slide-to-start, customer, etc.) in multiple languages.
+     *  Otherwise the change is treated as decline / expiry and is ignored.
+     */
+    private fun scheduleAcceptanceCheck(pkg: String) {
+        val cached = lastOffer ?: return
+        if (acceptedHash == cached.hash) return
+        val age = System.currentTimeMillis() - cached.capturedAt
+        if (age > ACCEPT_WINDOW_MS) {
+            lastOffer = null
+            return
+        }
+        // Cached offer must belong to the SAME package as the new window —
+        // otherwise an Uber-cached offer could be falsely attributed to a
+        // Bolt trip screen (or vice-versa) when the driver switches apps.
+        if (cached.data.packageHint.isNotEmpty() && cached.data.packageHint != pkg) {
+            return
+        }
+        cancelAcceptanceCheck()
+        val cachedHash = cached.hash
+        val r = Runnable {
+            acceptanceCheckRunnable = null
+            runAcceptanceCheck(cached, cachedHash)
+        }
+        acceptanceCheckRunnable = r
+        // Small delay lets the new screen settle before we snapshot it.
+        mainHandler.postDelayed(r, ACCEPT_SETTLE_MS)
+    }
+
+    private fun runAcceptanceCheck(cached: CachedOffer, cachedHash: String) {
+        if (acceptedHash == cachedHash) return
+        if (lastOffer?.hash != cachedHash) return
+        if (System.currentTimeMillis() - cached.capturedAt > ACCEPT_WINDOW_MS) {
+            lastOffer = null
+            return
+        }
+        val root = rootInActiveWindow ?: return
+        val snapshot = try {
+            buildSnapshot(root)
+        } catch (_: Exception) {
+            null
+        } finally {
+            recycleNode(root)
+        }
+        if (snapshot == null) return
+
+        val extract = try { extractFromSnapshot(snapshot) } catch (_: Exception) { null }
+        val stillOnOfferScreen = extract != null && extract.isValidOrder()
+        if (stillOnOfferScreen) return
+
+        val blob = snapshot.texts.joinToString("\n").lowercase()
+        val hasTripKeyword = TRIP_KEYWORDS.any { blob.contains(it) }
+        if (!hasTripKeyword) return
+
+        acceptedHash = cachedHash
+        val acceptedAt = System.currentTimeMillis()
+        // Suppress re-scrape ticks on the trip screen for the remainder of this window.
+        foundThisWindow = true
+        // RN bridge must emit on the main/UI thread — never from parseExecutor.
+        mainHandler.post {
+            try {
+                emitOrderAccepted(cached, acceptedAt)
+            } catch (t: Throwable) {
+                android.util.Log.e("DriveMindScraper", "emitOrderAccepted failed", t)
+            }
+        }
+        // Don't re-attribute the same offer; allow a new scrape to reset.
+        lastOffer = null
     }
 
     // ── Data model ────────────────────────────────────────────────────────────
@@ -427,28 +572,46 @@ class DriveMindScraperService : AccessibilityService() {
     companion object {
         private const val DEBOUNCE_MS = 250L
         private const val TICK_INTERVAL_MS = 500L
+        /** Max age of a cached offer that can be attributed to an Accept. */
+        private const val ACCEPT_WINDOW_MS = 90_000L
+        /** Settle delay between WINDOW_STATE_CHANGED and the acceptance snapshot. */
+        private const val ACCEPT_SETTLE_MS = 700L
         const val EVENT_SCRAPE = "DriveMindScrape"
         const val EVENT_ORDER_SCRAPED = "onOrderScraped"
+        const val EVENT_ORDER_ACCEPTED = "onOrderAccepted"
+
+        /**
+         * Keywords that indicate the driver is on an active-trip / navigation
+         * screen (post-Accept). Multi-language coverage for Uber Driver / Bolt
+         * Driver in PL / EN / UK / RU.
+         */
+        private val TRIP_KEYWORDS: List<String> = listOf(
+            // EN
+            "pickup", "pick-up", "pick up", "drop off", "drop-off", "dropoff",
+            "navigate", "start trip", "start ride", "end trip", "slide to",
+            "swipe to start", "i've arrived", "i have arrived", "arrived",
+            "go to pickup", "go to customer", "customer", "passenger",
+            // PL
+            "odbiór", "odbior", "odbierz", "dostawa", "dojedź", "dojedz",
+            "rozpocznij", "zakończ", "zakoncz", "klient", "do klienta",
+            "nawiguj", "trasa do",
+            // UK
+            "забрати", "висадка", "клієнт", "почати поїздку", "закінчити",
+            "навігація", "пасажир",
+            // RU
+            "забрать", "высадка", "клиент", "начать поездку", "закончить",
+            "навигация", "пассажир", "поездка началась",
+        )
 
         const val PACKAGE_BOLT_FOOD = DriveMindNotificationService.PACKAGE_BOLT_FOOD
-        const val PACKAGE_GLOVO = "com.glovoapp.courier"
-        const val PACKAGE_WOLT  = "com.wolt.handler"
 
-        val MONITORED_PACKAGES: Set<String> = setOf(
-            DriveMindNotificationService.PACKAGE_UBER,
-            DriveMindNotificationService.PACKAGE_BOLT,
-            PACKAGE_BOLT_FOOD,
-            PACKAGE_GLOVO,
-            PACKAGE_WOLT,
-        )
+        /** @deprecated Use [NotificationBrandRouter.isMonitoredDriverPackage]. */
+        @Deprecated("Use NotificationBrandRouter.isMonitoredDriverPackage")
+        val MONITORED_PACKAGES: Set<String> = NotificationBrandRouter.PRODUCTION_PACKAGES
 
-        val OVERLAY_TARGET_PACKAGES: Set<String> = setOf(
-            DriveMindNotificationService.PACKAGE_UBER,
-            DriveMindNotificationService.PACKAGE_BOLT,
-            PACKAGE_BOLT_FOOD,
-            PACKAGE_GLOVO,
-            PACKAGE_WOLT,
-        )
+        /** @deprecated Use [NotificationBrandRouter.isOverlayTargetPackage]. */
+        @Deprecated("Use NotificationBrandRouter.isOverlayTargetPackage")
+        val OVERLAY_TARGET_PACKAGES: Set<String> = NotificationBrandRouter.PRODUCTION_PACKAGES
 
         private val PRICE_PATTERN = Pattern.compile(
             "(\\d+[.,]\\d{1,2})\\s*(PLN|zł|ZL|EUR|€|\\$|USD)",

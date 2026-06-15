@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useCallback } from 'react'
+import React, { useMemo, useState, useCallback, useEffect } from 'react'
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Platform } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useTranslation } from 'react-i18next'
@@ -39,10 +39,18 @@ export default function EarningsScreen() {
 
   const hasTransactions = transactions.length > 0
   const cardBg = isDark ? c.surface : LIGHT_CARD
+  const [shiftTick, setShiftTick] = useState(0)
+  useEffect(() => {
+    if (shiftStats.startTime == null) return
+    const id = setInterval(() => setShiftTick((t) => t + 1), 1000)
+    return () => clearInterval(id)
+  }, [shiftStats.startTime])
   const hoursOnline = useMemo(() => {
     if (shiftStats.startTime == null) return 0
     return Math.max(0, (Date.now() - shiftStats.startTime) / 3_600_000)
-  }, [shiftStats.startTime])
+  }, [shiftStats.startTime, shiftStats.completedOrders, shiftTick])
+  const plnPerHour =
+    hoursOnline > 0.0167 ? shiftStats.totalEarnings / hoursOnline : 0
 
   return (
     <ScrollView
@@ -65,6 +73,22 @@ export default function EarningsScreen() {
         <View style={[s.shiftCard, cardShadow, { backgroundColor: cardBg }]}>
           <Text style={[s.shiftLabel, { color: c.textSecondary }]}>{t('hours_online')}</Text>
           <Text style={[s.shiftValue, { color: c.text }]}>{`${hoursOnline.toFixed(1)}h`}</Text>
+        </View>
+      </View>
+      <View style={[s.shiftRow, { marginTop: 8 }]}>
+        <View style={[s.shiftCard, cardShadow, { backgroundColor: cardBg }]}>
+          <Text style={[s.shiftLabel, { color: c.textSecondary }]}>{t('avg_pln_hour')}</Text>
+          <Text style={[s.shiftValue, { color: c.text }]}>
+            {plnPerHour > 0 ? formatPln(plnPerHour) : '—'}
+          </Text>
+        </View>
+        <View style={[s.shiftCard, cardShadow, { backgroundColor: cardBg }]}>
+          <Text style={[s.shiftLabel, { color: c.textSecondary }]}>{t('avg_pln_km')}</Text>
+          <Text style={[s.shiftValue, { color: c.text }]}>
+            {shiftStats.totalKm > 0
+              ? (shiftStats.totalEarnings / shiftStats.totalKm).toFixed(2)
+              : '—'}
+          </Text>
         </View>
       </View>
 
