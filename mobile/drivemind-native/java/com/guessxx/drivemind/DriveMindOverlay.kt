@@ -157,13 +157,22 @@ object DriveMindOverlay {
 
     // ── Lifecycle ────────────────────────────────────────────────────────────
 
-    fun setShiftActive(active: Boolean) {
+    fun setShiftActive(active: Boolean, context: Context? = null) {
         runOverlayMutation {
             shiftOverlayActive = active
             if (!active) {
                 cachedMode = CachedMode.NONE
                 cachedProfit = null
                 detachOverlayView(immediate = true)
+                return@runOverlayMutation
+            }
+            val appCtx = context?.applicationContext ?: return@runOverlayMutation
+            if (!appInForeground) {
+                if (cachedMode == CachedMode.NONE) {
+                    cachedMode = CachedMode.IDLE
+                    cachedProfit = null
+                }
+                restoreCachedOverlay(appCtx)
             }
         }
     }

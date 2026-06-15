@@ -318,6 +318,12 @@ class DriveMindNativeModule(reactContext: ReactApplicationContext) :
         DriveMindOverlay.hide()
     }
 
+    /** Cache/show the IDLE radar pill (e.g. shift started with an empty ingest queue). */
+    @ReactMethod
+    fun showOverlayIdle() {
+        DriveMindOverlay.showIdle(reactApplicationContext)
+    }
+
     /**
      * Arms or disarms the overlay for the current shift.
      * When [active] is false (shift ended / permissions revoked) the widget is hidden.
@@ -325,7 +331,7 @@ class DriveMindNativeModule(reactContext: ReactApplicationContext) :
      */
     @ReactMethod
     fun setOverlayShiftActive(active: Boolean) {
-        DriveMindOverlay.setShiftActive(active)
+        DriveMindOverlay.setShiftActive(active, reactApplicationContext)
     }
 
     /**

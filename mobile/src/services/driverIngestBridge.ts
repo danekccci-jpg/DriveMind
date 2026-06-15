@@ -29,6 +29,7 @@ import {
   formatOverlayPrimaryRate,
 } from '../utils/overlayI18n'
 import { buildIngestOrderHash } from '../utils/orderIngestHash'
+import { refreshOverlayFromIngestQueue } from './overlayFromIngest'
 import { useLanguageStore } from '../store/languageStore'
 import { EVENT_NOTIFICATION } from './notificationListener'
 
@@ -66,6 +67,8 @@ type DriveMindNativeType = {
   /** Remove the floating tier pill from the screen. */
   hideOverlay: () => void
   triggerScraperWindow: () => void
+  /** Cache/show IDLE radar pill (used when shift starts with an empty queue). */
+  showOverlayIdle?: () => void
   /** Optional: forward to `Log.d("DM_DEBUG", …)` from Kotlin for logcat parity. */
   logDmDebug?: (phase: string, detail: string, jsonPayload: string) => void
 }
@@ -751,10 +754,21 @@ export function useDriverIngestBridge(enabled = true): void {
       }
       Promise.all([native.isOverlayPermissionGranted(), native.isUsageAccessGranted()]).then(
         ([overlayGranted, usageGranted]) => {
-          const nextActive = isShiftOn && overlayGranted && usageGranted
+          // Overlay widget only needs SYSTEM_ALERT_WINDOW + active shift.
+          // Usage-stats permission is unrelated to WM attach (kept for Permissions UI only).
+          void usageGranted
+          const nextActive = isShiftOn && overlayGranted
           if (lastOverlayActiveRef.current !== nextActive) {
             lastOverlayActiveRef.current = nextActive
             native.setOverlayShiftActive(nextActive)
+          }
+          if (nextActive) {
+            triggerScraperWindow()
+            void syncBufferedNotificationsIfNeeded()
+              .catch(() => { /* noop */ })
+              .finally(() => {
+                void refreshOverlayFromIngestQueue()
+              })
           }
         },
       )
