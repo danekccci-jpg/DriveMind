@@ -192,6 +192,19 @@ class DriveMindNotificationService : NotificationListenerService() {
                 "DistanceKm=$distanceSnapshot, EtaMin=$etaSnapshot",
         )
 
+        OverlayProfitBuilder.fromPriceDistanceEta(
+            priceSnapshot,
+            distanceSnapshot,
+            etaSnapshot,
+            routedPackage,
+            contentHash = "${routedPackage}_${priceSnapshot}_${postTime}",
+        )?.let { overlayFields ->
+            mainHandler.post {
+                DriveMindOverlay.updateOverlayData(applicationContext, overlayFields, forceInvalidate = true)
+                Log.i(TAG, "overlay notification fast-path pkg=$routedPackage price=$priceSnapshot")
+            }
+        }
+
         mainHandler.post {
             try {
                 val map = Arguments.createMap()

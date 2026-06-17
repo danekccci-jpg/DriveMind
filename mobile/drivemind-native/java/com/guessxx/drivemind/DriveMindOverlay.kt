@@ -1,6 +1,7 @@
 package com.guessxx.drivemind
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.PixelFormat
@@ -24,17 +25,16 @@ import androidx.dynamicanimation.animation.FloatValueHolder
 import androidx.dynamicanimation.animation.SpringAnimation
 import androidx.dynamicanimation.animation.SpringForce
 import kotlin.math.abs
+import java.lang.ref.WeakReference
 import java.util.concurrent.ConcurrentLinkedDeque
 
 // ── Premium widget design tokens ────────────────────────────────────────────
 //
 //  Card:    solid #121214 dark fill with a hairline #27272A border + 16dp
 //           radius + soft elevation shadow.
-//  Accent:  comes from the per-tier color (LEGENDARY/VERY_GOOD/etc.) — applied
-//           ONLY to the primary "zł/km" text and the Accept button background.
+//  Accent:  per-tier Financial Analyst color on primary "zł/km" text only.
 //  IDLE:    compact micro-pill (~120dp) with a 8dp green pulsing dot + label.
-//  OFFER:   expanded analytical card (~300dp) with primary rate / fare / ETA /
-//           Accept & Dismiss buttons.
+//  OFFER:   expanded analytical HUD banner (~300dp) — no action buttons.
 //
 // Safe-zone: widget is clamped to the upper 55% of the screen so it never
 // overlaps the Uber/Bolt Accept buttons in the lower portion of the UI.
@@ -43,6 +43,7 @@ private const val CARD_CORNER_DP = 16
 private const val CARD_ELEVATION_DP = 8
 private const val CARD_BORDER_WIDTH_DP = 1
 private const val BACKGROUND_DEBOUNCE_MS = 80L
+private const val LAUNCHER_DETACH_DEBOUNCE_MS = 280L
 
 private const val CARD_BG_HEX = "#121214"
 private const val CARD_BORDER_HEX = "#27272A"
@@ -60,9 +61,9 @@ data class OverlayProfitFields(
     val priceLine: String,
     /** ETA + distance, e.g. "12 min · 3,2 km". */
     val metricsLine: String,
-    /** Accent color used for primary rate text + Accept button (per-tier neon). */
+    /** Accent color for primary rate text (Financial Analyst tier). */
     val accentColorHex: String,
-    /** Driver-app package name for `Accept & Go` deep-launch. */
+    /** Driver-app package name (for ingest reconciliation). */
     val packageName: String,
     /** Stable hash JS uses to reconcile the offer in driverIngestStore. */
     val contentHash: String,
@@ -74,14 +75,11 @@ private class OverlayCardRefs(
     val idleRow: LinearLayout,
     val idleDot: View,
     val idleLabel: TextView,
-    // ── OFFER card ──
+    // ── OFFER HUD banner ──
     val offerLayout: LinearLayout,
     val tierBadge: TextView,
     val primaryRate: TextView,
     val secondaryRow: TextView,
-    val buttonRow: LinearLayout,
-    val dismissBtn: TextView,
-    val acceptBtn: TextView,
 )
 
 private fun overlayDp(ctx: Context, dp: Int): Int =
@@ -105,13 +103,15 @@ private fun clampOverlayToSafeZone(
 }
 
 /**
- * Premium floating widget managed via [WindowManager].
+ * Premium floating HUD managed via [WindowManager].
  *
- * Two states: IDLE (compact pill) and OFFER (analytical card with Accept &
- * Dismiss buttons). Visibility is gated by RN AppState (foreground hides) and
- * the active shift flag.
+ * Two states: IDLE (compact pill) and OFFER (analytical banner).
+ * Visibility is gated by RN AppState (foreground hides) and the active shift flag.
  */
 object DriveMindOverlay {
+
+    private const val PREFS_NAME = "drivemind_overlay"
+    private const val KEY_SHIFT_ACTIVE = "shift_overlay_active"
 
     private enum class CachedMode { NONE, IDLE, OFFER }
 
@@ -128,6 +128,7 @@ object DriveMindOverlay {
     @Volatile private var usingAccessibilityOverlay = false
 
     @Volatile private var appInForeground = true
+    @Volatile private var overlayTargetInForeground = false
     @Volatile private var shiftOverlayActive = false
     @Volatile private var cachedMode = CachedMode.NONE
     @Volatile private var cachedProfit: OverlayProfitFields? = null
@@ -135,6 +136,31 @@ object DriveMindOverlay {
     @Volatile private var overlayMutationInFlight = false
     private val pendingOverlayMutations = ConcurrentLinkedDeque<() -> Unit>()
     @Volatile private var lastBackgroundAtMs = 0L
+    @Volatile private var accessibilityServiceRef: WeakReference<Context>? = null
+    // Deferred detach for launcher/SystemUI flashes: cancellable if a driver app
+    // comes into focus before the timer fires (transient transition flash).
+    private var launcherDetachRunnable: Runnable? = null
+
+    fun bindAccessibilityService(context: Context) {
+        accessibilityServiceRef = WeakReference(context)
+    }
+
+    private fun accessibilityServiceContext(): Context? = accessibilityServiceRef?.get()
+
+    private fun overlayPrefs(ctx: Context): SharedPreferences =
+        ctx.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+    private fun persistShiftActive(ctx: Context, active: Boolean) {
+        overlayPrefs(ctx).edit().putBoolean(KEY_SHIFT_ACTIVE, active).apply()
+    }
+
+    private fun restoreShiftActiveFromPrefs(ctx: Context) {
+        if (shiftOverlayActive) return
+        if (overlayPrefs(ctx).getBoolean(KEY_SHIFT_ACTIVE, false)) {
+            shiftOverlayActive = true
+            Log.i("DriveMindOverlay", "restored shift active from prefs")
+        }
+    }
 
     private fun runOverlayMutation(block: () -> Unit) {
         mainHandler.post {
@@ -158,22 +184,44 @@ object DriveMindOverlay {
     // ── Lifecycle ────────────────────────────────────────────────────────────
 
     fun setShiftActive(active: Boolean, context: Context? = null) {
+        launcherDetachRunnable?.let { mainHandler.removeCallbacks(it) }
+        launcherDetachRunnable = null
         runOverlayMutation {
+            val wasActive = shiftOverlayActive
             shiftOverlayActive = active
+            context?.applicationContext?.let { persistShiftActive(it, active) }
             if (!active) {
                 cachedMode = CachedMode.NONE
                 cachedProfit = null
                 detachOverlayView(immediate = true)
+                Log.i("DriveMindOverlay", "setShiftActive false")
                 return@runOverlayMutation
             }
-            val appCtx = context?.applicationContext ?: return@runOverlayMutation
-            if (!appInForeground) {
-                if (cachedMode == CachedMode.NONE) {
-                    cachedMode = CachedMode.IDLE
-                    cachedProfit = null
-                }
-                restoreCachedOverlay(appCtx)
+            val appCtx = context?.applicationContext
+            if (appCtx == null) {
+                Log.w("DriveMindOverlay", "setShiftActive true — no context")
+                return@runOverlayMutation
             }
+            if (cachedMode == CachedMode.NONE) {
+                cachedMode = CachedMode.IDLE
+                cachedProfit = null
+            }
+            Log.i(
+                "DriveMindOverlay",
+                "setShiftActive true was=$wasActive mode=$cachedMode foreground=$appInForeground",
+            )
+            flushCachedOverlayAttach(appCtx)
+            if (overlayTargetInForeground) {
+                DriveMindScraperService.requestRescanIfForeground()
+            }
+        }
+    }
+
+    /** RN launched a driver/mock app — wait for accessibility WINDOW_STATE_CHANGED to arm overlay. */
+    fun onDriverAppLaunched(appContext: Context) {
+        runOverlayMutation {
+            appInForeground = false
+            Log.d("DriveMindOverlay", "onDriverAppLaunched — waiting for overlay target window")
         }
     }
 
@@ -199,43 +247,189 @@ object DriveMindOverlay {
             if (!appInForeground && now - lastBackgroundAtMs < BACKGROUND_DEBOUNCE_MS) return@runOverlayMutation
             lastBackgroundAtMs = now
             appInForeground = false
-            val appCtx = context.applicationContext
-            if (!DriveMindScraperState.isOrderParsingEnabled()) {
-                if (shiftOverlayActive && Settings.canDrawOverlays(appCtx)) {
-                    cachedMode = CachedMode.IDLE
-                    cachedProfit = null
-                    attachIdle(appCtx, useAccessibilityOverlay = false)
-                }
+            if (shiftOverlayActive) {
+                // Mid-shift swap to driver app: never detach — cachedMode/cachedProfit
+                // survive until setShiftActive(false). Reconcile foreground after the
+                // window stack settles (DriveMind often flashes in a11y during swap).
+                Log.d(
+                    "DriveMindOverlay",
+                    "onAppBackgrounded — shift active, preserving cache (overlayTarget=$overlayTargetInForeground)",
+                )
+                val appCtx = context.applicationContext
+                mainHandler.postDelayed({
+                    val topPkg = DriveMindScraperService.resolveForegroundOverlayTarget()
+                    if (topPkg != null && NotificationBrandRouter.isOverlayTargetPackage(topPkg)) {
+                        overlayTargetInForeground = true
+                        restoreCachedOverlay(appCtx)
+                        Log.d("DriveMindOverlay", "onAppBackgrounded delayed restore top=$topPkg")
+                    }
+                }, 150L)
+            } else {
+                detachOverlayView(immediate = true)
+                Log.d("DriveMindOverlay", "onAppBackgrounded — detached (no shift)")
+            }
+        }
+    }
+
+    /**
+     * Whitelist driver/mock app left foreground (launcher, settings, etc.).
+     *
+     * Launcher and SystemUI: hide instantly — never linger on the home screen.
+     * DriveMind flash during app swap: short debounce so overlay survives transition.
+     */
+    fun onOverlayTargetLost(packageName: String? = null) {
+        runOverlayMutation {
+            val pkg = packageName?.trim().orEmpty()
+            if (shiftOverlayActive && isLauncherOrSystemUi(pkg)) {
+                launcherDetachRunnable?.let { mainHandler.removeCallbacks(it) }
+                launcherDetachRunnable = null
+                overlayTargetInForeground = false
+                hideOverlayInstant()
+                Log.i("DriveMindOverlay", "onOverlayTargetLost instant hide pkg=$pkg")
                 return@runOverlayMutation
             }
-            restoreCachedOverlay(appCtx)
+            if (shiftOverlayActive && pkg == NotificationBrandRouter.PACKAGE_DRIVEMIND) {
+                scheduleLauncherDetachDebounce(pkg)
+                return@runOverlayMutation
+            }
+            launcherDetachRunnable?.let { mainHandler.removeCallbacks(it) }
+            launcherDetachRunnable = null
+            overlayTargetInForeground = false
+            hideOverlayInstant()
+            Log.i("DriveMindOverlay", "onOverlayTargetLost pkg=${packageName ?: "unknown"}")
         }
+    }
+
+    /**
+     * Schedule a deferred overlay detach for transient system/launcher packages.
+     * If [onDriverAppForegrounded] is called before the timer fires, the detach
+     * is cancelled (transition flash case). Otherwise it fires and detaches the
+     * overlay (genuine home screen / settings navigation).
+     */
+    private fun scheduleLauncherDetachDebounce(triggerPkg: String) {
+        launcherDetachRunnable?.let { mainHandler.removeCallbacks(it) }
+        val r = Runnable {
+            launcherDetachRunnable = null
+            runOverlayMutation {
+                if (!shiftOverlayActive) return@runOverlayMutation
+                // Ask the scraper if a whitelist app is still in the window stack.
+                val stillFg = DriveMindScraperService.resolveForegroundOverlayTarget()
+                if (stillFg != null && NotificationBrandRouter.isOverlayTargetPackage(stillFg)) {
+                    Log.i(
+                        "DriveMindOverlay",
+                        "launcher debounce: driver still in fg=$stillFg, keeping overlay (triggerPkg=$triggerPkg)",
+                    )
+                } else {
+                    overlayTargetInForeground = false
+                    hideOverlayInstant()
+                    Log.i(
+                        "DriveMindOverlay",
+                        "launcher debounce: confirmed home/system screen, detached (triggerPkg=$triggerPkg)",
+                    )
+                }
+            }
+        }
+        launcherDetachRunnable = r
+        mainHandler.postDelayed(r, LAUNCHER_DETACH_DEBOUNCE_MS)
+        Log.d("DriveMindOverlay", "onOverlayTargetLost: debouncing detach ${LAUNCHER_DETACH_DEBOUNCE_MS}ms for pkg=$triggerPkg")
+    }
+
+    /** Home screen / SystemUI — overlay must never linger here. */
+    private fun isLauncherOrSystemUi(pkg: String): Boolean {
+        if (pkg.isEmpty()) return false
+        if (pkg == "com.android.systemui") return true
+        if (pkg.contains("launcher", ignoreCase = true)) return true
+        if (pkg.startsWith("com.android.launcher")) return true
+        if (pkg.startsWith("com.google.android.apps.nexuslauncher")) return true
+        if (pkg.startsWith("com.sec.android.app.launcher")) return true
+        if (pkg.startsWith("com.miui.home")) return true
+        return false
+    }
+
+    /**
+     * Returns true for packages that may flash transiently during app transitions
+     * (DriveMind itself during swap). These get debounce, not instant hide.
+     */
+    private fun isTransientSystemPackage(pkg: String): Boolean {
+        if (pkg.isEmpty()) return true
+        if (pkg == NotificationBrandRouter.PACKAGE_DRIVEMIND) return true
+        return isLauncherOrSystemUi(pkg)
     }
 
     /**
      * Called when a monitored driver/mock app gains window focus (from AccessibilityService).
      * DriveMind is no longer the foreground app — attach overlay over the driver UI.
+     *
+     * @param requestRescan When false, skip [DriveMindScraperService.requestRescanIfForeground]
+     *   because the caller ([requestRescanFromNative]) already reconciled foreground + parse.
      */
-    fun onDriverAppForegrounded(serviceContext: Context) {
+    fun onDriverAppForegrounded(serviceContext: Context, requestRescan: Boolean = true) {
+        bindAccessibilityService(serviceContext)
+        // Cancel any pending launcher-detach debounce — the driver app is in foreground.
+        launcherDetachRunnable?.let { mainHandler.removeCallbacks(it) }
+        launcherDetachRunnable = null
         runOverlayMutation {
+            overlayTargetInForeground = true
             appInForeground = false
-            val appCtx = serviceContext.applicationContext
-            restoreCachedOverlay(appCtx, serviceContext)
+            Log.i(
+                "DriveMindOverlay",
+                "onDriverAppForegrounded shift=$shiftOverlayActive mode=$cachedMode rescan=$requestRescan",
+            )
+            flushCachedOverlayAttach(serviceContext.applicationContext, serviceContext)
+            if (requestRescan) {
+                DriveMindScraperService.requestRescanIfForeground()
+            }
         }
     }
 
     // ── Public API ───────────────────────────────────────────────────────────
 
     fun showProfitability(context: Context, fields: OverlayProfitFields) {
+        updateOverlayData(context, fields, forceInvalidate = false)
+    }
+
+    /**
+     * Update cached offer metrics and redraw the HUD banner.
+     * When [forceInvalidate] is true, applies fields to an already-attached view
+     * immediately without waiting for accessibility layout mutations.
+     */
+    fun updateOverlayData(
+        context: Context,
+        fields: OverlayProfitFields,
+        forceInvalidate: Boolean = false,
+    ) {
         runOverlayMutation {
             cachedMode = CachedMode.OFFER
             cachedProfit = fields
             val appCtx = context.applicationContext
-            if (mayAttachApplicationOverlay(appCtx)) {
-                attachOffer(appCtx, fields, useAccessibilityOverlay = false)
-            } else {
-                logAttachRejected(appCtx, "showProfitability")
+            restoreShiftActiveFromPrefs(appCtx)
+
+            if (forceInvalidate) {
+                val refs = cardRefs
+                val wm = windowManager
+                val lp = layoutParams
+                if (refs != null && wm != null && lp != null &&
+                    mayShowOverlay(appCtx, usingAccessibilityOverlay)
+                ) {
+                    stopDotPulse()
+                    applyOfferFields(refs, fields)
+                    switchToOfferLayout(refs)
+                    refs.root.visibility = View.VISIBLE
+                    refs.root.alpha = 1f
+                    refs.root.invalidate()
+                    refs.root.requestLayout()
+                    reclampOverlayAfterLayoutSwitch(refs)
+                    try {
+                        wm.updateViewLayout(refs.root, lp)
+                    } catch (_: Exception) { }
+                    Log.i(
+                        "DriveMindOverlay",
+                        "updateOverlayData forceInvalidate pkg=${fields.packageName} rate=${fields.primaryRateLine}",
+                    )
+                    return@runOverlayMutation
+                }
             }
+            flushCachedOverlayAttach(appCtx)
         }
     }
 
@@ -251,27 +445,13 @@ object DriveMindOverlay {
         runOverlayMutation {
             cachedMode = CachedMode.IDLE
             cachedProfit = null
-            if (!mayAttachApplicationOverlay(context)) return@runOverlayMutation
-            attachIdle(context.applicationContext, useAccessibilityOverlay = false)
-        }
-    }
-
-    /**
-     * Drop the current offer card back to the IDLE pill (after Accept / Dismiss)
-     * without fully removing the widget.
-     */
-    private fun dropOfferToIdle(appCtx: Context) {
-        cachedMode = CachedMode.IDLE
-        cachedProfit = null
-        if (mayAttachApplicationOverlay(appCtx)) {
-            attachIdle(appCtx, useAccessibilityOverlay = false)
-        } else {
-            detachOverlayView(immediate = true)
+            flushCachedOverlayAttach(context.applicationContext)
         }
     }
 
     /** Accessibility hot path — attach IDLE radar when driver app is on screen. */
     fun showRadarFromAccessibility(serviceContext: Context) {
+        bindAccessibilityService(serviceContext)
         runOverlayMutation {
             if (!shiftOverlayActive) {
                 Log.d("DriveMindOverlay", "showRadarFromAccessibility: shift inactive")
@@ -280,12 +460,18 @@ object DriveMindOverlay {
             cachedMode = CachedMode.IDLE
             cachedProfit = null
             appInForeground = false
-            val appCtx = serviceContext.applicationContext
-            if (mayAttachApplicationOverlay(appCtx)) {
-                attachIdle(appCtx, useAccessibilityOverlay = false)
-            } else {
-                attachIdle(serviceContext, useAccessibilityOverlay = true)
-            }
+            flushCachedOverlayAttach(serviceContext.applicationContext, serviceContext)
+        }
+    }
+
+    private fun mayShowOverlay(appCtx: Context, useAccessibilityOverlay: Boolean): Boolean {
+        if (!shiftOverlayActive) return false
+        if (appInForeground) return false
+        if (!overlayTargetInForeground) return false
+        return if (useAccessibilityOverlay) {
+            true
+        } else {
+            Settings.canDrawOverlays(appCtx.applicationContext)
         }
     }
 
@@ -293,49 +479,89 @@ object DriveMindOverlay {
         val reasons = mutableListOf<String>()
         if (!shiftOverlayActive) reasons.add("shiftInactive")
         if (appInForeground) reasons.add("appInForeground")
+        if (!overlayTargetInForeground) reasons.add("noOverlayTarget")
         if (!Settings.canDrawOverlays(appCtx)) reasons.add("noOverlayPermission")
         Log.d(
             "DriveMindOverlay",
-            "$caller: mayAttachApplicationOverlay=false (${reasons.joinToString()})",
+            "$caller: attach blocked (${reasons.joinToString()})",
         )
     }
 
     private fun mayAttachApplicationOverlay(context: Context): Boolean {
         val appCtx = context.applicationContext
-        val ok = shiftOverlayActive && !appInForeground && Settings.canDrawOverlays(appCtx)
+        val ok = mayShowOverlay(appCtx, useAccessibilityOverlay = false)
         if (!ok) logAttachRejected(appCtx, "mayAttachApplicationOverlay")
         return ok
     }
 
-    private fun restoreCachedOverlay(appCtx: Context, accessibilityContext: Context? = null) {
-        if (mayAttachApplicationOverlay(appCtx)) {
-            when (cachedMode) {
-                CachedMode.OFFER -> cachedProfit?.let { attachOffer(appCtx, it, useAccessibilityOverlay = false) }
-                CachedMode.IDLE -> attachIdle(appCtx, useAccessibilityOverlay = false)
-                CachedMode.NONE -> if (shiftOverlayActive) attachIdle(appCtx, useAccessibilityOverlay = false)
-            }
+    /**
+     * Attach cached IDLE/OFFER using APPLICATION_OVERLAY when possible, else
+     * TYPE_ACCESSIBILITY_OVERLAY via the bound AccessibilityService context.
+     */
+    private fun flushCachedOverlayAttach(
+        appCtx: Context,
+        accessibilityContext: Context? = accessibilityServiceContext(),
+    ) {
+        restoreShiftActiveFromPrefs(appCtx)
+        if (!shiftOverlayActive) {
+            Log.i("DriveMindOverlay", "flushCachedOverlayAttach: shift inactive (cached mode=$cachedMode)")
             return
         }
-        // Fall back to TYPE_ACCESSIBILITY_OVERLAY via AccessibilityService context.
-        val svcCtx = accessibilityContext ?: return
-        if (!shiftOverlayActive) return
-        when (cachedMode) {
-            CachedMode.OFFER -> cachedProfit?.let { attachOffer(svcCtx, it, useAccessibilityOverlay = true) }
-            CachedMode.IDLE -> attachIdle(svcCtx, useAccessibilityOverlay = true)
-            CachedMode.NONE -> attachIdle(svcCtx, useAccessibilityOverlay = true)
+        if (appInForeground) {
+            Log.i("DriveMindOverlay", "flushCachedOverlayAttach: DriveMind in foreground")
+            return
         }
+        if (!overlayTargetInForeground) {
+            Log.i("DriveMindOverlay", "flushCachedOverlayAttach: no whitelist app in foreground")
+            return
+        }
+        val svcCtx = accessibilityContext
+        when {
+            mayAttachApplicationOverlay(appCtx) -> {
+                Log.i("DriveMindOverlay", "attach APPLICATION_OVERLAY mode=$cachedMode")
+                applyCachedMode(appCtx, useAccessibilityOverlay = false)
+            }
+            svcCtx != null -> {
+                appInForeground = false
+                Log.i("DriveMindOverlay", "attach ACCESSIBILITY_OVERLAY mode=$cachedMode")
+                applyCachedMode(svcCtx, useAccessibilityOverlay = true)
+            }
+            else -> logAttachRejected(appCtx, "flushCachedOverlayAttach")
+        }
+    }
+
+    private fun applyCachedMode(ctx: Context, useAccessibilityOverlay: Boolean) {
+        when (cachedMode) {
+            CachedMode.OFFER -> cachedProfit?.let { attachOffer(ctx, it, useAccessibilityOverlay) }
+            CachedMode.IDLE -> attachIdle(ctx, useAccessibilityOverlay)
+            CachedMode.NONE -> attachIdle(ctx, useAccessibilityOverlay)
+        }
+    }
+
+    private fun restoreCachedOverlay(appCtx: Context, accessibilityContext: Context? = null) {
+        flushCachedOverlayAttach(appCtx, accessibilityContext)
     }
 
     // ── Attach OFFER ─────────────────────────────────────────────────────────
 
     private fun attachOffer(appCtx: Context, fields: OverlayProfitFields, useAccessibilityOverlay: Boolean) {
+        if (!mayShowOverlay(appCtx, useAccessibilityOverlay)) {
+            Log.i(
+                "DriveMindOverlay",
+                "attachOffer blocked a11y=$useAccessibilityOverlay target=$overlayTargetInForeground",
+            )
+            return
+        }
+        Log.i(
+            "DriveMindOverlay",
+            "attachOffer a11y=$useAccessibilityOverlay pkg=${fields.packageName} rate=${fields.primaryRateLine}",
+        )
         stopDotPulse()
         val wm = appCtx.getSystemService(Context.WINDOW_SERVICE) as? WindowManager ?: return
 
         val existing = cardRefs
         if (existing != null && windowManager != null && usingAccessibilityOverlay == useAccessibilityOverlay) {
             applyOfferFields(existing, fields)
-            wireOfferActions(appCtx, existing, fields)
             switchToOfferLayout(existing)
             reclampOverlayAfterLayoutSwitch(existing)
             fadeToVisible(existing.root)
@@ -347,7 +573,6 @@ object DriveMindOverlay {
         usingAccessibilityOverlay = useAccessibilityOverlay
         val refs = buildCard(appCtx)
         applyOfferFields(refs, fields)
-        wireOfferActions(appCtx, refs, fields)
         switchToOfferLayout(refs)
         attachAndShow(appCtx, wm, refs, useAccessibilityOverlay)
     }
@@ -355,12 +580,14 @@ object DriveMindOverlay {
     // ── Attach IDLE ──────────────────────────────────────────────────────────
 
     private fun attachIdle(appCtx: Context, useAccessibilityOverlay: Boolean) {
-        val canAttach = if (useAccessibilityOverlay) {
-            shiftOverlayActive && !appInForeground
-        } else {
-            mayAttachApplicationOverlay(appCtx)
+        if (!mayShowOverlay(appCtx, useAccessibilityOverlay)) {
+            Log.i(
+                "DriveMindOverlay",
+                "attachIdle blocked a11y=$useAccessibilityOverlay shift=$shiftOverlayActive " +
+                    "target=$overlayTargetInForeground foreground=$appInForeground",
+            )
+            return
         }
-        if (!canAttach) return
 
         val wm = appCtx.getSystemService(Context.WINDOW_SERVICE) as? WindowManager ?: return
         val label = idleLabel.ifBlank { "Online" }
@@ -383,6 +610,24 @@ object DriveMindOverlay {
         switchToIdleLayout(refs)
         attachAndShow(appCtx, wm, refs, useAccessibilityOverlay)
         startDotPulse()
+    }
+
+    private fun hideOverlayInstant() {
+        stopDotPulse()
+        val wm = windowManager
+        val refs = cardRefs
+        if (refs != null) {
+            refs.root.animate().cancel()
+            refs.root.visibility = View.GONE
+            refs.root.alpha = 0f
+            if (wm != null) {
+                try { wm.removeView(refs.root) } catch (_: Exception) { }
+            }
+        }
+        cardRefs = null
+        layoutParams = null
+        windowManager = null
+        usingAccessibilityOverlay = false
     }
 
     private fun detachOverlayView(immediate: Boolean) {
@@ -480,25 +725,8 @@ object DriveMindOverlay {
             setTextColor(Color.parseColor(MUTED_TEXT_HEX))
             textSize = 12f
             typeface = Typeface.DEFAULT
-            setPadding(0, overlayDp(appCtx, 4), 0, overlayDp(appCtx, 12))
+            setPadding(0, overlayDp(appCtx, 4), 0, 0)
         }
-
-        val buttonRow = LinearLayout(appCtx).apply {
-            orientation = LinearLayout.HORIZONTAL
-            val topGap = overlayDp(appCtx, 2)
-            setPadding(0, topGap, 0, 0)
-        }
-        val dismissBtn = buildDismissButton(appCtx)
-        val acceptBtn = buildAcceptButton(appCtx, Color.parseColor(FALLBACK_ACCENT_HEX))
-        val btnGap = overlayDp(appCtx, 8)
-        val dismissLp = LinearLayout.LayoutParams(0, overlayDp(appCtx, 40), 1f).apply {
-            rightMargin = btnGap / 2
-        }
-        val acceptLp = LinearLayout.LayoutParams(0, overlayDp(appCtx, 40), 1f).apply {
-            leftMargin = btnGap / 2
-        }
-        buttonRow.addView(dismissBtn, dismissLp)
-        buttonRow.addView(acceptBtn, acceptLp)
 
         offerLayout.addView(tierBadge, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.WRAP_CONTENT,
@@ -510,10 +738,6 @@ object DriveMindOverlay {
         ))
         offerLayout.addView(secondaryRow, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.WRAP_CONTENT,
-            LinearLayout.LayoutParams.WRAP_CONTENT,
-        ))
-        offerLayout.addView(buttonRow, LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT,
             LinearLayout.LayoutParams.WRAP_CONTENT,
         ))
 
@@ -535,62 +759,7 @@ object DriveMindOverlay {
             tierBadge = tierBadge,
             primaryRate = primaryRate,
             secondaryRow = secondaryRow,
-            buttonRow = buttonRow,
-            dismissBtn = dismissBtn,
-            acceptBtn = acceptBtn,
         )
-    }
-
-    private fun buildDismissButton(appCtx: Context): TextView {
-        return TextView(appCtx).apply {
-            setTextColor(Color.parseColor(MUTED_TEXT_HEX))
-            textSize = 13f
-            typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
-            isClickable = true
-            isFocusable = false
-            background = buildButtonBackground(
-                appCtx = appCtx,
-                fillColor = Color.TRANSPARENT,
-                strokeColor = Color.parseColor(CARD_BORDER_HEX),
-                strokeWidthDp = 1f,
-                cornerDp = 12f,
-            )
-        }
-    }
-
-    private fun buildAcceptButton(appCtx: Context, accentColor: Int): TextView {
-        return TextView(appCtx).apply {
-            setTextColor(Color.WHITE)
-            textSize = 13f
-            typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
-            isClickable = true
-            isFocusable = false
-            background = buildButtonBackground(
-                appCtx = appCtx,
-                fillColor = accentColor,
-                strokeColor = Color.TRANSPARENT,
-                strokeWidthDp = 0f,
-                cornerDp = 12f,
-            )
-        }
-    }
-
-    private fun buildButtonBackground(
-        appCtx: Context,
-        fillColor: Int,
-        strokeColor: Int,
-        strokeWidthDp: Float,
-        cornerDp: Float,
-    ): GradientDrawable {
-        return GradientDrawable().apply {
-            setColor(fillColor)
-            cornerRadius = overlayDpF(appCtx, cornerDp)
-            if (strokeWidthDp > 0f && strokeColor != Color.TRANSPARENT) {
-                setStroke(overlayDp(appCtx, strokeWidthDp.toInt()).coerceAtLeast(1), strokeColor)
-            }
-        }
     }
 
     // ── State switching ─────────────────────────────────────────────────────
@@ -640,75 +809,13 @@ object DriveMindOverlay {
         if (refs.secondaryRow.text != secondary) refs.secondaryRow.text = secondary
 
         applyTierBadgeBackground(refs.tierBadge, accent)
-        refs.acceptBtn.background = buildButtonBackground(
-            appCtx = refs.root.context,
-            fillColor = accent,
-            strokeColor = Color.TRANSPARENT,
-            strokeWidthDp = 0f,
-            cornerDp = 12f,
-        )
-        refs.acceptBtn.tag = accent
-    }
-
-    private fun wireOfferActions(
-        appCtx: Context,
-        refs: OverlayCardRefs,
-        fields: OverlayProfitFields,
-    ) {
-        refs.acceptBtn.text = acceptLabel
-        refs.dismissBtn.text = dismissLabel
-
-        refs.acceptBtn.setOnClickListener {
-            handleAccept(appCtx, fields)
-        }
-        refs.dismissBtn.setOnClickListener {
-            handleDismiss(appCtx, fields)
-        }
-        refs.buttonRow.setOnTouchListener { _, _ -> true }
-    }
-
-    // ── Button handlers ────────────────────────────────────────────────────
-
-    @Volatile var acceptLabel: String = "Accept & Go"
-    @Volatile var dismissLabel: String = "Dismiss"
-
-    private fun handleAccept(appCtx: Context, fields: OverlayProfitFields) {
-        // Notify JS (state cleanup: remove offer from driverIngestStore, etc.).
-        DriveMindReactBridge.emitMapImmediate("DriveMindOverlayAccept") { m ->
-            m.putString("packageName", fields.packageName)
-            m.putString("contentHash", fields.contentHash)
-        }
-        // Extend the accessibility scan window so the passive accept detector
-        // can attribute the upcoming offer-screen → trip-screen transition.
-        DriveMindScraperState.extendScanWindow(10_000L)
-        // Native fast-path: launch the driver app directly without round-tripping
-        // through the RN bridge — keeps Accept feeling instantaneous.
-        launchDriverApp(appCtx, fields.packageName)
-        runOverlayMutation { dropOfferToIdle(appCtx) }
-    }
-
-    private fun handleDismiss(appCtx: Context, fields: OverlayProfitFields) {
-        DriveMindReactBridge.emitMapImmediate("DriveMindOverlayDismiss") { m ->
-            m.putString("contentHash", fields.contentHash)
-            m.putString("packageName", fields.packageName)
-        }
-        runOverlayMutation { dropOfferToIdle(appCtx) }
-    }
-
-    private fun launchDriverApp(appCtx: Context, packageName: String) {
-        if (packageName.isBlank()) return
-        try {
-            val intent = appCtx.packageManager.getLaunchIntentForPackage(packageName) ?: return
-            intent.addFlags(
-                Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT,
-            )
-            appCtx.startActivity(intent)
-        } catch (e: Exception) {
-            android.util.Log.w("DriveMindOverlay", "launchDriverApp($packageName) failed: ${e.message}")
-        }
     }
 
     // ── Background / window setup ──────────────────────────────────────────
+
+    /** Kept for RN API compatibility — buttons removed from HUD layout. */
+    @Volatile var acceptLabel: String = "Accept & Go"
+    @Volatile var dismissLabel: String = "Dismiss"
 
     private fun attachAndShow(
         appCtx: Context,
@@ -744,9 +851,7 @@ object DriveMindOverlay {
         }
         layoutParams = lp
 
-        // Root touch listener handles drag + tap-on-empty-area. Button children
-        // consume their own ACTION_DOWN, so the root listener never fires for
-        // touches that originate inside the Accept / Dismiss button bounds.
+        // Root touch listener handles drag + tap-on-empty-area to open DriveMind.
         refs.root.setOnTouchListener(
             WidgetTouchListener(wm, refs.root, lp) {
                 if (!DriveMindScraperState.isOrderParsingEnabled()) {

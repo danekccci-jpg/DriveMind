@@ -67,6 +67,8 @@ type DriveMindNativeType = {
   /** Remove the floating tier pill from the screen. */
   hideOverlay: () => void
   triggerScraperWindow: () => void
+  /** Re-read foreground whitelist driver app (shift active). */
+  rescanForegroundDriverApp?: () => void
   /** Cache/show IDLE radar pill (used when shift starts with an empty queue). */
   showOverlayIdle?: () => void
   /** Optional: forward to `Log.d("DM_DEBUG", …)` from Kotlin for logcat parity. */
@@ -79,10 +81,35 @@ function getNative(): DriveMindNativeType | null {
   return m ?? null
 }
 
-/** Call after Accept in DriveMind or when opening provider app — starts 10s scraper window. */
+/** Call after Accept in DriveMind or when opening provider app — extends burst scrape window. */
 export function triggerScraperWindow(): void {
   try {
     getNative()?.triggerScraperWindow()
+  } catch {
+    /* noop */
+  }
+}
+
+/** Force native accessibility to re-read the current whitelist driver screen. */
+export function rescanForegroundDriverApp(): void {
+  try {
+    getNative()?.rescanForegroundDriverApp?.()
+  } catch {
+    /* noop */
+  }
+}
+
+/** Immediately arm native overlay for an active shift (no async permission gate). */
+export function armOverlayForActiveShift(): void {
+  if (Platform.OS !== 'android') return
+  const native = getNative()
+  if (!native) return
+  if (deriveSearchBlockedFromStore()) return
+  if (useOrdersStore.getState().shiftStats.startTime === null) return
+  try {
+    native.setOverlayShiftActive(true)
+    triggerScraperWindow()
+    rescanForegroundDriverApp()
   } catch {
     /* noop */
   }
@@ -317,6 +344,8 @@ export function useDriverIngestBridge(enabled = true): void {
           useOrdersStore.getState().startShiftManually()
         }
 
+        armOverlayForActiveShift()
+
         if (!nativeNow) return
         const role = useRoleStore.getState().role ?? 'courier'
         dmDebug('PARSING_START', 'notification → profitability', { role })
@@ -363,31 +392,25 @@ export function useDriverIngestBridge(enabled = true): void {
             price: ingestPrice ?? '',
             text: [title, text, ingestPrice].filter(Boolean).join(' '),
           })
-          void nativeNow.isOverlayPermissionGranted().then((granted) => {
-            if (!granted) {
-              dmDebug('WIDGET_TRIGGERED', 'skipped — overlay not granted', {})
-              return
-            }
-            try {
-              nativeNow.updateOverlayProfitability(
-                tierTitle,
-                formatOverlayPrimaryRate(result.złPerKm ?? price / Math.max(0.2, distanceKm)),
-                formatOverlayPrice(price),
-                formatOverlayMetrics(distanceKm, etaMin),
-                result.tierColor,
-                routedPackage,
-                overlayHash,
-              )
-              dmDebug('WIDGET_TRIGGERED', 'updateOverlayProfitability', {
-                tier: result.profitTier,
-                price,
-                distanceKm,
-                etaMin,
-              })
-            } catch (e) {
-              dmDebug('PARSING_ERROR', 'overlay update failed', { reason: String(e) })
-            }
-          }).catch(() => { /* noop */ })
+          try {
+            nativeNow.updateOverlayProfitability(
+              tierTitle,
+              formatOverlayPrimaryRate(result.złPerKm ?? price / Math.max(0.2, distanceKm)),
+              formatOverlayPrice(price),
+              formatOverlayMetrics(distanceKm, etaMin),
+              result.tierColor,
+              routedPackage,
+              overlayHash,
+            )
+            dmDebug('WIDGET_TRIGGERED', 'updateOverlayProfitability', {
+              tier: result.profitTier,
+              price,
+              distanceKm,
+              etaMin,
+            })
+          } catch (e) {
+            dmDebug('PARSING_ERROR', 'overlay update failed', { reason: String(e) })
+          }
         } catch (e) {
           dmDebug('PARSING_ERROR', 'notification parse failed', { reason: String(e) })
         }
@@ -487,6 +510,12 @@ export function useDriverIngestBridge(enabled = true): void {
             warnIngestParse('scrape parse incomplete — skip profitability overlay')
             return
           }
+
+          if (useOrdersStore.getState().shiftStats.startTime === null) {
+            useOrdersStore.getState().startShiftManually()
+          }
+          armOverlayForActiveShift()
+
           const role = useRoleStore.getState().role ?? 'courier'
 
           const result = computeProfitability({
@@ -511,31 +540,25 @@ export function useDriverIngestBridge(enabled = true): void {
           const tierTitle = localizedProfitTierTitle(result.profitTier)
           const safeDist = Math.max(0.2, distKm)
           const safeEta = Math.max(1, eta)
-          void nativeNow.isOverlayPermissionGranted().then((granted) => {
-            if (!granted) {
-              dmDebug('WIDGET_TRIGGERED', 'skipped — overlay not granted', {})
-              return
-            }
-            try {
-              nativeNow.updateOverlayProfitability(
-                tierTitle,
-                formatOverlayPrimaryRate(result.złPerKm ?? price / safeDist),
-                formatOverlayPrice(price),
-                formatOverlayMetrics(safeDist, safeEta),
-                result.tierColor,
-                payload.packageName ?? '',
-                contentHash,
-              )
-              dmDebug('WIDGET_TRIGGERED', 'updateOverlayProfitability', {
-                tier: result.profitTier,
-                price,
-                distKm: safeDist,
-                eta: safeEta,
-              })
-            } catch (e) {
-              dmDebug('PARSING_ERROR', 'overlay update failed', { reason: String(e) })
-            }
-          }).catch(() => { /* noop */ })
+          try {
+            nativeNow.updateOverlayProfitability(
+              tierTitle,
+              formatOverlayPrimaryRate(result.złPerKm ?? price / safeDist),
+              formatOverlayPrice(price),
+              formatOverlayMetrics(safeDist, safeEta),
+              result.tierColor,
+              payload.packageName ?? '',
+              contentHash,
+            )
+            dmDebug('WIDGET_TRIGGERED', 'updateOverlayProfitability', {
+              tier: result.profitTier,
+              price,
+              distKm: safeDist,
+              eta: safeEta,
+            })
+          } catch (e) {
+            dmDebug('PARSING_ERROR', 'overlay update failed', { reason: String(e) })
+          }
 
           const platName = packageToPlatformName(payload.packageName ?? '')
           const toastAmt = driveMindUiLanguage() === 'pl' && price > 0
@@ -752,26 +775,29 @@ export function useDriverIngestBridge(enabled = true): void {
         }
         return
       }
-      Promise.all([native.isOverlayPermissionGranted(), native.isUsageAccessGranted()]).then(
-        ([overlayGranted, usageGranted]) => {
-          // Overlay widget only needs SYSTEM_ALERT_WINDOW + active shift.
-          // Usage-stats permission is unrelated to WM attach (kept for Permissions UI only).
-          void usageGranted
-          const nextActive = isShiftOn && overlayGranted
-          if (lastOverlayActiveRef.current !== nextActive) {
-            lastOverlayActiveRef.current = nextActive
-            native.setOverlayShiftActive(nextActive)
-          }
-          if (nextActive) {
-            triggerScraperWindow()
-            void syncBufferedNotificationsIfNeeded()
-              .catch(() => { /* noop */ })
-              .finally(() => {
-                void refreshOverlayFromIngestQueue()
-              })
-          }
-        },
-      )
+      const nextActive = isShiftOn
+      if (lastOverlayActiveRef.current !== nextActive) {
+        lastOverlayActiveRef.current = nextActive
+      }
+      try {
+        native.setOverlayShiftActive(nextActive)
+      } catch {
+        /* noop */
+      }
+      if (nextActive) {
+        triggerScraperWindow()
+        rescanForegroundDriverApp()
+        void syncBufferedNotificationsIfNeeded()
+          .catch(() => { /* noop */ })
+          .finally(() => {
+            void refreshOverlayFromIngestQueue()
+          })
+      }
+      void native.isOverlayPermissionGranted().then((granted) => {
+        if (!granted && isShiftOn && __DEV__) {
+          console.warn('[DriveMind] overlay permission missing — accessibility overlay fallback')
+        }
+      }).catch(() => { /* noop */ })
     }
     syncOverlay(useOrdersStore.getState())
     const unsub = useOrdersStore.subscribe(
@@ -784,6 +810,8 @@ export function useDriverIngestBridge(enabled = true): void {
     const appSub = AppState.addEventListener('change', (next) => {
       if (next === 'active') {
         syncOverlay(useOrdersStore.getState())
+      } else if (next === 'background' && useOrdersStore.getState().shiftStats.startTime !== null) {
+        rescanForegroundDriverApp()
       }
     })
     return () => {
@@ -841,13 +869,16 @@ export function useDriverIngestBridge(enabled = true): void {
         } catch {
           /* noop */
         }
-      } else if (state === 'background' || state === 'inactive') {
+      } else if (state === 'background') {
         try {
           native.notifyAppLifecycleState('background')
         } catch {
           /* noop */
         }
       }
+      // 'inactive' is a total no-op — never forwarded to native. Android fires it
+      // during split-screen, permission sheets, and rapid app swaps; mapping it to
+      // background was tearing the overlay down mid-shift.
     }
 
     pushState(AppState.currentState)

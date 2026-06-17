@@ -17,7 +17,6 @@ import { Feather } from '@expo/vector-icons'
 import * as Haptics from 'expo-haptics'
 import { useColors, type AppColors } from '../../theme/theme'
 import { fonts } from '../../theme/typography'
-import { openAccessibilitySettings } from '../../services/accessibilityDisclosure'
 import {
   checkPermissionsStatus,
   requestRuntimePermissionsOnUserAction,
@@ -227,7 +226,7 @@ export default function PermissionsScreen() {
             actionLabel={perms.accessibility ? t('perm_a11y_action_manage') : t('perm_a11y_action_grant')}
             onAction={() => {
               void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
-              openAccessibilitySettings()
+              native?.openAccessibilitySettings()
             }}
             danger={!perms.accessibility}
           />

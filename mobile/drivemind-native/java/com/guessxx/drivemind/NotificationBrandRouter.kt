@@ -14,6 +14,7 @@ object NotificationBrandRouter {
 
     private const val TAG = "DriveMindScraper"
 
+    const val PACKAGE_DRIVEMIND = "com.guessxx.drivemind"
     const val PACKAGE_UBER = "com.ubercab.driver"
     /** Global Bolt Driver build — canonical for JS routing. */
     const val PACKAGE_BOLT = "com.bolt.driver"
@@ -129,7 +130,9 @@ object NotificationBrandRouter {
 
     fun logWindowPackage(packageName: String, gate: String, accepted: Boolean) {
         Log.d(TAG, "Current window package: $packageName")
-        if (!accepted) {
+        if (accepted) {
+            Log.i(TAG, "Package accepted ($gate): $packageName")
+        } else {
             Log.d(TAG, "Package rejected ($gate): $packageName")
         }
     }

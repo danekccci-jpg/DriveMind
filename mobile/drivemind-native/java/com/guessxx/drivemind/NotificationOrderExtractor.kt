@@ -99,7 +99,7 @@ object NotificationOrderExtractor {
 
         val lower = blob.lowercase()
         val isBoltLike = lower.contains("bolt") || lower.contains("mtakso") || lower.contains("taxify")
-        if (values.size >= 2 && isBoltLike) return values[0] + values[1]
+        if (values.size >= 2 && isBoltLike) return (values[0] + values[1]).toString()
         return values.first().toString()
     }
 

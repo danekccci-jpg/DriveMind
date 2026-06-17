@@ -40,6 +40,23 @@ object OrderLayoutValidator {
     fun isValidOrderBlob(blob: String): Boolean =
         isValidOrderTextList(blob.lines())
 
+    /** Human-readable reason for scrape debug logs. */
+    fun rejectReason(texts: List<String>): String {
+        if (texts.isEmpty()) return "empty-tree"
+        val normalized = texts.map { it.trim() }.filter { it.isNotEmpty() }
+        if (normalized.isEmpty()) return "empty-text"
+        val blob = normalized.joinToString("\n").lowercase()
+        if (isNoiseOnly(normalized)) return "noise-only"
+        val hasPrice = PRICE_TOKENS.any { blob.contains(it) }
+        val hasMetrics = METRIC_TOKENS.any { blob.contains(it) }
+        return when {
+            !hasPrice && !hasMetrics -> "no-price-no-metrics"
+            !hasPrice -> "no-price"
+            !hasMetrics -> "no-metrics"
+            else -> "unknown"
+        }
+    }
+
     private fun isNoiseOnly(lines: List<String>): Boolean {
         val substantive = lines.filter { line ->
             val lower = line.lowercase().trim()

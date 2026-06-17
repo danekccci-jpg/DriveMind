@@ -9,12 +9,14 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
 import android.provider.Settings.Secure
 import android.view.accessibility.AccessibilityManager
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import android.util.Log
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
@@ -195,47 +197,68 @@ class DriveMindNativeModule(reactContext: ReactApplicationContext) :
     }
 
     /**
-     * Defensive intent cascade — avoids the full accessibility dashboard on emulators
-     * where missing Google system packages (Tips, Magnifier) crash Settings.
+     * Opens Android accessibility settings for DriveMind Order Reader.
+     * Never uses App Info — that screen does not expose the service toggle.
      */
     @ReactMethod
     fun openAccessibilitySettings() {
         val ctx = reactApplicationContext
         val pkg = ctx.packageName
         val flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        val serviceClass = DriveMindScraperService::class.java.name
+        val component = ComponentName(pkg, serviceClass)
+        val componentFlat = "$pkg/$serviceClass"
 
-        // Primary: App Info — user taps Accessibility / Installed services (never crashes dashboard).
-        try {
-            val appDetails = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$pkg"))
-                .addFlags(flags)
-            ctx.startActivity(appDetails)
-            android.util.Log.d("DriveMindNative", "openAccessibilitySettings: APPLICATION_DETAILS_SETTINGS")
-            return
-        } catch (e: Exception) {
-            android.util.Log.w("DriveMindNative", "openAccessibilitySettings: app details failed", e)
+        data class Attempt(val label: String, val intent: Intent)
+
+        val attempts = buildList {
+            add(
+                Attempt(
+                    "ACCESSIBILITY_DETAILS_SETTINGS",
+                    Intent("android.settings.ACCESSIBILITY_DETAILS_SETTINGS").apply {
+                        addFlags(flags)
+                        putExtra(Intent.EXTRA_COMPONENT_NAME, component)
+                    },
+                ),
+            )
+            add(
+                Attempt(
+                    "ACCESSIBILITY_SETTINGS+component",
+                    Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
+                        addFlags(flags)
+                        putExtra(Intent.EXTRA_COMPONENT_NAME, component)
+                        putExtra(":settings:fragment_args_key", componentFlat)
+                        putExtra(
+                            ":settings:show_fragment_args",
+                            Bundle().apply { putString("component_name", componentFlat) },
+                        )
+                    },
+                ),
+            )
+            add(
+                Attempt(
+                    "ACCESSIBILITY_SETTINGS",
+                    Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply { addFlags(flags) },
+                ),
+            )
         }
 
-        // Secondary: accessibility list with our service component highlighted (some OEMs).
-        try {
-            val component = ComponentName(pkg, DriveMindScraperService::class.java.name)
-            val withComponent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-                .addFlags(flags)
-                .putExtra(Intent.EXTRA_COMPONENT_NAME, component)
-            ctx.startActivity(withComponent)
-            android.util.Log.d("DriveMindNative", "openAccessibilitySettings: ACCESSIBILITY_SETTINGS+component")
-            return
-        } catch (e: Exception) {
-            android.util.Log.w("DriveMindNative", "openAccessibilitySettings: component intent failed", e)
+        for ((label, intent) in attempts) {
+            try {
+                val resolved = intent.resolveActivity(ctx.packageManager)?.className
+                if (resolved == null) {
+                    Log.w("DriveMindNative", "openAccessibilitySettings: $label — resolveActivity=null")
+                    continue
+                }
+                ctx.startActivity(intent)
+                Log.i("DriveMindNative", "openAccessibilitySettings: started $label component=$componentFlat -> $resolved")
+                return
+            } catch (e: Exception) {
+                Log.w("DriveMindNative", "openAccessibilitySettings: $label failed", e)
+            }
         }
 
-        // Last resort: bare accessibility list.
-        try {
-            val fallback = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(flags)
-            ctx.startActivity(fallback)
-            android.util.Log.d("DriveMindNative", "openAccessibilitySettings: bare ACCESSIBILITY_SETTINGS")
-        } catch (e: Exception) {
-            android.util.Log.e("DriveMindNative", "openAccessibilitySettings: all intents failed", e)
-        }
+        Log.e("DriveMindNative", "openAccessibilitySettings: all accessibility intents failed for $componentFlat")
     }
 
     @ReactMethod
@@ -331,7 +354,26 @@ class DriveMindNativeModule(reactContext: ReactApplicationContext) :
      */
     @ReactMethod
     fun setOverlayShiftActive(active: Boolean) {
-        DriveMindOverlay.setShiftActive(active, reactApplicationContext)
+        Log.i("DriveMindNative", "setOverlayShiftActive($active)")
+        DriveMindScraperState.setShiftScanActive(active)
+        if (active) {
+            DriveMindOverlay.setShiftActive(active, reactApplicationContext)
+            // Watchdog survives missed accessibility events (app already on
+            // screen at shift start, transient event loss during app-switching).
+            DriveMindScraperService.armShiftWatchdog()
+            DriveMindScraperService.requestRescanIfForeground()
+        } else {
+            DriveMindScraperService.disarmShiftWatchdog()
+            DriveMindScraperService.cancelForegroundScan()
+            DriveMindOverlay.setShiftActive(active, reactApplicationContext)
+        }
+    }
+
+    /** Re-read the foreground whitelist driver app UI (shift already active). */
+    @ReactMethod
+    fun rescanForegroundDriverApp() {
+        if (!DriveMindScraperState.isOrderParsingEnabled()) return
+        DriveMindScraperService.requestRescanIfForeground()
     }
 
     /**
@@ -362,6 +404,7 @@ class DriveMindNativeModule(reactContext: ReactApplicationContext) :
             }
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
             reactApplicationContext.startActivity(intent)
+            DriveMindOverlay.onDriverAppLaunched(reactApplicationContext)
             promise.resolve(true)
         } catch (e: Exception) {
             promise.reject("E_OPEN_APP", e.message, e)
@@ -401,7 +444,7 @@ class DriveMindNativeModule(reactContext: ReactApplicationContext) :
         } catch (_: Exception) {
             "#22C55E"
         }
-        DriveMindOverlay.showProfitability(
+        DriveMindOverlay.updateOverlayData(
             reactApplicationContext,
             OverlayProfitFields(
                 tierTitle = title,
@@ -412,6 +455,7 @@ class DriveMindNativeModule(reactContext: ReactApplicationContext) :
                 packageName = packageName.trim(),
                 contentHash = contentHash.trim(),
             ),
+            forceInvalidate = true,
         )
     }
 

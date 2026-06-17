@@ -18,6 +18,12 @@ class MainActivity : ReactActivity() {
     DriveMindOverlay.onAppForegroundedFallback()
   }
 
+  override fun onPause() {
+    super.onPause()
+    // Hide widget while DriveMind is not visible; scraper re-shows it only over whitelist apps.
+    DriveMindOverlay.onAppBackgrounded(applicationContext)
+  }
+
   override fun onCreate(savedInstanceState: Bundle?) {
     setTheme(R.style.AppTheme);
     super.onCreate(null)

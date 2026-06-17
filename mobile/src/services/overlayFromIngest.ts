@@ -1,4 +1,4 @@
-import { NativeModules, Platform } from 'react-native'
+import { AppState, NativeModules, Platform } from 'react-native'
 import { computeProfitability } from '@drivemind/shared'
 
 import {
@@ -95,9 +95,6 @@ export async function pushIngestedOfferToOverlay(offer: IngestedOffer): Promise<
   const metrics = parseIngestOfferForOverlay(offer)
   if (!metrics) return false
 
-  const granted = await native.isOverlayPermissionGranted().catch(() => false)
-  if (!granted) return false
-
   const role = useRoleStore.getState().role ?? 'courier'
   const safeDist = Math.max(0.2, metrics.distKm)
   const safeEta = Math.max(1, metrics.eta)
@@ -134,11 +131,37 @@ export async function pushIngestedOfferToOverlay(offer: IngestedOffer): Promise<
 export async function refreshOverlayFromIngestQueue(): Promise<void> {
   if (deriveSearchBlockedFromStore()) return
 
+  // Skip transient AppState (e.g. 'inactive' during permission sheets / multi-window).
+  if (
+    Platform.OS === 'android' &&
+    AppState.currentState !== 'active' &&
+    AppState.currentState !== 'background'
+  ) {
+    return
+  }
+
+  await new Promise<void>((resolve) => {
+    const run = () => {
+      void dispatchRefreshOverlayFromIngestQueue().finally(resolve)
+    }
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => setTimeout(run, 50))
+    } else {
+      setTimeout(run, 50)
+    }
+  })
+}
+
+async function dispatchRefreshOverlayFromIngestQueue(): Promise<void> {
   const native = getNative()
   if (!native) return
 
-  const granted = await native.isOverlayPermissionGranted().catch(() => false)
-  if (!granted) return
+  try {
+    ;(NativeModules.DriveMindNative as { setOverlayShiftActive?: (active: boolean) => void } | undefined)
+      ?.setOverlayShiftActive?.(true)
+  } catch {
+    /* noop */
+  }
 
   const now = Date.now()
   const offers = selectAvailableIngestOffers(useDriverIngestStore.getState())

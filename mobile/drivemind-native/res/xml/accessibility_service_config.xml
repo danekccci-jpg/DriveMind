@@ -3,10 +3,17 @@
   No android:packageNames filter — the OS must deliver events from Kraków QA mocks
   (com.guessxx.mock.*, *mock*, etc.). DriveMindScraperService filters in Kotlin via
   NotificationBrandRouter.isOverlayTargetPackage().
+
+  flagRetrieveInteractiveWindows — required so AccessibilityService.getWindows()
+  enumerates all interactive windows. Used by the shift watchdog to resolve the
+  real foreground driver app when no fresh TYPE_WINDOW_STATE_CHANGED has fired
+  (e.g. the app was already static on screen at shift start). Without this flag,
+  getWindows() only returns the single active window.
 -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged"
     android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagDefault|flagRetrieveInteractiveWindows"
     android:notificationTimeout="100"
     android:canRetrieveWindowContent="true"
     android:description="@string/accessibility_service_description" />
