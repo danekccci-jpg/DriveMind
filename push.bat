@@ -26,7 +26,16 @@ git commit -m "%msg%"
 
 echo ⬆️ Отправка в репозиторий...
 git push
+if errorlevel 1 (
+    echo ⚠️ Upstream не настроен, пробую git push --set-upstream origin DriveMind...
+    git push --set-upstream origin DriveMind
+    if errorlevel 1 (
+        echo ❌ Push не удался. Проверьте git status и remote.
+        pause
+        exit /b 1
+    )
+)
 
 echo.
-echo ✅ Готово! Твой премиальный код теперь в безопасности на GitHub.
+echo ✅ Готово! Код отправлен на GitHub (ветка DriveMind).
 pause
