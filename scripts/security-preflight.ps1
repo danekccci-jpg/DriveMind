@@ -62,6 +62,18 @@ if ($LASTEXITCODE -ne 0) {
 
 if (-not $fail) {
     Ok 'No obvious secret leaks in tracked files'
+} else {
+    Write-Host ''
+    Write-Host 'Fix the issues above before pushing.' -ForegroundColor Red
+    exit 1
+}
+
+$cursorHits = git log -10 --format='%B' 2>$null | Select-String -Pattern 'cursoragent@cursor.com|Made-with: Cursor|Co-authored-by: Cursor'
+if ($cursorHits) {
+    Fail 'Cursor agent mention in recent commit messages — amend or rewrite history'
+}
+
+if (-not $fail) {
     Write-Host ''
     Write-Host 'Reminder: rotate keys if they were ever pushed to a public remote.' -ForegroundColor Yellow
     exit 0

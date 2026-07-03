@@ -1,0 +1,13 @@
+#!/bin/sh
+# Strip Cursor agent trailers from commit messages (IDE may inject these).
+MSG_FILE="$1"
+[ -f "$MSG_FILE" ] || exit 0
+
+sed -i.bak '/Co-authored-by: Cursor <cursoragent@cursor.com>/d' "$MSG_FILE" 2>/dev/null || \
+  sed -i '' '/Co-authored-by: Cursor <cursoragent@cursor.com>/d' "$MSG_FILE" 2>/dev/null
+
+sed -i.bak '/^Made-with: Cursor$/d' "$MSG_FILE" 2>/dev/null || \
+  sed -i '' '/^Made-with: Cursor$/d' "$MSG_FILE" 2>/dev/null
+
+rm -f "${MSG_FILE}.bak" 2>/dev/null
+exit 0

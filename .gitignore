@@ -39,6 +39,7 @@ credentials.json
 eas.json
 mobile/eas.json
 scripts/secret-replacements.txt
+scripts/strip-cursor-commit-callback.py
 
 # IDE / local tooling
 .idea/
