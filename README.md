@@ -2,6 +2,22 @@
 
 Mobile “operating system” for **couriers and taxi drivers** — profitability scoring, shift tracking, order history, and maps-first navigation UI. Built for the Kraków market; architecture supports multiple delivery/ride platforms.
 
+<p align="center">
+  <img src="docs/images/hero-mockup.png" alt="DriveMind — order overlay with profitability rate on a map" width="420" />
+</p>
+
+<p align="center">
+  <em>Focus on profitable orders and stop wasting time on unprofitable ones.</em>
+</p>
+
+## Screenshots
+
+<p align="center">
+  <img src="docs/images/overlay-profitability.png" alt="Excellent deal overlay — 10.98 zł/km with UberX order card" width="320" />
+  &nbsp;&nbsp;
+  <img src="docs/images/premium-earnings.png" alt="Premium driver earnings — visualize rates across platforms" width="320" />
+</p>
+
 ## Highlights
 
 - **Expo / React Native** app with native Android services (notification ingest, overlay, accessibility)
