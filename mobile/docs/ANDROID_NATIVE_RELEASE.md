@@ -1,37 +1,32 @@
 # Android native release checklist (DriveMind)
 
-The customized Kotlin services live under `mobile/android/` locally but that folder is **gitignored**. EAS Build runs `expo prebuild`, which regenerates `android/` from templates. Use this checklist so production `.aab` builds include DriveMind ingest code.
+Custom Kotlin services, accessibility XML, and ProGuard rules live under `mobile/android/`.
+EAS Build runs `expo prebuild`, which regenerates most of `android/` from templates — the
+`withDriveMindNative` config plugin re-applies manifest entries, Gradle deps, and signing.
 
 ## Source of truth
 
 | Path | Contents |
 |------|----------|
-| `mobile/drivemind-native/java/com/guessxx/drivemind/*.kt` | All DriveMind Kotlin modules |
-| `mobile/drivemind-native/res/xml/accessibility_service_config.xml` | Accessibility package whitelist |
-| `mobile/drivemind-native/AndroidManifest.frag.xml` | Services, `PACKAGE_USAGE_STATS`, driver `<queries>` |
-| `mobile/drivemind-native/proguard-rules.pro` | R8 keep rules for native services |
+| `mobile/android/app/src/main/java/com/guessxx/drivemind/*.kt` | All DriveMind Kotlin modules |
+| `mobile/android/app/src/main/res/xml/accessibility_service_config.xml` | Accessibility package whitelist |
+| `mobile/android/app/proguard-rules.pro` | R8 keep rules for native services |
 | `mobile/assets/logo/logo-symbol-light.png` | Adaptive icon foreground — light/day |
 | `mobile/assets/logo/logo-symbol-dark.png` | Adaptive icon foreground — night/dark |
 
-After editing Kotlin locally under `mobile/android/...`, sync back into `drivemind-native/`:
-
-```powershell
-Copy-Item mobile\android\app\src\main\java\com\guessxx\drivemind\*.kt mobile\drivemind-native\java\com\guessxx\drivemind\ -Force
-Copy-Item mobile\android\app\src\main\res\xml\accessibility_service_config.xml mobile\drivemind-native\res\xml\ -Force
-```
+Edit Kotlin and XML directly under `mobile/android/` — there is no separate native source folder.
 
 ## Expo config plugins
 
 `mobile/app.json` includes two DriveMind plugins that run on every `expo prebuild` and every EAS Build:
 
-### `./plugins/withDriveMindNative` (v2.0.3)
+### `./plugins/withDriveMindNative` (v2.1.0)
 
 1. Merges manifest entries via `withAndroidManifest` (`DriveMindScraperService`, `DriveMindNotificationService`, queries, usage stats permission)
-2. Copies Kotlin + `accessibility_service_config.xml` + strings
-3. Appends ProGuard keep rules from `drivemind-native/proguard-rules.pro`
-4. **Pins `android.enableMinifyInReleaseBuilds=false` and `android.enableR8.fullMode=false`** in `android/gradle.properties` (see Minification section below)
-5. **Wires release signing** via `android/keystore.properties` (Play upload key — fails `bundleRelease` if missing)
-6. **Fails the build** if `AndroidManifest.xml` is missing required service entries
+2. Ensures `accessibility_service_description` in `res/values/strings.xml`
+3. **Pins `android.enableMinifyInReleaseBuilds=false` and `android.enableR8.fullMode=false`** in `android/gradle.properties` (see Minification section below)
+4. **Wires release signing** via `android/keystore.properties` (Play upload key — fails `bundleRelease` if missing)
+5. **Fails the build** if `AndroidManifest.xml` is missing required service entries
 
 ### `./plugins/withDriveMindIcons` (v1.0.0)
 
@@ -57,7 +52,7 @@ Several Expo native modules use runtime reflection patterns that R8 full mode st
 `-keep` rules, causing hard-to-reproduce crashes on device (observed with Firebase and Google
 Maps SDK in mixed managed/bare workflow).
 
-**ProGuard keeps** in `drivemind-native/proguard-rules.pro` are kept comprehensive so the flag
+**ProGuard keeps** in `mobile/android/app/proguard-rules.pro` are kept comprehensive so the flag
 can be flipped to `true` without extra work once validation is complete:
 
 - `com.guessxx.drivemind.**` (all fields, methods, names)
@@ -135,7 +130,7 @@ Reference: [Use of the AccessibilityService API](https://support.google.com/goog
 1. Set `NODE_ENV=production` so `app.config.js` loads production env keys.
 2. Run EAS with a profile that executes prebuild (default for managed workflow).
 3. Confirm the build log shows:
-   - `with-drivemind-native` plugin (v2.0.2)
+   - `with-drivemind-native` plugin (v2.1.0)
    - `with-drivemind-icons` plugin (v1.0.0)
    - `[with-drivemind-icons] Done — adaptive icons written to android/app/src/main/res/`
    - `[with-drivemind-native] patched gradle.properties: minify=false, R8.fullMode=false`

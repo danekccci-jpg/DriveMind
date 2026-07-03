@@ -27,13 +27,11 @@ export function generateUUIDv4(): string {
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`
 }
 
-/** Human-readable public ID: "DM-XXXX-XXXX". */
+/** 8-digit numeric public ID for customer support and UI display. */
 export function generatePublicId(): string {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
-  const bytes = getSecureRandomBytes(8)
-  const segment = (start: number) =>
-    Array.from(bytes.slice(start, start + 4))
-      .map((b) => chars[b % chars.length])
-      .join('')
-  return `DM-${segment(0)}-${segment(4)}`
+  const bytes = getSecureRandomBytes(4)
+  const raw =
+    (bytes[0]! * 16777216 + bytes[1]! * 65536 + bytes[2]! * 256 + bytes[3]!) >>> 0
+  const numeric = (raw % 90000000) + 10000000
+  return String(numeric)
 }

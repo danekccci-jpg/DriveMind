@@ -1,9 +1,7 @@
 /**
- * Expo config plugin: copies canonical DriveMind Android native sources into the
- * prebuild `android/` tree so EAS Build preserves custom Kotlin + a11y XML even
- * when `mobile/android/` is gitignored locally.
- *
- * Source of truth: `mobile/drivemind-native/`
+ * Expo config plugin: patches the prebuild `android/` tree for DriveMind native
+ * services (manifest, Gradle deps, signing, ProGuard flags). Kotlin sources and
+ * `accessibility_service_config.xml` live directly under `mobile/android/`.
  */
 const {
   withAndroidManifest,
@@ -13,8 +11,8 @@ const {
 const fs = require('fs')
 const path = require('path')
 
-const PKG_ROOT = path.join(__dirname, '..')
-const NATIVE_SRC = path.join(PKG_ROOT, 'drivemind-native')
+const ACCESSIBILITY_SERVICE_DESCRIPTION =
+  'DriveMind reads order details (price, distance, destination) from Uber, Bolt, Glovo, and Wolt driver apps to show profitability on your device. Read-only — no taps or automated actions.'
 
 const DRIVEMIND_GRADLE_DEPS = [
   'implementation("androidx.dynamicanimation:dynamicanimation:1.0.0")',
@@ -162,14 +160,29 @@ function ensureGoogleServicesPlugin(rootGradlePath, appGradlePath, googleService
   }
 }
 
+/** Generates accessibility_service_config.xml with all monitored driver packages. */
+function ensureAccessibilityServiceConfig(xmlDir) {
+  const destPath = path.join(xmlDir, 'accessibility_service_config.xml')
+  fs.mkdirSync(xmlDir, { recursive: true })
+  const packageNamesAttr = DRIVER_PACKAGES.join(',')
+  const xml = `<?xml version="1.0" encoding="utf-8"?>
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeWindowContentChanged|typeWindowStateChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagDefault|flagReportViewIds|flagIncludeNotImportantViews|flagRetrieveInteractiveWindows"
+    android:canRetrieveWindowContent="true"
+    android:canPerformGestures="false"
+    android:description="@string/accessibility_service_description"
+    android:notificationTimeout="300"
+    android:packageNames="${packageNamesAttr}"
+    android:settingsActivity="com.guessxx.drivemind.MainActivity" />
+`
+  fs.writeFileSync(destPath, xml, 'utf8')
+}
+
 /** Ensures accessibility_service_description exists in the app strings.xml (AAPT link). */
-function mergeAccessibilityString(srcPath, destPath) {
-  const src = fs.readFileSync(srcPath, 'utf8')
-  const match = src.match(
-    /<string name="accessibility_service_description">([\s\S]*?)<\/string>/,
-  )
-  if (!match) return
-  const entry = `<string name="accessibility_service_description">${match[1]}</string>`
+function ensureAccessibilityServiceString(destPath) {
+  const entry = `<string name="accessibility_service_description">${ACCESSIBILITY_SERVICE_DESCRIPTION}</string>`
   if (!fs.existsSync(destPath)) {
     fs.mkdirSync(path.dirname(destPath), { recursive: true })
     fs.writeFileSync(destPath, `<resources>\n  ${entry}\n</resources>\n`, 'utf8')
@@ -299,29 +312,16 @@ gradle.taskGraph.whenReady { graph ->
   console.log('[with-drivemind-native] patched app/build.gradle: release signing via keystore.properties')
 }
 
-/** Appends DriveMind ProGuard keeps if not already present. */
-function mergeProguardRules(srcPath, destPath) {
-  if (!fs.existsSync(srcPath)) return
-  const src = fs.readFileSync(srcPath, 'utf8').trim()
-  if (!src) return
-  const marker = '# DriveMind native services'
-  if (fs.existsSync(destPath)) {
-    const dest = fs.readFileSync(destPath, 'utf8')
-    if (dest.includes(marker) || dest.includes('DriveMindScraperService')) return
-    fs.appendFileSync(destPath, `\n\n${src}\n`, 'utf8')
-    return
-  }
-  fs.mkdirSync(path.dirname(destPath), { recursive: true })
-  fs.writeFileSync(destPath, `${src}\n`, 'utf8')
-}
-
-function copyDirFiles(srcDir, destDir, ext) {
-  if (!fs.existsSync(srcDir)) return
-  fs.mkdirSync(destDir, { recursive: true })
-  for (const name of fs.readdirSync(srcDir)) {
-    if (ext && !name.endsWith(ext)) continue
-    fs.copyFileSync(path.join(srcDir, name), path.join(destDir, name))
-  }
+/** Removes legacy syncDriveMindNative preBuild hook if present. */
+function stripGradleNativeSync(appGradlePath) {
+  if (!fs.existsSync(appGradlePath)) return
+  let gradle = fs.readFileSync(appGradlePath, 'utf8')
+  const pattern =
+    /\n\/\/ Source of truth: mobile\/drivemind-native\/[\s\S]*?preBuild\.dependsOn\("syncDriveMindNative"\)\n/
+  if (!pattern.test(gradle)) return
+  gradle = gradle.replace(pattern, '\n')
+  fs.writeFileSync(appGradlePath, gradle, 'utf8')
+  console.log('[with-drivemind-native] removed legacy syncDriveMindNative from app/build.gradle')
 }
 
 function ensureArray(node) {
@@ -456,6 +456,34 @@ function assertManifestModResults(manifest) {
   }
 }
 
+/** Adds an intent-filter for Firebase Email Link (passwordless) deep links to the main activity. */
+function addEmailLinkIntentFilter(application) {
+  const activities = ensureArray(application.activity)
+  const mainActivity = activities.find(
+    (a) => a?.$?.['android:name'] === '.MainActivity',
+  )
+  if (!mainActivity) return
+  if (!mainActivity['intent-filter']) mainActivity['intent-filter'] = []
+  const filters = ensureArray(mainActivity['intent-filter'])
+  const already = filters.some((f) => {
+    const dataArr = ensureArray(f.data)
+    return dataArr.some((d) => d?.$?.['android:host'] === 'drivemind-d4994.firebaseapp.com')
+  })
+  if (already) return
+  filters.push({
+    $: { 'android:autoVerify': 'true' },
+    action: [{ $: { 'android:name': 'android.intent.action.VIEW' } }],
+    category: [
+      { $: { 'android:name': 'android.intent.category.DEFAULT' } },
+      { $: { 'android:name': 'android.intent.category.BROWSABLE' } },
+    ],
+    data: [
+      { $: { 'android:host': 'drivemind-d4994.firebaseapp.com', 'android:scheme': 'https' } },
+    ],
+  })
+  mainActivity['intent-filter'] = filters
+}
+
 function withDriveMindAndroidManifest(config) {
   return withAndroidManifest(config, (cfg) => {
     const manifest = cfg.modResults.manifest
@@ -466,6 +494,7 @@ function withDriveMindAndroidManifest(config) {
 
     const application = getOrCreateApplication(manifest)
     addDriveMindServices(application)
+    addEmailLinkIntentFilter(application)
     assertManifestModResults(manifest)
 
     return cfg
@@ -517,6 +546,22 @@ function patchManifestOnDisk(manifestPath) {
 `
 
   xml = xml.replace('</application>', `${services}  </application>`)
+
+  // Firebase Email Link deep link intent filter on the main activity
+  if (!xml.includes('drivemind-d4994.firebaseapp.com')) {
+    const emailLinkFilter = `
+      <intent-filter android:autoVerify="true">
+        <action android:name="android.intent.action.VIEW"/>
+        <category android:name="android.intent.category.DEFAULT"/>
+        <category android:name="android.intent.category.BROWSABLE"/>
+        <data android:host="drivemind-d4994.firebaseapp.com" android:scheme="https"/>
+      </intent-filter>`
+    xml = xml.replace(
+      '</activity>',
+      `${emailLinkFilter}\n    </activity>`,
+    )
+  }
+
   fs.writeFileSync(manifestPath, xml, 'utf8')
 }
 
@@ -527,31 +572,11 @@ function withDriveMindNative(config) {
     'android',
     async (cfg) => {
       const projectRoot = cfg.modRequest.platformProjectRoot
-      const kotlinDest = path.join(
-        projectRoot,
-        'app',
-        'src',
-        'main',
-        'java',
-        'com',
-        'guessxx',
-        'drivemind',
-      )
-      const kotlinSrc = path.join(NATIVE_SRC, 'java', 'com', 'guessxx', 'drivemind')
-      copyDirFiles(kotlinSrc, kotlinDest, '.kt')
-
-      const xmlSrc = path.join(NATIVE_SRC, 'res', 'xml', 'accessibility_service_config.xml')
-      const xmlDest = path.join(projectRoot, 'app', 'src', 'main', 'res', 'xml', 'accessibility_service_config.xml')
-      if (fs.existsSync(xmlSrc)) {
-        fs.mkdirSync(path.dirname(xmlDest), { recursive: true })
-        fs.copyFileSync(xmlSrc, xmlDest)
-      }
-
-      const stringsSrc = path.join(NATIVE_SRC, 'res', 'values', 'strings.xml')
       const stringsDest = path.join(projectRoot, 'app', 'src', 'main', 'res', 'values', 'strings.xml')
-      if (fs.existsSync(stringsSrc)) {
-        mergeAccessibilityString(stringsSrc, stringsDest)
-      }
+      ensureAccessibilityServiceString(stringsDest)
+
+      const xmlDir = path.join(projectRoot, 'app', 'src', 'main', 'res', 'xml')
+      ensureAccessibilityServiceConfig(xmlDir)
 
       const appDir = path.join(projectRoot, 'app')
       const packageName = cfg.android?.package ?? DEFAULT_ANDROID_PACKAGE
@@ -562,12 +587,9 @@ function withDriveMindNative(config) {
       ensureGoogleServicesPlugin(rootGradle, appGradle, path.join(appDir, 'google-services.json'))
       if (fs.existsSync(appGradle)) {
         ensureDriveMindGradleDeps(appGradle, hasGoogleServices)
+        stripGradleNativeSync(appGradle)
         patchReleaseSigning(appGradle)
       }
-
-      const proguardSrc = path.join(NATIVE_SRC, 'proguard-rules.pro')
-      const proguardDest = path.join(projectRoot, 'app', 'proguard-rules.pro')
-      mergeProguardRules(proguardSrc, proguardDest)
 
       const gradlePropertiesPath = path.join(projectRoot, 'gradle.properties')
       patchGradleProperties(gradlePropertiesPath)
@@ -580,4 +602,4 @@ function withDriveMindNative(config) {
   ])
 }
 
-module.exports = createRunOncePlugin(withDriveMindNative, 'with-drivemind-native', '2.0.3')
+module.exports = createRunOncePlugin(withDriveMindNative, 'with-drivemind-native', '2.1.0')

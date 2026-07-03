@@ -13,23 +13,26 @@ import { DeviceEventEmitter } from 'react-native'
 import { getFirestoreDb } from '../config/firebase'
 import { useAuthStore, isGuestEmail } from '../store/authStore'
 import { generatePublicId } from '../utils/secureRandom'
-import { syncOrderParsingGate, EVENT_OPEN_PAYWALL } from './subscriptionGate'
+import { syncOrderParsingGate, syncOverlaySubscriptionHint, EVENT_OPEN_PAYWALL } from './subscriptionGate'
 import {
   incrementGuestOrderCountRemote,
   getRemoteGuestOrderCount,
 } from './deviceFingerprintFirestore'
+import { sendTrialExhaustedNotification } from './localNotifications'
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
 export const USERS_COLLECTION = 'users'
-/** Registered users: max completed orders before trial ends. */
-export const TRIAL_ORDER_THRESHOLD = 10
+/** Welcome trips: free order evaluations before trial timer starts. */
+export const WELCOME_TRIPS_LIMIT = 15
 /** Guest users: max completed orders before they must register. */
 export const GUEST_ORDER_THRESHOLD = 2
-/** Trial duration from the moment of account creation (7 days). */
-const TRIAL_DURATION_MS = 7 * 24 * 60 * 60 * 1000
+/** 7-day trial duration activated when welcome trips are exhausted. */
+export const TRIAL_DURATION_MS = 7 * 24 * 60 * 60 * 1000
 
 // ─── Types ───────────────────────────────────────────────────────────────────
+
+export type SubscriptionStatus = 'welcome_trips' | 'trial_active' | 'expired' | 'subscribed'
 
 export type PaywallMode = 'none' | 'onboarding' | 'expired'
 
@@ -40,8 +43,12 @@ export interface FirestoreUser {
   trialEndsAt: string | null
   /** Absolute trial expiry — set to (createdAt + 7 days) on account creation. */
   subscriptionEndsAt: string | null
-  /** Human-readable public ID (e.g. "DM-A3F2-K9P1"). Never exposes Firebase UID. */
-  publicId: string | null
+  /** 8-digit numeric public ID for customer support and UI display. */
+  publicId: string
+  /** User email from Firebase Auth (or "anonymous@drivemind.app" for guest). */
+  email: string
+  /** Current subscription funnel status. */
+  subscriptionStatus: SubscriptionStatus
   /** Device fingerprint recorded at account creation for anti-abuse checks. */
   deviceFingerprint: string | null
 }
@@ -69,67 +76,86 @@ function parseUserDoc(data: DocumentData): FirestoreUser {
     isSubscribed: data.isSubscribed === true,
     trialEndsAt: parseTimestamp(data.trialEndsAt),
     subscriptionEndsAt: parseTimestamp(data.subscriptionEndsAt),
-    publicId: typeof data.publicId === 'string' ? data.publicId : null,
+    publicId: typeof data.publicId === 'string' ? data.publicId : generatePublicId(),
+    email: typeof data.email === 'string' ? data.email : 'anonymous@drivemind.app',
+    subscriptionStatus: isValidSubscriptionStatus(data.subscriptionStatus)
+      ? data.subscriptionStatus
+      : 'welcome_trips',
     deviceFingerprint: typeof data.deviceFingerprint === 'string' ? data.deviceFingerprint : null,
   }
+}
+
+function isValidSubscriptionStatus(value: unknown): value is SubscriptionStatus {
+  return value === 'welcome_trips' || value === 'trial_active' || value === 'expired' || value === 'subscribed'
 }
 
 // ─── Core subscription logic ──────────────────────────────────────────────────
 
 /**
- * Returns true when a registered (non-guest) user should be blocked from
- * searching for orders.
- *
- * Blocked when ALL of the following:
- *   - Not an active subscriber
- *   - Trial order limit reached  OR  trial time has expired
+ * Two-phase funnel:
+ *   Phase 1 — completedOrdersCount < WELCOME_TRIPS_LIMIT → free, no restrictions
+ *   Phase 2 — trips exhausted, trialEndsAt set → 7-day countdown active
+ *   Phase 3 — trial expired → hard paywall
  */
 export function isSearchBlocked(
   user: Pick<FirestoreUser, 'completedOrdersCount' | 'isSubscribed' | 'trialEndsAt' | 'subscriptionEndsAt'>,
 ): boolean {
   if (user.isSubscribed) return false
 
-  // Time-based expiry (trial window set at account creation)
-  if (user.subscriptionEndsAt) {
-    const expiresAt = new Date(user.subscriptionEndsAt).getTime()
-    if (Number.isFinite(expiresAt) && Date.now() > expiresAt) return true
-  }
+  // Phase 1: Welcome trips still available
+  if (user.completedOrdersCount < WELCOME_TRIPS_LIMIT) return false
 
-  // Legacy time window (triggered when orders run out)
+  // Phase 2: 7-day trial active
   if (user.trialEndsAt) {
     const expiresAt = new Date(user.trialEndsAt).getTime()
-    if (Number.isFinite(expiresAt) && Date.now() > expiresAt) return true
+    if (Number.isFinite(expiresAt) && Date.now() <= expiresAt) return false
   }
 
-  // Order count exhausted
-  return user.completedOrdersCount >= TRIAL_ORDER_THRESHOLD
+  // Legacy: subscriptionEndsAt from older accounts
+  if (user.subscriptionEndsAt) {
+    const expiresAt = new Date(user.subscriptionEndsAt).getTime()
+    if (Number.isFinite(expiresAt) && Date.now() <= expiresAt) return false
+  }
+
+  // Phase 3: All exhausted
+  return true
 }
 
 export function evaluatePaywallState(user: FirestoreUser): {
   mode: PaywallMode
   blocked: boolean
   searchBlocked: boolean
+  remainingTrips: number
 } {
-  if (user.isSubscribed) return { mode: 'none', blocked: false, searchBlocked: false }
-
-  const searchBlocked = isSearchBlocked(user)
-
-  // Check time expiry (subscriptionEndsAt takes priority over legacy trialEndsAt)
-  const endsMsNew = user.subscriptionEndsAt
-    ? new Date(user.subscriptionEndsAt).getTime()
-    : null
-  const endsMsLegacy = user.trialEndsAt ? new Date(user.trialEndsAt).getTime() : null
-  const endsMs = endsMsNew ?? endsMsLegacy
-
-  if (endsMs != null && Number.isFinite(endsMs) && Date.now() > endsMs) {
-    return { mode: 'expired', blocked: true, searchBlocked: true }
+  if (user.isSubscribed) {
+    return { mode: 'none', blocked: false, searchBlocked: false, remainingTrips: -1 }
   }
 
-  if (searchBlocked) {
-    return { mode: 'onboarding', blocked: false, searchBlocked: true }
+  const remainingTrips = Math.max(0, WELCOME_TRIPS_LIMIT - user.completedOrdersCount)
+
+  // Phase 1: Welcome trips remaining
+  if (remainingTrips > 0) {
+    return { mode: 'none', blocked: false, searchBlocked: false, remainingTrips }
   }
 
-  return { mode: 'none', blocked: false, searchBlocked: false }
+  // Phase 2: Trial window (trialEndsAt set when trip 15 consumed)
+  if (user.trialEndsAt) {
+    const expiresAt = new Date(user.trialEndsAt).getTime()
+    if (Number.isFinite(expiresAt) && Date.now() <= expiresAt) {
+      return { mode: 'onboarding', blocked: false, searchBlocked: false, remainingTrips: 0 }
+    }
+  }
+
+  // Legacy: subscriptionEndsAt from older accounts
+  if (user.subscriptionEndsAt) {
+    const expiresAt = new Date(user.subscriptionEndsAt).getTime()
+    if (Number.isFinite(expiresAt) && Date.now() <= expiresAt) {
+      return { mode: 'onboarding', blocked: false, searchBlocked: false, remainingTrips: 0 }
+    }
+  }
+
+  // Phase 3: Hard paywall
+  return { mode: 'expired', blocked: true, searchBlocked: true, remainingTrips: 0 }
 }
 
 // ─── Firestore CRUD ───────────────────────────────────────────────────────────
@@ -145,48 +171,47 @@ export async function fetchUserDoc(uid: string): Promise<FirestoreUser | null> {
 }
 
 /**
- * Ensures a Firestore user document exists.
- * Creates one with `publicId`, `subscriptionEndsAt` (7-day trial) and optional
- * `deviceFingerprint` if the document is missing.
+ * Ensures a Firestore user document exists keyed by Firebase Auth UID.
+ * If the document exists, returns it (never overwrites).
+ * If missing, creates with `.set()` using the canonical initial schema.
  */
-function defaultNewUser(deviceFingerprint?: string | null): FirestoreUser {
+function defaultNewUser(email: string, deviceFingerprint?: string | null): FirestoreUser {
   const publicId = generatePublicId()
   return {
     completedOrdersCount: 0,
     isSubscribed: false,
     trialEndsAt: null,
-    subscriptionEndsAt: new Date(Date.now() + TRIAL_DURATION_MS).toISOString(),
+    subscriptionEndsAt: null,
     publicId,
+    email,
+    subscriptionStatus: 'welcome_trips',
     deviceFingerprint: deviceFingerprint ?? null,
   }
 }
 
 export async function ensureUserDoc(
   uid: string,
+  email?: string | null,
   deviceFingerprint?: string | null,
 ): Promise<FirestoreUser> {
+  const userEmail = email?.trim() || 'anonymous@drivemind.app'
+
   try {
     const existing = await fetchUserDoc(uid)
     if (existing) {
-      // Back-fill publicId / subscriptionEndsAt for accounts created before this version
       const updates: Record<string, unknown> = {}
-      if (!existing.publicId) updates.publicId = generatePublicId()
-      if (!existing.subscriptionEndsAt) {
-        updates.subscriptionEndsAt = Timestamp.fromMillis(Date.now() + TRIAL_DURATION_MS)
+      if (!existing.publicId || existing.publicId.includes('-')) {
+        updates.publicId = generatePublicId()
+      }
+      if (!existing.email || existing.email === 'anonymous@drivemind.app') {
+        if (userEmail !== 'anonymous@drivemind.app') updates.email = userEmail
       }
       if (!existing.deviceFingerprint && deviceFingerprint) {
         updates.deviceFingerprint = deviceFingerprint
       }
       if (Object.keys(updates).length > 0) {
         await updateDoc(usersRef(uid), updates)
-        const merged: DocumentData = { ...existing }
-        if (typeof updates.publicId === 'string') merged.publicId = updates.publicId
-        if (updates.subscriptionEndsAt instanceof Timestamp) {
-          merged.subscriptionEndsAt = updates.subscriptionEndsAt.toDate().toISOString()
-        }
-        if (typeof updates.deviceFingerprint === 'string') {
-          merged.deviceFingerprint = updates.deviceFingerprint
-        }
+        const merged: DocumentData = { ...existing, ...updates }
         return parseUserDoc(merged)
       }
       return existing
@@ -194,13 +219,13 @@ export async function ensureUserDoc(
 
     const publicId = generatePublicId()
     const now = Date.now()
-    const subscriptionEndsAt = Timestamp.fromMillis(now + TRIAL_DURATION_MS)
 
     const payload: Record<string, unknown> = {
-      completedOrdersCount: 0,
-      isSubscribed: false,
-      subscriptionEndsAt,
       publicId,
+      email: userEmail,
+      completedOrdersCount: 0,
+      subscriptionStatus: 'welcome_trips',
+      isSubscribed: false,
       createdAt: Timestamp.fromMillis(now),
     }
     if (deviceFingerprint) payload.deviceFingerprint = deviceFingerprint
@@ -211,23 +236,24 @@ export async function ensureUserDoc(
       completedOrdersCount: 0,
       isSubscribed: false,
       trialEndsAt: null,
-      subscriptionEndsAt: subscriptionEndsAt.toDate().toISOString(),
+      subscriptionEndsAt: null,
       publicId,
+      email: userEmail,
+      subscriptionStatus: 'welcome_trips',
       deviceFingerprint: deviceFingerprint ?? null,
     }
   } catch (e) {
-    // Firestore offline / permission denied — don't block Google sign-in.
     if (__DEV__) console.warn('[DriveMind] ensureUserDoc failed, using local defaults', e)
-    return defaultNewUser(deviceFingerprint)
+    return defaultNewUser(userEmail, deviceFingerprint)
   }
 }
 
 // ─── Session sync ─────────────────────────────────────────────────────────────
 
-/** @deprecated Only sets trialEndsAt when the order count hits 10.  Kept for legacy callers. */
+/** @deprecated Only sets trialEndsAt when the order count hits WELCOME_TRIPS_LIMIT. Kept for legacy callers. */
 async function maybeStartLegacyTrial(uid: string, user: FirestoreUser): Promise<FirestoreUser> {
   if (user.trialEndsAt != null) return user
-  if (user.completedOrdersCount < TRIAL_ORDER_THRESHOLD) return user
+  if (user.completedOrdersCount < WELCOME_TRIPS_LIMIT) return user
 
   const trialEndsAt = Timestamp.fromMillis(Date.now() + TRIAL_DURATION_MS)
   await updateDoc(usersRef(uid), { trialEndsAt })
@@ -236,22 +262,24 @@ async function maybeStartLegacyTrial(uid: string, user: FirestoreUser): Promise<
 
 export async function syncUserSession(
   uid: string,
+  email?: string | null,
   deviceFingerprint?: string | null,
 ): Promise<{
   user: FirestoreUser
   mode: PaywallMode
   blocked: boolean
   searchBlocked: boolean
+  remainingTrips: number
 }> {
-  let user = await ensureUserDoc(uid, deviceFingerprint)
+  let user = await ensureUserDoc(uid, email, deviceFingerprint)
   try {
     user = await maybeStartLegacyTrial(uid, user)
   } catch {
     /* non-critical legacy trial back-fill */
   }
-  const { mode, blocked, searchBlocked } = evaluatePaywallState(user)
+  const { mode, blocked, searchBlocked, remainingTrips } = evaluatePaywallState(user)
   syncOrderParsingGate(user)
-  return { user, mode, blocked, searchBlocked }
+  return { user, mode, blocked, searchBlocked, remainingTrips }
 }
 
 export function applyUserSessionToStore(
@@ -260,6 +288,7 @@ export function applyUserSessionToStore(
   mode: PaywallMode,
   blocked: boolean,
   searchBlocked: boolean,
+  remainingTrips?: number,
 ): void {
   useAuthStore.getState().setSubscription({
     firebaseUid: uid,
@@ -271,6 +300,7 @@ export function applyUserSessionToStore(
     paywallMode: mode,
     isPaywallBlocked: blocked,
     isSearchBlocked: searchBlocked,
+    remainingTrips: remainingTrips ?? Math.max(0, WELCOME_TRIPS_LIMIT - user.completedOrdersCount),
   })
   syncOrderParsingGate(user)
 }
@@ -283,14 +313,14 @@ export async function recordOrderCompleted(uid: string): Promise<FirestoreUser |
   if (!snap.exists()) return null
 
   const current = parseUserDoc(snap.data())
-  if (current.completedOrdersCount >= TRIAL_ORDER_THRESHOLD) return current
+  if (current.isSubscribed) return current
 
   const nextCount = current.completedOrdersCount + 1
   const updates: Record<string, unknown> = { completedOrdersCount: increment(1) }
 
-  // Legacy: set trialEndsAt when order limit is first hit (kept for compatibility)
-  if (nextCount >= TRIAL_ORDER_THRESHOLD && current.trialEndsAt == null) {
+  if (nextCount >= WELCOME_TRIPS_LIMIT && current.trialEndsAt == null) {
     updates.trialEndsAt = Timestamp.fromMillis(Date.now() + TRIAL_DURATION_MS)
+    updates.subscriptionStatus = 'trial_active'
   }
 
   await updateDoc(ref, updates)
@@ -312,8 +342,14 @@ export async function notifyOrderCompletedForUser(): Promise<void> {
   try {
     const updated = await recordOrderCompleted(firebaseUid)
     if (!updated) return
-    const { mode, blocked, searchBlocked } = evaluatePaywallState(updated)
-    applyUserSessionToStore(firebaseUid, updated, mode, blocked, searchBlocked)
+    const { mode, blocked, searchBlocked, remainingTrips } = evaluatePaywallState(updated)
+    applyUserSessionToStore(firebaseUid, updated, mode, blocked, searchBlocked, remainingTrips)
+    syncOverlaySubscriptionHint()
+
+    // Fire local push when welcome trips just exhausted (trip 15 consumed)
+    if (updated.completedOrdersCount === WELCOME_TRIPS_LIMIT) {
+      void sendTrialExhaustedNotification()
+    }
   } catch (e) {
     if (__DEV__) console.warn('[DriveMind] notifyOrderCompletedForUser failed', e)
   }

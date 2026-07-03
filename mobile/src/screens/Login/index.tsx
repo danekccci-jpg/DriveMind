@@ -8,6 +8,8 @@ import {
   Platform,
   Alert,
   Linking,
+  TextInput,
+  KeyboardAvoidingView,
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useTranslation } from 'react-i18next'
@@ -18,6 +20,7 @@ import i18n from '../../i18n'
 import { useAuthStore, GUEST_EMAIL } from '../../store/authStore'
 import { isFirebaseConfigured } from '../../config/firebase'
 import { signInWithGoogleAndEnsureUser } from '../../services/firebaseAuth'
+import { sendEmailLink } from '../../services/emailLinkAuth'
 import { syncOrderParsingGate } from '../../services/subscriptionGate'
 import { useLanguageStore } from '../../store/languageStore'
 import { useRoleStore } from '../../store/roleStore'
@@ -36,6 +39,32 @@ export default function LoginScreen() {
   const setSubscription = useAuthStore((s) => s.setSubscription)
 
   const [loading, setLoading] = useState(false)
+  const [emailInput, setEmailInput] = useState('')
+  const [emailLinkSent, setEmailLinkSent] = useState(false)
+
+  const onEmailLinkPress = useCallback(async () => {
+    const trimmed = emailInput.trim()
+    if (!trimmed || !trimmed.includes('@')) {
+      Alert.alert(t('login_error_title'), t('login_enter_valid_email'))
+      return
+    }
+    if (!isFirebaseConfigured()) {
+      Alert.alert(t('login_error_title'), t('login_firebase_not_configured'))
+      return
+    }
+    setLoading(true)
+    try {
+      const result = await sendEmailLink(trimmed)
+      if (result.kind === 'link_sent') {
+        setEmailLinkSent(true)
+      } else {
+        Alert.alert(t('login_error_title'), t('login_failed'))
+        if (__DEV__) console.warn('[DriveMind] email link send failed', result.error)
+      }
+    } finally {
+      setLoading(false)
+    }
+  }, [emailInput, t])
 
   const openTerms = useCallback(() => {
     void Linking.openURL(TERMS_OF_SERVICE_URL)
@@ -69,6 +98,7 @@ export default function LoginScreen() {
           paywallMode: result.paywallMode,
           isPaywallBlocked: result.paywallRequired,
           isSearchBlocked: result.searchBlocked ?? false,
+          remainingTrips: result.remainingTrips,
         })
         syncOrderParsingGate()
       } else if (result.kind === 'cancelled') {
@@ -114,27 +144,71 @@ export default function LoginScreen() {
         </View>
       </View>
 
-      <View style={styles.bottomBlock}>
+      <KeyboardAvoidingView
+        style={styles.bottomBlock}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
         <View style={styles.header}>
           <Text style={[styles.title, { color: c.text }]}>{t('login_title')}</Text>
           <Text style={[styles.sub, { color: c.textSecondary }]}>{t('login_subtitle')}</Text>
         </View>
 
-        <TouchableOpacity
-          style={[styles.googleBtn, { backgroundColor: c.surface, borderColor: googleBorder }]}
-          onPress={onGooglePress}
-          activeOpacity={0.85}
-          disabled={loading}
-        >
-          {loading ? (
-            <ActivityIndicator color={c.primary} />
-          ) : (
-            <>
-              <GoogleGIcon size={22} />
-              <Text style={[styles.googleLabel, { color: c.text }]}>{t('sign_in_with_google')}</Text>
-            </>
-          )}
-        </TouchableOpacity>
+        {emailLinkSent ? (
+          <View style={styles.emailSentBox}>
+            <Text style={[styles.emailSentTitle, { color: c.text }]}>{t('login_email_sent_title')}</Text>
+            <Text style={[styles.emailSentDesc, { color: c.textSecondary }]}>
+              {t('login_email_sent_desc', { email: emailInput.trim() })}
+            </Text>
+          </View>
+        ) : (
+          <>
+            <TextInput
+              style={[styles.emailInput, { backgroundColor: c.surface, borderColor: isDark ? c.border : '#E5E7EB', color: c.text }]}
+              placeholder={t('login_email_placeholder')}
+              placeholderTextColor={c.textMuted}
+              keyboardType="email-address"
+              autoCapitalize="none"
+              autoCorrect={false}
+              value={emailInput}
+              onChangeText={setEmailInput}
+              editable={!loading}
+            />
+            <TouchableOpacity
+              style={[styles.emailLinkBtn, { backgroundColor: c.primary }]}
+              onPress={onEmailLinkPress}
+              activeOpacity={0.85}
+              disabled={loading}
+            >
+              {loading ? (
+                <ActivityIndicator color={c.textInverse} />
+              ) : (
+                <Text style={[styles.emailLinkLabel, { color: c.textInverse }]}>{t('login_send_link')}</Text>
+              )}
+            </TouchableOpacity>
+
+            <View style={styles.dividerRow}>
+              <View style={[styles.dividerLine, { backgroundColor: isDark ? c.border : '#E5E7EB' }]} />
+              <Text style={[styles.dividerText, { color: c.textMuted }]}>{t('login_or')}</Text>
+              <View style={[styles.dividerLine, { backgroundColor: isDark ? c.border : '#E5E7EB' }]} />
+            </View>
+
+            <TouchableOpacity
+              style={[styles.googleBtn, { backgroundColor: c.surface, borderColor: googleBorder }]}
+              onPress={onGooglePress}
+              activeOpacity={0.85}
+              disabled={loading}
+            >
+              {loading ? (
+                <ActivityIndicator color={c.primary} />
+              ) : (
+                <>
+                  <GoogleGIcon size={22} />
+                  <Text style={[styles.googleLabel, { color: c.text }]}>{t('sign_in_with_google')}</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </>
+        )}
 
         <TouchableOpacity
           style={[styles.laterBtn, { backgroundColor: laterBg, borderColor: laterBorder }]}
@@ -161,7 +235,7 @@ export default function LoginScreen() {
             <Text style={[styles.legalLink, { color: c.textMuted }]}>{t('profile_legal_privacy')}</Text>
           </TouchableOpacity>
         </View>
-      </View>
+      </KeyboardAvoidingView>
     </View>
   )
 }
@@ -198,6 +272,56 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontFamily: fonts.regular,
     lineHeight: 22,
+  },
+  emailInput: {
+    height: 54,
+    borderRadius: 14,
+    borderWidth: 1,
+    paddingHorizontal: 16,
+    fontSize: 16,
+    fontFamily: fonts.regular,
+    marginBottom: 12,
+  },
+  emailLinkBtn: {
+    height: 54,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emailLinkLabel: {
+    fontSize: 16,
+    fontFamily: fonts.semiBold,
+    fontWeight: '600',
+  },
+  dividerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 16,
+    gap: 12,
+  },
+  dividerLine: {
+    flex: 1,
+    height: StyleSheet.hairlineWidth,
+  },
+  dividerText: {
+    fontSize: 13,
+    fontFamily: fonts.regular,
+  },
+  emailSentBox: {
+    alignItems: 'center',
+    paddingVertical: 20,
+  },
+  emailSentTitle: {
+    fontSize: 18,
+    fontFamily: fonts.semiBold,
+    fontWeight: '600',
+    marginBottom: 8,
+  },
+  emailSentDesc: {
+    fontSize: 14,
+    fontFamily: fonts.regular,
+    textAlign: 'center',
+    lineHeight: 20,
   },
   googleBtn: {
     flexDirection: 'row',

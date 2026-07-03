@@ -31,6 +31,10 @@ import { fonts } from '../../theme/typography'
 import { useColors } from '../../theme/theme'
 import { computeProfitability } from '@drivemind/shared'
 import { normalizePlatformId, type PlatformId } from '../../utils/normalizePlatformId'
+import { OrderHistoryDetail } from '../../components/OrderHistoryDetail'
+import { OrderLocationMap } from '../../components/OrderLocationMap'
+import { WeekCalendar, toLocalMidnight, isSameDay, dateKey } from '../../components/WeekCalendar'
+import { DailySummaryCard } from '../../components/DailySummaryCard'
 
 const COURIER_PLATFORMS: PlatformId[] = ['glovo', 'uber', 'bolt', 'wolt']
 const TAXI_PLATFORMS: PlatformId[] = ['uber', 'bolt']
@@ -79,7 +83,7 @@ function ingestToOrder(offer: IngestedOffer, index = 0): Order {
     dropoffLat: 50.0614,
     dropoffLng: 19.9366,
     profitScore: 0,
-    profitLabel: 'NEUTRAL',
+    profitTier: 'STANDARD',
     status: 'pickup',
   }
 }
@@ -336,44 +340,106 @@ function CompletedRidesSection({
   c: ReturnType<typeof useColors>
   t: ReturnType<typeof useTranslation>['t']
 }) {
-  const recent = orders.slice(0, 10)
+  const [selectedDate, setSelectedDate] = useState<Date | null>(null)
+  const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [mapOrder, setMapOrder] = useState<CompletedOrder | null>(null)
+
+  // Deduplicated set of date keys that have at least one order
+  const activeDates = useMemo(() => {
+    const set = new Set<string>()
+    for (const o of orders) {
+      const d = toLocalMidnight(typeof o.completedAt === 'number' ? o.completedAt : Date.now())
+      set.add(dateKey(d))
+    }
+    return set
+  }, [orders])
+
+  // Filter to selected day, or show most-recent 10 when no date selected
+  const filteredOrders = useMemo(() => {
+    if (!selectedDate) return orders.slice(0, 10)
+    return orders.filter((o) => {
+      const d = toLocalMidnight(typeof o.completedAt === 'number' ? o.completedAt : Date.now())
+      return isSameDay(d, selectedDate)
+    })
+  }, [orders, selectedDate])
+
+  const handleSelectDate = useCallback((day: Date | null) => {
+    setSelectedDate(day)
+    setExpandedId(null)
+  }, [])
+
   return (
     <View style={s.completedWrap}>
-      <Text style={[s.sectionLabel, { color: c.textMuted, marginTop: 12 }]}>
+      <Text style={[s.sectionLabel, { color: c.textMuted, marginTop: 12, marginBottom: 4 }]}>
         {t('completed_rides').toUpperCase()}
       </Text>
-      {recent.length === 0 ? (
+
+      {orders.length > 0 && (
+        <WeekCalendar
+          selectedDate={selectedDate}
+          activeDates={activeDates}
+          onSelectDate={handleSelectDate}
+        />
+      )}
+
+      {selectedDate && <DailySummaryCard orders={filteredOrders} />}
+
+      {orders.length === 0 ? (
         <Text style={[s.empty, { color: c.textMuted, marginTop: 12 }]}>
           {t('no_completed_rides')}
         </Text>
+      ) : filteredOrders.length === 0 && selectedDate ? (
+        <Text style={[s.empty, { color: c.textMuted, marginTop: 8 }]}>
+          {t('no_orders_yet')}
+        </Text>
       ) : (
-        recent.map((o, index) => {
+        filteredOrders.map((o, index) => {
           const completedAt = typeof o.completedAt === 'number' ? o.completedAt : Date.now()
           const time = Number.isFinite(completedAt)
             ? new Date(completedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
             : '—'
           const rowKey = o.id || `completed-${index}`
+          const isExpanded = expandedId === rowKey
           return (
-            <View
-              key={rowKey}
-              style={[s.completedRow, { borderColor: c.separator, backgroundColor: c.surface }]}
-            >
-              <PlatformIcon platform={normalizePlatformId(o.platform)} size={22} />
-              <View style={s.completedMid}>
-                <Text style={[s.completedAddr, { color: c.text }]} numberOfLines={1}>
-                  {shortStreet(o.dropoffAddress ?? '')}
+            <View key={rowKey}>
+              <TouchableOpacity
+                activeOpacity={0.75}
+                onPress={() => setExpandedId(isExpanded ? null : rowKey)}
+                style={[s.completedRow, { borderColor: c.separator, backgroundColor: c.surface }]}
+              >
+                <PlatformIcon platform={normalizePlatformId(o.platform)} size={22} />
+                <View style={s.completedMid}>
+                  <Text style={[s.completedAddr, { color: c.text }]} numberOfLines={1}>
+                    {shortStreet(o.dropoffAddress ?? '')}
+                  </Text>
+                  <Text style={[s.completedSub, { color: c.textMuted }]}>
+                    {time} · {(Number(o.distanceKm) || 0).toFixed(1)} km
+                  </Text>
+                </View>
+                <Text style={[s.completedEarnings, { color: c.text }]}>
+                  {(Number(o.earnings) || 0).toFixed(0)} zł
                 </Text>
-                <Text style={[s.completedSub, { color: c.textMuted }]}>
-                  {time} · {(Number(o.distanceKm) || 0).toFixed(1)} km
-                </Text>
-              </View>
-              <Text style={[s.completedEarnings, { color: c.text }]}>
-                {(Number(o.earnings) || 0).toFixed(0)} zł
-              </Text>
+              </TouchableOpacity>
+              {isExpanded && (
+                <OrderHistoryDetail
+                  order={o}
+                  onShowMap={() => setMapOrder(o)}
+                />
+              )}
             </View>
           )
         })
       )}
+      <OrderLocationMap
+        visible={!!mapOrder}
+        onClose={() => setMapOrder(null)}
+        pickupLat={mapOrder?.pickupLat ?? 0}
+        pickupLng={mapOrder?.pickupLng ?? 0}
+        dropoffLat={mapOrder?.dropoffLat ?? 0}
+        dropoffLng={mapOrder?.dropoffLng ?? 0}
+        pickupAddress={mapOrder?.pickupAddress ?? ''}
+        dropoffAddress={mapOrder?.dropoffAddress ?? ''}
+      />
     </View>
   )
 }

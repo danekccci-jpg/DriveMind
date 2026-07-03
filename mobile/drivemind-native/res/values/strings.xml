@@ -1,3 +1,0 @@
-<resources>
-  <string name="accessibility_service_description">DriveMind reads order details (price, distance, destination) from Uber, Bolt, Glovo, and Wolt driver apps to show profitability on your device. Read-only — no taps or automated actions.</string>
-</resources>

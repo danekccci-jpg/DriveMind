@@ -23,6 +23,8 @@ import { useRoleStore } from '../../store/roleStore'
 import { useDriverSessionStore } from '../../store/driverSessionStore'
 import { useAuthStore, isGuestEmail } from '../../store/authStore'
 import { deleteUserAccount, signOutFirebase } from '../../services/firebaseAuth'
+import { isAdminUser, buildSeedOrders, writeSeedOrdersToFirestore } from '../../services/adminSeeder'
+import { useOrdersStore } from '../../store/ordersStore'
 import { useThemeStore } from '../../store/themeStore'
 import { useLanguageStore, type Language } from '../../store/languageStore'
 import { useColors, type AppColors } from '../../theme/theme'
@@ -81,6 +83,25 @@ export default function ProfileScreen() {
   const [fuelInput, setFuelInput] = useState(String(fuelConsumption))
   const [deletingAccount, setDeletingAccount] = useState(false)
   const [languageModalVisible, setLanguageModalVisible] = useState(false)
+  const [seeding, setSeeding] = useState(false)
+
+  const seedOrderHistory = useOrdersStore((s) => s.seedOrderHistory)
+  const isAdmin = isAdminUser()
+
+  const handleSeedOrders = useCallback(async () => {
+    if (seeding) return
+    setSeeding(true)
+    try {
+      const orders = buildSeedOrders()
+      seedOrderHistory(orders)
+      void writeSeedOrdersToFirestore(orders)
+      Alert.alert('✅ Seeded', `${orders.length} Kraków test orders added to history.`)
+    } catch (e) {
+      Alert.alert('Seed failed', String(e))
+    } finally {
+      setSeeding(false)
+    }
+  }, [seeding, seedOrderHistory])
 
   const canDeleteAccount = Boolean(firebaseUid) && !isGuestEmail(userEmail)
 
@@ -365,6 +386,26 @@ export default function ProfileScreen() {
         </Text>
       </View>
 
+      {isAdmin && (
+        <View style={[s.adminCard, { backgroundColor: c.surface, borderColor: c.border }]}>
+          <Text style={[s.adminLabel, { color: c.textMuted }]}>⚙ ADMIN</Text>
+          <TouchableOpacity
+            style={[s.adminBtn, { backgroundColor: c.surfaceAlt, borderColor: c.border }]}
+            activeOpacity={0.75}
+            disabled={seeding}
+            onPress={() => void handleSeedOrders()}
+          >
+            {seeding ? (
+              <ActivityIndicator size="small" color={c.primary} />
+            ) : (
+              <Text style={[s.adminBtnText, { color: c.primary }]}>
+                🗺 Seed Kraków test orders
+              </Text>
+            )}
+          </TouchableOpacity>
+        </View>
+      )}
+
       <TouchableOpacity
         style={s.signOutBtn}
         activeOpacity={0.7}
@@ -522,4 +563,30 @@ const s = StyleSheet.create({
   legalLinksRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap', gap: 8 },
   legalLinkText: { fontSize: 12, fontFamily: fonts.regular, textDecorationLine: 'underline' },
   legalDot: { fontSize: 12, fontFamily: fonts.regular },
+  adminCard: {
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 8,
+    gap: 10,
+  },
+  adminLabel: {
+    fontSize: 10,
+    fontFamily: fonts.semiBold,
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+  },
+  adminBtn: {
+    height: 44,
+    borderRadius: 10,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+  },
+  adminBtnText: {
+    fontSize: 14,
+    fontFamily: fonts.semiBold,
+    fontWeight: '600',
+  },
 })

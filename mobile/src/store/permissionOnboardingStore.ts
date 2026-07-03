@@ -16,6 +16,8 @@ interface PermissionOnboardingState {
   explicitVisible: boolean
   /** User tapped "Maybe later" — suppress auto modal until next cold start. */
   sessionDismissed: boolean
+  /** Persisted flag: last known permission state was allGranted. Prevents race-condition re-prompts. */
+  lastKnownAllGranted: boolean
 
   incrementAppOpenCount: () => number
   recordPermissionPromptShown: () => void
@@ -25,6 +27,7 @@ interface PermissionOnboardingState {
   suppressAllDisclosure: () => void
   dismissForSession: () => void
   resetSessionDismiss: () => void
+  setLastKnownAllGranted: (granted: boolean) => void
 }
 
 export const usePermissionOnboardingStore = create<PermissionOnboardingState>()(
@@ -35,6 +38,7 @@ export const usePermissionOnboardingStore = create<PermissionOnboardingState>()(
       autoVisible: false,
       explicitVisible: false,
       sessionDismissed: false,
+      lastKnownAllGranted: false,
 
       incrementAppOpenCount: () => {
         const next = get().appOpenCount + 1
@@ -68,6 +72,11 @@ export const usePermissionOnboardingStore = create<PermissionOnboardingState>()(
         set({ sessionDismissed: true, autoVisible: false, explicitVisible: false }),
 
       resetSessionDismiss: () => set({ sessionDismissed: false }),
+
+      setLastKnownAllGranted: (granted) => {
+        if (get().lastKnownAllGranted === granted) return
+        set({ lastKnownAllGranted: granted })
+      },
     }),
     {
       name: 'drivemind-permission-onboarding',
@@ -75,6 +84,7 @@ export const usePermissionOnboardingStore = create<PermissionOnboardingState>()(
       partialize: (s) => ({
         permissionsShownCount: s.permissionsShownCount,
         appOpenCount: s.appOpenCount,
+        lastKnownAllGranted: s.lastKnownAllGranted,
       }),
     },
   ),

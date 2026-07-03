@@ -15,6 +15,7 @@ import { usePermissionOnboardingStore } from '../store/permissionOnboardingStore
  */
 export function usePermissionOnboardingFocusCheck(): void {
   const setAutoVisible = usePermissionOnboardingStore((s) => s.setAutoVisible)
+  const setLastKnownAllGranted = usePermissionOnboardingStore((s) => s.setLastKnownAllGranted)
 
   const evaluate = useCallback(async () => {
     if (Platform.OS !== 'android') {
@@ -24,16 +25,17 @@ export function usePermissionOnboardingFocusCheck(): void {
 
     const bridgeActive = await isNativeIngestBridgeActive()
     if (bridgeActive) {
+      setLastKnownAllGranted(true)
       suppressAllDisclosureUI()
       return
     }
 
     const snapshot = await checkCoreIngestPermissions()
     if (snapshot.allGranted) {
+      setLastKnownAllGranted(true)
       setAutoVisible(false)
     }
-    // Never set autoVisible true here — cold start owns the entry prompt.
-  }, [setAutoVisible])
+  }, [setAutoVisible, setLastKnownAllGranted])
 
   useFocusEffect(
     useCallback(() => {

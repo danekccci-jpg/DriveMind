@@ -10,7 +10,7 @@ interface AuthState {
   userName: string | null
   userEmail: string | null
   firebaseUid: string | null
-  /** Human-readable public ID (e.g. "DM-A3F2-K9P1"). Set after sign-in. */
+  /** 8-digit numeric public ID for support and UI. */
   publicId: string | null
 
   // ── Device fingerprint ─────────────────────────────────────────────────────
@@ -28,6 +28,8 @@ interface AuthState {
   trialEndsAt: string | null
   /** Absolute trial expiry (account creation + 7 days). */
   subscriptionEndsAt: string | null
+  /** Remaining free welcome trips before trial timer starts. -1 = premium. */
+  remainingTrips: number
   paywallMode: PaywallMode
   subscriptionLoaded: boolean
   isPaywallBlocked: boolean
@@ -63,6 +65,7 @@ interface AuthState {
     paywallMode: PaywallMode
     isPaywallBlocked: boolean
     isSearchBlocked: boolean
+    remainingTrips?: number
   }) => void
   setSearchBlocked: (blocked: boolean) => void
   setSubscriptionLoaded: (loaded: boolean) => void
@@ -91,6 +94,7 @@ export const useAuthStore = create<AuthState>()(
       isSubscribed: false,
       trialEndsAt: null,
       subscriptionEndsAt: null,
+      remainingTrips: 15,
       paywallMode: 'none',
       subscriptionLoaded: false,
       isPaywallBlocked: false,
@@ -137,6 +141,7 @@ export const useAuthStore = create<AuthState>()(
         paywallMode,
         isPaywallBlocked,
         isSearchBlocked,
+        remainingTrips,
       }) =>
         set({
           firebaseUid,
@@ -145,6 +150,7 @@ export const useAuthStore = create<AuthState>()(
           trialEndsAt,
           subscriptionEndsAt: subscriptionEndsAt ?? get().subscriptionEndsAt,
           publicId: publicId ?? get().publicId,
+          remainingTrips: remainingTrips ?? get().remainingTrips,
           paywallMode,
           isPaywallBlocked,
           isSearchBlocked,
@@ -179,6 +185,7 @@ export const useAuthStore = create<AuthState>()(
           isSubscribed: false,
           trialEndsAt: null,
           subscriptionEndsAt: null,
+          remainingTrips: 15,
           paywallMode: 'none',
           subscriptionLoaded: false,
           isPaywallBlocked: false,
@@ -205,6 +212,7 @@ export const useAuthStore = create<AuthState>()(
         isSubscribed: s.isSubscribed,
         trialEndsAt: s.trialEndsAt,
         subscriptionEndsAt: s.subscriptionEndsAt,
+        remainingTrips: s.remainingTrips,
         paywallMode: s.paywallMode,
         isPaywallBlocked: s.isPaywallBlocked,
         isSearchBlocked: s.isSearchBlocked,

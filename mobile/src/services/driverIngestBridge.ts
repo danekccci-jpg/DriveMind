@@ -18,6 +18,7 @@ import {
   parseDistanceKmFromText,
   parseEtaMinutesForPackage,
   isValidOrderBlob,
+  isPlausibleRideFare,
 } from './orderScrapeNormalize'
 import { deriveSearchBlockedFromStore, syncOrderParsingGate } from './subscriptionGate'
 import {
@@ -37,6 +38,7 @@ export { EVENT_NOTIFICATION }
 export const EVENT_SCRAPE = 'DriveMindScrape'
 export const EVENT_ORDER_SCRAPED = 'onOrderScraped'
 export const EVENT_ORDER_ACCEPTED = 'onOrderAccepted'
+export const EVENT_ORDER_COMPLETED = 'onOrderCompleted'
 
 type DriveMindNativeType = {
   getBufferedNotificationsJson: () => Promise<string>
@@ -225,6 +227,8 @@ export function useDriverIngestBridge(enabled = true): void {
 
   const handlersRef = useRef({ ingestNotification, ingestScrape, removeExpired, showToast })
   const orderDedupeRef = useRef({ sig: '', at: 0 })
+  /** Tracks recently-seen content hashes to prevent re-ingesting the same order across TTL expiry cycles. */
+  const seenHashesRef = useRef<Map<string, number>>(new Map())
   // Tracks last value sent to setOverlayShiftActive so we avoid redundant native calls
   // that would trigger unnecessary Android window redraws and flicker.
   const lastOverlayActiveRef = useRef<boolean | null>(null)
@@ -447,12 +451,24 @@ export function useDriverIngestBridge(enabled = true): void {
         })
         const now = Date.now()
         const dedupe = orderDedupeRef.current
-        if (contentHash === dedupe.sig && now - dedupe.at < 30_000) {
-          dmDebug('ORDER_DEDUPED', 'duplicate scrape ignored', { dtMs: now - dedupe.at })
+        if (contentHash === dedupe.sig && now - dedupe.at < 180_000) {
+          dmDebug('ORDER_DEDUPED', 'duplicate scrape ignored (short-term)', { dtMs: now - dedupe.at })
+          return
+        }
+        const seenHashes = seenHashesRef.current
+        const lastSeenAt = seenHashes.get(contentHash)
+        if (lastSeenAt && now - lastSeenAt < 600_000) {
+          dmDebug('ORDER_DEDUPED', 'duplicate scrape ignored (long-term seen cache)', { dtMs: now - lastSeenAt })
+          dedupe.sig = contentHash
+          dedupe.at = now
           return
         }
         dedupe.sig = contentHash
         dedupe.at = now
+        seenHashes.set(contentHash, now)
+        for (const [h, t] of seenHashes) {
+          if (now - t > 600_000) seenHashes.delete(h)
+        }
 
         const scrapeBlob = [
           payload.price,
@@ -510,6 +526,13 @@ export function useDriverIngestBridge(enabled = true): void {
             warnIngestParse('scrape parse incomplete — skip profitability overlay')
             return
           }
+          const scrapeBlobFull = [payload.price, payload.distanceKm, payload.etaMin, payload.pickup, payload.dropoff]
+            .filter(Boolean)
+            .join('\n')
+          if (!isPlausibleRideFare(price, scrapeBlobFull, distKm)) {
+            warnIngestParse('scrape fare failed plausibility check — skip overlay/toast')
+            return
+          }
 
           if (useOrdersStore.getState().shiftStats.startTime === null) {
             useOrdersStore.getState().startShiftManually()
@@ -560,15 +583,17 @@ export function useDriverIngestBridge(enabled = true): void {
             dmDebug('PARSING_ERROR', 'overlay update failed', { reason: String(e) })
           }
 
-          const platName = packageToPlatformName(payload.packageName ?? '')
-          const toastAmt = driveMindUiLanguage() === 'pl' && price > 0
-            ? price.toFixed(2).replace('.', ',')
-            : price > 0
-              ? price.toFixed(2)
-              : '--'
-          handlersRef.current.showToast(
-            `${localizedProfitTierTitle(result.profitTier)}  ${platName} · ${i18n.t('widget_price_pln', { amount: toastAmt })}`,
-          )
+          if (AppState.currentState !== 'active') {
+            const platName = packageToPlatformName(payload.packageName ?? '')
+            const toastAmt = driveMindUiLanguage() === 'pl' && price > 0
+              ? price.toFixed(2).replace('.', ',')
+              : price > 0
+                ? price.toFixed(2)
+                : '--'
+            handlersRef.current.showToast(
+              `${localizedProfitTierTitle(result.profitTier)}  ${platName} · ${i18n.t('widget_price_pln', { amount: toastAmt })}`,
+            )
+          }
         } catch (e) {
           dmDebug('PARSING_ERROR', 'onOrderScraped pipeline failed', { reason: String(e) })
         }
@@ -674,13 +699,65 @@ export function useDriverIngestBridge(enabled = true): void {
             matched: !!matched,
           })
 
-          useOrdersStore.getState().recordAcceptedTrip(finalOrder)
+          useOrdersStore.getState().recordActiveTrip(finalOrder)
 
           if (matched) {
             useDriverIngestStore.getState().removeOffer(matched.id)
           }
         } catch (e) {
           dmDebug('ORDER_ACCEPTED_ERROR', 'pipeline failed', { reason: String(e) })
+        }
+      },
+    )
+
+    // ── 3b. onOrderCompleted — passive Done detection (trip → completed) ───
+    const sub4b = DeviceEventEmitter.addListener(
+      EVENT_ORDER_COMPLETED,
+      (payload: {
+        price?: string
+        distanceKm?: string
+        etaMin?: string
+        pickup?: string
+        dropoff?: string
+        packageName?: string
+        contentHash?: string
+        completedAt?: number
+      }) => {
+        try {
+          if (!isAllowedScrapePackage(payload.packageName ?? '')) return
+
+          const platform = packageToPlatformKey(payload.packageName ?? '')
+          const expectedHash = buildIngestOrderHash({
+            platform,
+            price: payload.price ?? '',
+            pickup: payload.pickup,
+            destination: payload.dropoff,
+            text: [payload.price, payload.pickup, payload.dropoff].filter(Boolean).join(' · '),
+          })
+
+          const { activeOrders } = useOrdersStore.getState()
+          const matched =
+            activeOrders.find((o) => o.id === `accepted-${expectedHash}`) ??
+            (payload.contentHash
+              ? activeOrders.find((o) => o.id.includes(payload.contentHash!))
+              : undefined) ??
+            activeOrders.find((o) => o.platform === platform)
+
+          if (!matched) {
+            dmDebug('ORDER_COMPLETED_DROPPED', 'no active trip to complete', {
+              platform,
+              contentHash: payload.contentHash,
+            })
+            return
+          }
+
+          dmDebug('ORDER_COMPLETED', 'completing passive trip', {
+            id: matched.id,
+            platform,
+          })
+          useOrdersStore.getState().completeOrder(matched.id)
+        } catch (e) {
+          dmDebug('ORDER_COMPLETED_ERROR', 'pipeline failed', { reason: String(e) })
         }
       },
     )
@@ -752,6 +829,7 @@ export function useDriverIngestBridge(enabled = true): void {
       sub1.remove()
       sub3.remove()
       sub4.remove()
+      sub4b.remove()
       sub5.remove()
       sub6.remove()
       clearInterval(ttl)
@@ -760,65 +838,100 @@ export function useDriverIngestBridge(enabled = true): void {
     }
   }, [setSoundEnabled, enabled])
 
-  // ── Overlay shift-state sync ─────────────────────────────────────────────────
+  // ── Overlay shift-state + AppState lifecycle (single effect — order matters) ─
   useEffect(() => {
     if (!enabled) return
     if (Platform.OS !== 'android') return
     const native = getNative()
     if (!native) return
-    const syncOverlay = (state: ReturnType<typeof useOrdersStore.getState>) => {
-      const isShiftOn = state.shiftStats.startTime !== null
-      if (deriveSearchBlockedFromStore()) {
-        if (lastOverlayActiveRef.current !== false) {
-          lastOverlayActiveRef.current = false
-          native.setOverlayShiftActive(false)
+
+    const pushNativeLifecycle = (appState: AppStateStatus) => {
+      if (!native.notifyAppLifecycleState) return
+      if (appState === 'active') {
+        try {
+          native.notifyAppLifecycleState('active')
+        } catch {
+          /* noop */
         }
-        return
+      } else if (appState === 'background') {
+        try {
+          native.notifyAppLifecycleState('background')
+        } catch {
+          /* noop */
+        }
       }
-      const nextActive = isShiftOn
-      if (lastOverlayActiveRef.current !== nextActive) {
-        lastOverlayActiveRef.current = nextActive
-      }
+    }
+
+    const applyOverlayShift = (nextActive: boolean) => {
+      if (lastOverlayActiveRef.current === nextActive) return
+      lastOverlayActiveRef.current = nextActive
       try {
         native.setOverlayShiftActive(nextActive)
       } catch {
         /* noop */
       }
-      if (nextActive) {
-        triggerScraperWindow()
-        rescanForegroundDriverApp()
-        void syncBufferedNotificationsIfNeeded()
-          .catch(() => { /* noop */ })
-          .finally(() => {
-            void refreshOverlayFromIngestQueue()
-          })
-      }
-      void native.isOverlayPermissionGranted().then((granted) => {
-        if (!granted && isShiftOn && __DEV__) {
-          console.warn('[DriveMind] overlay permission missing — accessibility overlay fallback')
-        }
-      }).catch(() => { /* noop */ })
     }
-    syncOverlay(useOrdersStore.getState())
-    const unsub = useOrdersStore.subscribe(
-      (state, prev) => {
-        if (state.shiftStats.startTime !== prev.shiftStats.startTime) {
-          syncOverlay(state)
-        }
-      },
-    )
-    const appSub = AppState.addEventListener('change', (next) => {
-      if (next === 'active') {
-        syncOverlay(useOrdersStore.getState())
-      } else if (next === 'background' && useOrdersStore.getState().shiftStats.startTime !== null) {
-        rescanForegroundDriverApp()
+
+    const syncOverlay = (
+      state: ReturnType<typeof useOrdersStore.getState>,
+      options?: { armDriverOverlay?: boolean },
+    ) => {
+      const isShiftOn = state.shiftStats.startTime !== null
+      if (deriveSearchBlockedFromStore()) {
+        applyOverlayShift(false)
+        return
+      }
+      const nextActive = isShiftOn
+      applyOverlayShift(nextActive)
+      if (!nextActive || options?.armDriverOverlay === false) return
+      if (AppState.currentState === 'active') return
+
+      triggerScraperWindow()
+      rescanForegroundDriverApp()
+      void syncBufferedNotificationsIfNeeded()
+        .catch(() => { /* noop */ })
+        .finally(() => {
+          void refreshOverlayFromIngestQueue()
+        })
+    }
+
+    pushNativeLifecycle(AppState.currentState)
+    syncOverlay(useOrdersStore.getState(), {
+      armDriverOverlay: AppState.currentState !== 'active',
+    })
+
+    const unsub = useOrdersStore.subscribe((state, prev) => {
+      if (state.shiftStats.startTime !== prev.shiftStats.startTime) {
+        syncOverlay(state, { armDriverOverlay: AppState.currentState !== 'active' })
       }
     })
+
+    const appSub = AppState.addEventListener('change', (next) => {
+      if (next === 'active') {
+        pushNativeLifecycle('active')
+        syncOverlay(useOrdersStore.getState(), { armDriverOverlay: false })
+      } else if (next === 'background') {
+        pushNativeLifecycle('background')
+        if (useOrdersStore.getState().shiftStats.startTime !== null) {
+          rescanForegroundDriverApp()
+        }
+      }
+    })
+
+    void native.isOverlayPermissionGranted().then((granted) => {
+      if (!granted && useOrdersStore.getState().shiftStats.startTime !== null && __DEV__) {
+        console.warn('[DriveMind] overlay permission missing — accessibility overlay fallback')
+      }
+    }).catch(() => { /* noop */ })
+
     return () => {
       unsub()
       appSub.remove()
       try {
-        native.setOverlayShiftActive(false)
+        if (lastOverlayActiveRef.current !== false) {
+          lastOverlayActiveRef.current = false
+          native.setOverlayShiftActive(false)
+        }
       } catch {
         /* noop */
       }
@@ -855,34 +968,4 @@ export function useDriverIngestBridge(enabled = true): void {
     }
   }, [soundEnabled, enabled])
 
-  // ── Overlay visibility vs app foreground ─────────────────────────────────────
-  useEffect(() => {
-    if (!enabled) return
-    if (Platform.OS !== 'android') return
-    const native = getNative()
-    if (!native?.notifyAppLifecycleState) return
-
-    const pushState = (state: AppStateStatus) => {
-      if (state === 'active') {
-        try {
-          native.notifyAppLifecycleState('active')
-        } catch {
-          /* noop */
-        }
-      } else if (state === 'background') {
-        try {
-          native.notifyAppLifecycleState('background')
-        } catch {
-          /* noop */
-        }
-      }
-      // 'inactive' is a total no-op — never forwarded to native. Android fires it
-      // during split-screen, permission sheets, and rapid app swaps; mapping it to
-      // background was tearing the overlay down mid-shift.
-    }
-
-    pushState(AppState.currentState)
-    const sub = AppState.addEventListener('change', pushState)
-    return () => sub.remove()
-  }, [enabled])
 }

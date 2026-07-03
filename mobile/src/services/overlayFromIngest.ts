@@ -12,6 +12,7 @@ import {
   parsePlnAmountFromText,
   parseDistanceKmFromText,
   parseEtaMinutesForPackage,
+  isPlausibleRideFare,
 } from './orderScrapeNormalize'
 import {
   formatOverlayMetrics,
@@ -69,6 +70,7 @@ export function parseIngestOfferForOverlay(offer: IngestedOffer): {
     parseDistanceKmFromText(offer.distanceKm ?? '') ??
     parseDistanceKmFromText(offer.text ?? '') ??
     parseDistanceKmFromText(blob)
+  if (!isPlausibleRideFare(price, blob, parsedDist)) return null
   const distKm = parsedDist != null && parsedDist > 0 ? parsedDist : 5
 
   const parsedEta =
@@ -131,6 +133,10 @@ export async function pushIngestedOfferToOverlay(offer: IngestedOffer): Promise<
 export async function refreshOverlayFromIngestQueue(): Promise<void> {
   if (deriveSearchBlockedFromStore()) return
 
+  if (Platform.OS === 'android' && AppState.currentState === 'active') {
+    return
+  }
+
   // Skip transient AppState (e.g. 'inactive' during permission sheets / multi-window).
   if (
     Platform.OS === 'android' &&
@@ -155,13 +161,6 @@ export async function refreshOverlayFromIngestQueue(): Promise<void> {
 async function dispatchRefreshOverlayFromIngestQueue(): Promise<void> {
   const native = getNative()
   if (!native) return
-
-  try {
-    ;(NativeModules.DriveMindNative as { setOverlayShiftActive?: (active: boolean) => void } | undefined)
-      ?.setOverlayShiftActive?.(true)
-  } catch {
-    /* noop */
-  }
 
   const now = Date.now()
   const offers = selectAvailableIngestOffers(useDriverIngestStore.getState())

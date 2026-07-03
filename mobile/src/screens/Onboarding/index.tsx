@@ -1,10 +1,8 @@
-import React, { useRef, useState, useCallback, useMemo } from 'react'
+import React, { useState, useCallback, useMemo } from 'react'
 import {
   View,
   Text,
   StyleSheet,
-  Animated as RNAnimated,
-  Easing,
   Dimensions,
   SafeAreaView,
   Platform,
@@ -12,7 +10,14 @@ import {
 } from 'react-native'
 import { useTranslation } from 'react-i18next'
 import { MaterialCommunityIcons, Feather } from '@expo/vector-icons'
-import Reanimated, { FadeInDown, SlideInRight } from 'react-native-reanimated'
+import Reanimated, {
+  FadeInDown,
+  SlideInRight,
+  useSharedValue,
+  useAnimatedStyle,
+  withSpring,
+  interpolate,
+} from 'react-native-reanimated'
 import { useRoleStore } from '../../store/roleStore'
 import PlatformIcon from '../../components/PlatformIcon'
 import { fonts } from '../../theme/typography'
@@ -23,6 +28,8 @@ import Logo from '../../components/common/Logo'
 import { PRIVACY_POLICY_URL, TERMS_OF_SERVICE_URL } from '../../constants/legalUrls'
 
 const { width: SCREEN_W } = Dimensions.get('window')
+
+const SPRING_CONFIG = { damping: 20, stiffness: 200, mass: 0.8 }
 
 type PlatformId = 'glovo' | 'uber' | 'bolt' | 'wolt'
 type Role = 'courier' | 'taxi'
@@ -58,7 +65,7 @@ export default function OnboardingScreen() {
 
   const [step, setStep] = useState(0)
   const [selectedRole, setSelectedRole] = useState<Role>(roleFromStore ?? 'courier')
-  const translateX = useRef(new RNAnimated.Value(0)).current
+  const progress = useSharedValue(0)
 
   const totalSteps = 4
   const isTaxi = selectedRole === 'taxi'
@@ -66,17 +73,26 @@ export default function OnboardingScreen() {
 
   const animateTo = useCallback(
     (next: number, dir: 1 | -1) => {
-      translateX.setValue(dir * SCREEN_W)
+      progress.value = dir
       setStep(next)
-      RNAnimated.timing(translateX, {
-        toValue: 0,
-        duration: 300,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
-      }).start()
+      progress.value = withSpring(0, SPRING_CONFIG)
     },
-    [translateX],
+    [progress],
   )
+
+  const foregroundStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: interpolate(progress.value, [-1, 0, 1], [-SCREEN_W * 0.2, 0, SCREEN_W * 0.2]) }],
+    opacity: interpolate(progress.value, [-1, -0.5, 0, 0.5, 1], [0.5, 0.8, 1, 0.8, 0.5]),
+  }))
+
+  const backgroundStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: interpolate(progress.value, [-1, 0, 1], [SCREEN_W * 0.3, 0, -SCREEN_W * 0.3]) }],
+    opacity: interpolate(progress.value, [-1, -0.3, 0, 0.3, 1], [0.6, 0.9, 1, 0.9, 0.6]),
+  }))
+
+  const containerStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: interpolate(progress.value, [-1, 0, 1], [-SCREEN_W, 0, SCREEN_W]) }],
+  }))
 
   const handleFinish = useCallback(() => {
     setRole(selectedRole)
@@ -121,45 +137,17 @@ export default function OnboardingScreen() {
     [isTaxi, t],
   )
 
-  const backgroundParallaxStyle = useMemo(
-    () => ({
-      transform: [
-        {
-          translateX: translateX.interpolate({
-            inputRange: [-SCREEN_W, 0, SCREEN_W],
-            outputRange: [SCREEN_W * 0.3, 0, -SCREEN_W * 0.3],
-          }),
-        },
-      ],
-    }),
-    [translateX],
-  )
-
-  const foregroundParallaxStyle = useMemo(
-    () => ({
-      transform: [
-        {
-          translateX: translateX.interpolate({
-            inputRange: [-SCREEN_W, 0, SCREEN_W],
-            outputRange: [-SCREEN_W * 0.2, 0, SCREEN_W * 0.2],
-          }),
-        },
-      ],
-    }),
-    [translateX],
-  )
-
   const renderStepRole = () => (
     <View style={[st.step, { backgroundColor: c.bg }]}>
       <ProgressDots total={totalSteps} current={0} activeColor={c.primary} mutedColor={c.border} />
-      <RNAnimated.View style={[st.heroWrap, backgroundParallaxStyle]}>
+      <Reanimated.View style={[st.heroWrap, backgroundStyle]}>
         <Logo theme="auto" variant="full" size={140} maxWidth={220} />
-      </RNAnimated.View>
-      <RNAnimated.View style={backgroundParallaxStyle}>
+      </Reanimated.View>
+      <Reanimated.View style={backgroundStyle}>
         <Text style={[st.title, { color: c.text }]}>{t('onboarding_role_title')}</Text>
         <Text style={[st.sub, { color: c.textSecondary }]}>{t('onboarding_role_subtitle')}</Text>
-      </RNAnimated.View>
-      <RNAnimated.View style={foregroundParallaxStyle}>
+      </Reanimated.View>
+      <Reanimated.View style={foregroundStyle}>
       <View style={st.roleCardsRow}>
         <AnimatedButton
           activeOpacity={0.8}
@@ -190,7 +178,7 @@ export default function OnboardingScreen() {
           <Text style={[st.roleCardText, { color: c.text }]}>{t('courier')}</Text>
         </AnimatedButton>
       </View>
-      </RNAnimated.View>
+      </Reanimated.View>
       <PrimaryBtn label={t('next')} onPress={goNext} bg={c.primary} textColor={c.textInverse} />
     </View>
   )
@@ -201,14 +189,14 @@ export default function OnboardingScreen() {
       <AnimatedButton style={st.backBtn} onPress={goBack} activeOpacity={0.7}>
         <Feather name="arrow-left" size={22} color={c.text} />
       </AnimatedButton>
-      <RNAnimated.View style={backgroundParallaxStyle}>
+      <Reanimated.View style={backgroundStyle}>
         <Text style={[st.title, { color: c.text }]}>{t('onboarding_widget_title')}</Text>
         <Text style={[st.sub, { color: c.textSecondary }]}>{t('onboarding_widget_desc')}</Text>
-      </RNAnimated.View>
-      <RNAnimated.View style={[st.infoCard, { backgroundColor: c.surface, borderColor: c.border }, foregroundParallaxStyle]}>
+      </Reanimated.View>
+      <Reanimated.View style={[st.infoCard, { backgroundColor: c.surface, borderColor: c.border }, foregroundStyle]}>
         <MaterialCommunityIcons name="widgets-outline" size={34} color={c.primary} />
         <Text style={[st.infoCardBody, { color: c.textSecondary }]}>{t('onboarding_widget_body')}</Text>
-      </RNAnimated.View>
+      </Reanimated.View>
       <PrimaryBtn label={t('next')} onPress={goNext} bg={c.primary} textColor={c.textInverse} />
     </View>
   )
@@ -219,18 +207,18 @@ export default function OnboardingScreen() {
       <AnimatedButton style={st.backBtn} onPress={goBack} activeOpacity={0.7}>
         <Feather name="arrow-left" size={22} color={c.text} />
       </AnimatedButton>
-      <RNAnimated.View style={backgroundParallaxStyle}>
+      <Reanimated.View style={backgroundStyle}>
         <Text style={[st.title, { color: c.text }]}>{t('onboarding_value_title')}</Text>
         <Text style={[st.sub, { color: c.textSecondary }]}>{t('onboarding_value_subtitle')}</Text>
-      </RNAnimated.View>
-      <RNAnimated.View style={[st.valueList, foregroundParallaxStyle]}>
+      </Reanimated.View>
+      <Reanimated.View style={[st.valueList, foregroundStyle]}>
         {roleSpecificValue.map((line) => (
           <View key={line} style={[st.valueItem, { backgroundColor: c.surface, borderColor: c.border }]}>
             <Feather name="check-circle" size={18} color={c.primary} />
             <Text style={[st.valueText, { color: c.text }]}>{line}</Text>
           </View>
         ))}
-      </RNAnimated.View>
+      </Reanimated.View>
       <PrimaryBtn label={t('next')} onPress={goNext} bg={c.primary} textColor={c.textInverse} />
     </View>
   )
@@ -300,9 +288,9 @@ export default function OnboardingScreen() {
 
   return (
     <SafeAreaView style={[st.safe, { backgroundColor: c.bg }]}>
-      <RNAnimated.View style={[st.animated, { transform: [{ translateX }] }]}>
+      <Reanimated.View style={[st.animated, containerStyle]}>
         {steps[step]?.()}
-      </RNAnimated.View>
+      </Reanimated.View>
     </SafeAreaView>
   )
 }

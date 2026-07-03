@@ -1,4 +1,5 @@
 import type { Order } from '../store/ordersStore'
+import { normalizeProfitTier } from './profitTier'
 
 function asNum(v: unknown, fallback: number): number {
   const n = typeof v === 'number' ? v : parseFloat(String(v ?? ''))
@@ -13,11 +14,9 @@ export function mapRemoteOrderToOrder(raw: unknown): Order | null {
   const id = String(r.id ?? r.order_id ?? r.orderId ?? '').trim()
   if (!id) return null
 
-  const profitLabelRaw = String(r.profit_label ?? r.profitLabel ?? 'good').toLowerCase()
-  const profitLabel: Order['profitLabel'] =
-    profitLabelRaw === 'great' || profitLabelRaw === 'good' || profitLabelRaw === 'low'
-      ? profitLabelRaw
-      : 'good'
+  const profitTier = normalizeProfitTier(
+    String(r.profit_tier ?? r.profitTier ?? r.profit_label ?? r.profitLabel ?? 'STANDARD'),
+  )
 
   return {
     id,
@@ -33,7 +32,7 @@ export function mapRemoteOrderToOrder(raw: unknown): Order | null {
     dropoffLat: asNum(r.dropoff_lat ?? r.dropoffLat, 0),
     dropoffLng: asNum(r.dropoff_lng ?? r.dropoffLng, 0),
     profitScore: Math.round(asNum(r.profit_score ?? r.profitScore, 0)),
-    profitLabel,
+    profitTier,
     status: 'pickup',
   }
 }

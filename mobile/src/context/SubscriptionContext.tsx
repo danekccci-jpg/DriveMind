@@ -120,13 +120,19 @@ function parseFirestoreUser(data: Record<string, unknown>): FirestoreUser {
     const d = timestampToDate(v)
     return d ? d.toISOString() : typeof v === 'string' ? v : null
   }
+  const subStatus = data.subscriptionStatus
+  const validStatus =
+    subStatus === 'welcome_trips' || subStatus === 'trial_active' ||
+    subStatus === 'expired' || subStatus === 'subscribed'
   return {
     completedOrdersCount:
       typeof data.completedOrdersCount === 'number' ? data.completedOrdersCount : 0,
     isSubscribed: data.isSubscribed === true,
     trialEndsAt: parseTs(data.trialEndsAt),
     subscriptionEndsAt: parseTs(data.subscriptionEndsAt),
-    publicId: typeof data.publicId === 'string' ? data.publicId : null,
+    publicId: typeof data.publicId === 'string' ? data.publicId : '',
+    email: typeof data.email === 'string' ? data.email : 'anonymous@drivemind.app',
+    subscriptionStatus: validStatus ? subStatus : 'welcome_trips',
     deviceFingerprint:
       typeof data.deviceFingerprint === 'string' ? data.deviceFingerprint : null,
   }
@@ -203,7 +209,7 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
     }
     setTrialUser(user)
 
-    const { mode, blocked, searchBlocked } = evaluatePaywallState(user)
+    const { mode, blocked, searchBlocked, remainingTrips } = evaluatePaywallState(user)
     useAuthStore.getState().setSubscription({
       firebaseUid: uid,
       completedOrdersCount: user.completedOrdersCount,
@@ -214,6 +220,7 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
       paywallMode: mode,
       isPaywallBlocked: blocked,
       isSearchBlocked: searchBlocked,
+      remainingTrips,
     })
     syncOrderParsingGate(user)
   }, [])

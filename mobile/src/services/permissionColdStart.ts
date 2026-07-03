@@ -28,12 +28,19 @@ export async function runPermissionColdStartOnce(): Promise<void> {
 
   const bridgeActive = await isNativeIngestBridgeActive()
   if (bridgeActive) {
+    store.setLastKnownAllGranted(true)
     suppressAllDisclosureUI()
     return
   }
 
   const snapshot = await checkCoreIngestPermissions()
   if (snapshot.allGranted) {
+    store.setLastKnownAllGranted(true)
+    store.setAutoVisible(false)
+    return
+  }
+
+  if (store.lastKnownAllGranted) {
     store.setAutoVisible(false)
     return
   }

@@ -8,14 +8,14 @@ import ProfitBadge from './ProfitBadge'
 import { fonts } from '../theme/typography'
 import type { AppColors } from '../theme/theme'
 import type { Order } from '../store/ordersStore'
-import type { ProfitLabel } from '../engine/profitEngine'
+import type { ProfitTier } from '@drivemind/shared'
 
 export type OrderCardPlatformId = 'glovo' | 'uber' | 'bolt' | 'wolt'
 
 export type OrderCardProps = {
   order: Order
   platformLabel: string
-  profitLabel: ProfitLabel
+  profitTier: ProfitTier
   accent: string
   c: AppColors
   onAccept: () => void
@@ -42,7 +42,7 @@ function streetLine(full: string): string {
 function OrderCardInner({
   order,
   platformLabel,
-  profitLabel,
+  profitTier,
   accent,
   c,
   onAccept,
@@ -111,7 +111,7 @@ function OrderCardInner({
         <Text style={[styles.platformName, { color: c.text }]} numberOfLines={1} ellipsizeMode="tail">
           {platformLabel}
         </Text>
-        <ProfitBadge label={profitLabel} compact />
+        <ProfitBadge tier={profitTier} compact />
         <Text style={[styles.pln, { color: c.text }]} numberOfLines={1}>
           {order.earnings.toFixed(0)} PLN
         </Text>

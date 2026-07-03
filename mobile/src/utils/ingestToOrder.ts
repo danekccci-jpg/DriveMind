@@ -41,7 +41,7 @@ export function ingestOfferToOrder(offer: IngestedOffer): Order {
     dropoffLat: KRAKOW_FALLBACK_LAT,
     dropoffLng: KRAKOW_FALLBACK_LNG,
     profitScore: 0,
-    profitLabel: 'NEUTRAL',
+    profitTier: 'STANDARD',
     status: 'pickup',
   }
 }
@@ -92,7 +92,7 @@ export function passiveAcceptToOrder(input: PassiveAcceptInput): Order {
     dropoffLat: KRAKOW_FALLBACK_LAT,
     dropoffLng: KRAKOW_FALLBACK_LNG,
     profitScore: 0,
-    profitLabel: 'NEUTRAL',
+    profitTier: 'STANDARD',
     status: 'pickup',
   }
 }

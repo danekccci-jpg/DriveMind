@@ -18,7 +18,6 @@ import { useOrdersStore, CompletedOrder } from '../../store/ordersStore'
 import { useRoleStore } from '../../store/roleStore'
 import { fonts } from '../../theme/typography'
 import { useColors, type AppColors } from '../../theme/theme'
-import { ProfitLabel } from '../../engine/profitEngine'
 import { requestShiftAccessibilityDisclosure } from '../../services/accessibilityDisclosure'
 import { syncOrderParsingGate } from '../../services/subscriptionGate'
 import { useDriverSessionStore } from '../../store/driverSessionStore'
@@ -231,7 +230,7 @@ function ShiftOrderRow({ order, c }: { order: CompletedOrder; c: AppColors }) {
       <Text style={[s.shiftOrderAddr, { color: c.textSecondary }]} numberOfLines={1}>{order.dropoffAddress}</Text>
       <View style={s.shiftOrderRight}>
         <Text style={[s.shiftOrderEarnings, { color: c.text }]}>{order.earnings.toFixed(0)} PLN</Text>
-        <ProfitBadge label={order.profitLabel as ProfitLabel} />
+        <ProfitBadge tier={order.profitTier} />
       </View>
     </View>
   )

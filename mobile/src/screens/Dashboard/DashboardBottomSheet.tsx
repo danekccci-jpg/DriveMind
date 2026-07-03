@@ -1,5 +1,5 @@
-import React, { memo } from 'react'
-import { View, Text, StyleSheet, ActivityIndicator, TouchableOpacity } from 'react-native'
+import React, { memo, useEffect, useRef } from 'react'
+import { View, Text, StyleSheet, Animated, Easing, TouchableOpacity } from 'react-native'
 import { Feather } from '@expo/vector-icons'
 import { useTranslation } from 'react-i18next'
 
@@ -126,12 +126,7 @@ function DashboardBottomSheetInner({
   }
 
   if (sheetMode === 'searching') {
-    return (
-      <View style={[sheetStyles.searchBar, { borderColor: c.separator }]}>
-        <ActivityIndicator size="small" color={c.primary} />
-        <Text style={[sheetStyles.searchText, { color: c.textSecondary }]}>{t('searchStatusActive')}</Text>
-      </View>
-    )
+    return <SearchingPulse c={c} />
   }
 
   return (
@@ -149,6 +144,31 @@ function DashboardBottomSheetInner({
 }
 
 export const DashboardBottomSheet = memo(DashboardBottomSheetInner)
+
+function SearchingPulse({ c }: { c: AppColors }) {
+  const { t } = useTranslation()
+  const pulse = useRef(new Animated.Value(0.4)).current
+
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, { toValue: 1, duration: 900, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 0.4, duration: 900, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+      ]),
+    )
+    loop.start()
+    return () => loop.stop()
+  }, [pulse])
+
+  return (
+    <View style={[sheetStyles.searchBar, { borderColor: c.separator }]}>
+      <Animated.View style={[sheetStyles.pulseDot, { backgroundColor: c.primary, opacity: pulse }]} />
+      <Animated.Text style={[sheetStyles.searchText, { color: c.textSecondary, opacity: pulse }]}>
+        {t('searchStatusActive')}
+      </Animated.Text>
+    </View>
+  )
+}
 
 const sheetStyles = StyleSheet.create({
   orderRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 10 },
@@ -186,6 +206,7 @@ const sheetStyles = StyleSheet.create({
   },
   searchBarBlocked: { justifyContent: 'flex-start' },
   searchText: { fontSize: 14, fontFamily: fonts.medium },
+  pulseDot: { width: 8, height: 8, borderRadius: 4 },
   offAirRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
   offAirText: { fontSize: 14, fontFamily: fonts.regular, flex: 1 },
   startShiftBtn: {

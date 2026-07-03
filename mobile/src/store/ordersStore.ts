@@ -1,10 +1,13 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import AsyncStorage from '@react-native-async-storage/async-storage'
+import type { ProfitTier } from '@drivemind/shared'
+import { withNormalizedProfitTier } from '../utils/profitTier'
 import { getDirections, type TravelMode, type RouteStep } from '../services/directionsService'
 import { navigationEngine } from '../services/navigationEngine'
 import { emitOrderAccepted, clearPendingDriverLocation } from '../services/socketService'
 import { useWalletStore } from './walletStore'
+import { useShiftBreadcrumbStore } from './shiftBreadcrumbStore'
 import { playWalletCreditSound } from '../services/walletSound'
 import { devLog } from '../utils/devLog'
 import { notifyOrderCompletedForUser } from '../services/userFirestoreService'
@@ -25,7 +28,7 @@ export interface Order {
   dropoffLat: number
   dropoffLng: number
   profitScore: number
-  profitLabel: string
+  profitTier: ProfitTier
   status: 'pickup' | 'dropoff' | 'completed'
 }
 
@@ -130,6 +133,8 @@ interface OrdersState {
    */
   remainingToGoal: number
 
+  /** Inject pre-built CompletedOrders (e.g. from the admin seeder). Deduplicates by id. */
+  seedOrderHistory: (orders: CompletedOrder[]) => void
   setPendingConfirmation: (order: Order | null) => void
   confirmOrder: (
     order: Order,
@@ -140,10 +145,11 @@ interface OrdersState {
   dismissOrder: (orderId: string) => void
   completeOrder: (orderId: string) => void
   /**
-   * Record a passively-accepted trip detected by the Accessibility scraper.
-   * Bypasses the DriveMind navigation pipeline (driver navigates inside
-   * Uber/Bolt) and pushes the order straight into history + shift stats +
-   * wallet, mirroring the side-effects of `completeOrder`.
+   * Record a passively-accepted trip (offer → active ride). Earnings settle on Done.
+   */
+  recordActiveTrip: (order: Order) => void
+  /**
+   * @deprecated Use recordActiveTrip + completeOrder. Kept for legacy call sites.
    */
   recordAcceptedTrip: (order: Order) => void
   setOrderStatus: (orderId: string, status: Order['status']) => void
@@ -192,6 +198,15 @@ export const useOrdersStore = create<OrdersState>()(
       routeDurationSeconds: null,
       navigationOrderId: null,
       lastNearestDistanceKm: null,
+
+      seedOrderHistory: (orders) => {
+        const existingIds = new Set(get().orderHistory.map((o) => o.id))
+        const fresh = orders.filter((o) => !existingIds.has(o.id))
+        if (fresh.length === 0) return
+        const merged = [...fresh, ...get().orderHistory].slice(0, 50)
+        merged.sort((a, b) => b.completedAt - a.completedAt)
+        set({ orderHistory: merged })
+      },
 
       setPendingConfirmation: (order) =>
         set({
@@ -337,6 +352,13 @@ export const useOrdersStore = create<OrdersState>()(
         })
         void playWalletCreditSound()
 
+        useShiftBreadcrumbStore.getState().addOrderFlag({
+          lat: order.dropoffLat,
+          lng: order.dropoffLng,
+          type: 'dropoff',
+          orderId: order.id,
+        })
+
         if (remaining.length === 0) {
           navigationEngine.resetLocationEmitFilter()
           clearPendingDriverLocation()
@@ -376,65 +398,47 @@ export const useOrdersStore = create<OrdersState>()(
           activeOrders: state.activeOrders.map((o) => (o.id === orderId ? { ...o, status } : o)),
         })),
 
-      recordAcceptedTrip: (order) => {
-        const { orderHistory, shiftStats, dailyGoal } = get()
+      recordActiveTrip: (order) => {
+        const { activeOrders, orderHistory, shiftStats } = get()
         const fingerprint = acceptedTripFingerprint(order)
 
-        // Idempotency: ignore re-emits for the same order id or content fingerprint.
         if (
+          activeOrders.some(
+            (o) => o.id === order.id || acceptedTripFingerprint(o) === fingerprint,
+          ) ||
           orderHistory.some(
             (o) => o.id === order.id || acceptedTripFingerprint(o) === fingerprint,
           )
         ) {
-          devLog('[DriveMind Nav]: recordAcceptedTrip — duplicate ignored', {
+          devLog('[DriveMind Nav]: recordActiveTrip — duplicate ignored', {
             id: order.id,
             fingerprint,
           })
           return
         }
 
-        const completed: CompletedOrder = {
+        const active: Order = {
           ...order,
-          status: 'completed',
-          completedAt: Date.now(),
+          status: 'pickup',
         }
-        const trimmedHistory = [completed, ...orderHistory].slice(0, 50)
-
-        const nextStats: ShiftStats = {
-          ...shiftStats,
-          // Auto-start the shift on the first passive accept so the timer +
-          // earnings counters reflect the real working session even when the
-          // driver never opened DriveMind during the shift.
-          startTime: shiftStats.startTime ?? Date.now(),
-          totalEarnings: shiftStats.totalEarnings + order.earnings,
-          totalKm: shiftStats.totalKm + order.distanceKm,
-          totalMinutes: shiftStats.totalMinutes + order.durationMin,
-          completedOrders: shiftStats.completedOrders + 1,
-          lastOrderDropoffLat: order.dropoffLat,
-          lastOrderDropoffLng: order.dropoffLng,
-        }
-        const remainingToGoal = Math.max(0, dailyGoal - nextStats.totalEarnings)
-
-        useWalletStore.getState().recordOrderPayout(order.id, order.earnings, {
-          pickupAddress: order.pickupAddress,
-          dropoffAddress: order.dropoffAddress,
-          distanceKm: order.distanceKm,
-        })
-        void playWalletCreditSound()
-        void notifyOrderCompletedForUser()
 
         set({
-          orderHistory: trimmedHistory,
-          shiftStats: nextStats,
-          remainingToGoal,
+          activeOrders: [...activeOrders, active],
+          shiftStats: {
+            ...shiftStats,
+            startTime: shiftStats.startTime ?? Date.now(),
+          },
         })
 
-        devLog('[DriveMind Nav]: recordAcceptedTrip stored', {
-          id: order.id,
-          platform: order.platform,
-          earnings: order.earnings,
-          distanceKm: order.distanceKm,
+        devLog('[DriveMind Nav]: recordActiveTrip stored', {
+          id: active.id,
+          platform: active.platform,
+          earnings: active.earnings,
         })
+      },
+
+      recordAcceptedTrip: (order) => {
+        get().recordActiveTrip(order)
       },
 
       setDailyGoal: (dailyGoal) =>
@@ -529,21 +533,31 @@ export const useOrdersStore = create<OrdersState>()(
         })
       },
 
-      startShiftManually: () =>
+      startShiftManually: () => {
+        useShiftBreadcrumbStore.getState().startRecording()
         set((state) => ({
           shiftStats: {
             ...state.shiftStats,
             startTime: state.shiftStats.startTime ?? Date.now(),
           },
-        })),
+        }))
+      },
 
-      endShiftManually: () =>
+      endShiftManually: () => {
+        const { shiftStats } = get()
+        useShiftBreadcrumbStore.getState().archiveShift({
+          startTime: shiftStats.startTime ?? Date.now(),
+          totalEarnings: shiftStats.totalEarnings,
+          totalKm: shiftStats.totalKm,
+          completedOrders: shiftStats.completedOrders,
+        })
         set((state) => ({
           shiftStats: {
             ...state.shiftStats,
             startTime: null,
           },
-        })),
+        }))
+      },
 
       arriveAtPickup: (orderId) => {
         const { activeOrders, deliveryPhase } = get()
@@ -609,6 +623,11 @@ export const useOrdersStore = create<OrdersState>()(
       }),
       onRehydrateStorage: () => (state) => {
         if (!state) return
+        state.activeOrders = (state.activeOrders ?? []).map(withNormalizedProfitTier)
+        state.orderHistory = (state.orderHistory ?? []).map(withNormalizedProfitTier)
+        if (state.pendingConfirmation) {
+          state.pendingConfirmation = withNormalizedProfitTier(state.pendingConfirmation)
+        }
         const id = state.navigationOrderId
         const orderOk = !!(id && state.activeOrders?.some((o) => o.id === id))
         const phase = state.deliveryPhase

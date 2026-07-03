@@ -35,6 +35,28 @@ export interface IngestedOffer {
 
 const TTL_MS = 180_000
 
+/** In-memory cache of recently-seen content hashes (persists across TTL expiry cycles). */
+const recentlySeenHashes = new Map<string, number>()
+const SEEN_HASH_TTL_MS = 600_000
+
+function pruneSeenHashes(): void {
+  const now = Date.now()
+  for (const [h, t] of recentlySeenHashes) {
+    if (now - t > SEEN_HASH_TTL_MS) recentlySeenHashes.delete(h)
+  }
+}
+
+function markHashSeen(hash: string): void {
+  recentlySeenHashes.set(hash, Date.now())
+  if (recentlySeenHashes.size > 100) pruneSeenHashes()
+}
+
+function wasRecentlySeen(hash: string): boolean {
+  const t = recentlySeenHashes.get(hash)
+  if (!t) return false
+  return Date.now() - t < SEEN_HASH_TTL_MS
+}
+
 function id(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
 }
@@ -176,6 +198,8 @@ export const useDriverIngestStore = create<DriverIngestState>()(
         })
         const state = get()
         if (isDuplicateHash(state, contentHash)) return
+        if (wasRecentlySeen(contentHash)) return
+        markHashSeen(contentHash)
 
         const launchPackage =
           payload.sourcePackage?.trim() ||
@@ -225,6 +249,8 @@ export const useDriverIngestStore = create<DriverIngestState>()(
         })
         const state = get()
         if (isDuplicateHash(state, contentHash)) return
+        if (wasRecentlySeen(contentHash)) return
+        markHashSeen(contentHash)
 
         const offer = normalizeIngestedOffer({
           id: id(),

@@ -4,6 +4,7 @@ import { isGuestEmail, useAuthStore } from '../store/authStore'
 import {
   isSearchBlocked,
   GUEST_ORDER_THRESHOLD,
+  WELCOME_TRIPS_LIMIT,
   type FirestoreUser,
 } from './userFirestoreService'
 
@@ -92,3 +93,28 @@ export function syncOrderParsingGate(
 }
 
 export const EVENT_OPEN_PAYWALL = 'DriveMindOpenPaywall'
+
+/**
+ * Pushes subscription/trial status to the native overlay label.
+ * Call after every order completion or subscription state change.
+ */
+export function syncOverlaySubscriptionHint(): void {
+  const native = getNative()
+  if (!native) return
+
+  const state = useAuthStore.getState()
+
+  if (state.isSubscribed) {
+    native.setOverlayRadarLabel?.(i18n.t('overlay_status_pro'))
+    return
+  }
+
+  const remaining = state.remainingTrips
+  if (remaining > 0 && remaining <= 5) {
+    native.setOverlayRadarLabel?.(
+      i18n.t('overlay_trips_remaining', { count: remaining }),
+    )
+  } else if (remaining <= 0) {
+    native.setOverlayRadarLabel?.(i18n.t('searchStatusBlocked'))
+  }
+}

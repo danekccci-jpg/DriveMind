@@ -22,7 +22,7 @@ export type UnifiedOrder = {
 };
 
 /** Tier label displayed to the driver (Kraków 2026 market criteria). */
-export type ProfitTier = "LEGENDARY" | "VERY_GOOD" | "WORTH_IT" | "RISKY" | "TRASH";
+export type ProfitTier = "EXCELLENT" | "GOOD_DEAL" | "STANDARD" | "LOW_YIELD";
 
 export type ProfitabilityInput = {
   role: Role;
@@ -51,9 +51,9 @@ export type ProfitabilityOutput = {
   score0to100: number;
   recommendation: Recommendation;
   reason: string;
-  /** 5-tier classification based on zł/km thresholds. */
+  /** 4-tier classification based on zł/km thresholds. */
   profitTier: ProfitTier;
-  /** Human label for the tier (includes emoji), e.g. \"💎 LEGENDARY\". */
+  /** Human label for the tier (includes emoji), e.g. \"🟢 Excellent\". */
   tierLabel: string;
   /** UI color hex for the tier (e.g. #A855F7). */
   tierColor: string;

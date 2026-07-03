@@ -117,6 +117,24 @@ export function parsePlnAmountFromText(text: string): number {
 }
 
 /**
+ * Reject fares that look like distance tokens (e.g. 3.2 km mis-read as 3.20 zł)
+ * or implausibly low ride-hail payouts when distance context is present.
+ */
+export function isPlausibleRideFare(
+  price: number,
+  blob: string,
+  distKm?: number | null,
+): boolean {
+  if (!Number.isFinite(price) || price <= 0) return false
+  const dist = distKm ?? parseDistanceKmFromText(blob)
+  if (dist != null && dist > 0) {
+    if (price < 8 && Math.abs(price - dist) < 0.6) return false
+  }
+  if (price < 5 && /\d+(?:[.,]\d+)?\s*km\b/i.test(blob)) return false
+  return true
+}
+
+/**
  * Distance in kilometres: Latin `km` or Cyrillic `км`.
  * Keeps standalone metres (Latin `m` only) to avoid `min`.
  */

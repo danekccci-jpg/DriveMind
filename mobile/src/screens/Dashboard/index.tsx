@@ -14,6 +14,7 @@ import {
   Linking,
   NativeModules,
   TouchableOpacity,
+  StatusBar,
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useTranslation } from 'react-i18next'
@@ -254,7 +255,7 @@ export default function DashboardScreen() {
       dropoffLat: 50.0614,
       dropoffLng: 19.9366,
       profitScore: 0,
-      profitLabel: 'NEUTRAL',
+      profitTier: 'STANDARD',
       status: 'pickup',
     } as Order
   }, [activeOrder, activeRideSnapshot])
@@ -886,6 +887,11 @@ export default function DashboardScreen() {
 
   return (
     <View style={[s.root, { backgroundColor: c.tabBar }]}>
+      <StatusBar
+        translucent
+        backgroundColor="transparent"
+        barStyle={isDark ? 'light-content' : 'dark-content'}
+      />
       <View style={s.mapFill}>
       {!NUCLEAR_DISABLE_NATIVE_MAPS && isMapReady && (
       <DashboardMap
@@ -921,6 +927,16 @@ export default function DashboardScreen() {
             topInset={insets.top + 28}
           />
         </View>
+      )}
+
+      {/* Status bar backdrop */}
+      {!isNavigating && (
+        <View
+          style={[
+            s.statusBarBackdrop,
+            { height: insets.top, backgroundColor: isDark ? 'rgba(0,0,0,0.6)' : 'rgba(255,255,255,0.8)' },
+          ]}
+        />
       )}
 
       {/* Header */}
@@ -1067,6 +1083,7 @@ export default function DashboardScreen() {
 const s = StyleSheet.create({
   root: { flex: 1, alignSelf: 'stretch', width: '100%' },
   mapFill: { flex: 1, width: '100%', alignSelf: 'stretch' },
+  statusBarBackdrop: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 50 },
   header: { position: 'absolute', left: 20, right: 20, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   headerLogoBtn: { paddingVertical: 4, paddingRight: 8, flexShrink: 0, alignItems: 'flex-start' },
   headerLogoImage: { height: 32, width: undefined, maxWidth: 168 },

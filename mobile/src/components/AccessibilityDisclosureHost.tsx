@@ -27,6 +27,7 @@ export function AccessibilityDisclosureHost() {
   const autoVisible = usePermissionOnboardingStore((s) => s.autoVisible)
   const permissionsShownCount = usePermissionOnboardingStore((s) => s.permissionsShownCount)
   const sessionDismissed = usePermissionOnboardingStore((s) => s.sessionDismissed)
+  const lastKnownAllGranted = usePermissionOnboardingStore((s) => s.lastKnownAllGranted)
   const dismissForSession = usePermissionOnboardingStore((s) => s.dismissForSession)
 
   const [bridgeChecked, setBridgeChecked] = useState(Platform.OS !== 'android')
@@ -73,7 +74,7 @@ export function AccessibilityDisclosureHost() {
     if (explicitVisible) cancelDisclosure()
   }, [cancelDisclosure, dismissForSession, explicitVisible])
 
-  if (!bridgeChecked || bridgeActive) return null
+  if (!bridgeChecked || bridgeActive || lastKnownAllGranted) return null
 
   return (
     <ProminentDisclosureModal

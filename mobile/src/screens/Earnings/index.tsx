@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Platform } from '
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useTranslation } from 'react-i18next'
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons'
+import { Calendar, type DateData } from 'react-native-calendars'
 
 import {
   useWalletStore,
@@ -11,9 +12,12 @@ import {
   type WalletTransaction,
 } from '../../store/walletStore'
 import { useOrdersStore } from '../../store/ordersStore'
+import { useShiftBreadcrumbStore } from '../../store/shiftBreadcrumbStore'
+import { computeDateRangeStats } from '../../services/analyticsService'
 import { formatPln } from '../../utils/formatCurrency'
 import { fonts } from '../../theme/typography'
 import { RouteSummary } from '../../components/RouteSummary'
+import { ShiftRouteMap } from '../../components/ShiftRouteMap'
 import { useTheme } from '../../theme/theme'
 
 const LIGHT_CARD = '#FFFFFF'
@@ -28,6 +32,9 @@ export default function EarningsScreen() {
   const totalBalance = useWalletStore((s) => s.totalBalance)
   const transactions = useWalletStore((s) => s.transactions)
   const shiftStats = useOrdersStore((s) => s.shiftStats)
+  const orderHistory = useOrdersStore((s) => s.orderHistory)
+  const lastArchivedShift = useShiftBreadcrumbStore((s) => s.lastArchivedShift)
+  const isShiftActive = shiftStats.startTime !== null
 
   const todayEarnings = useMemo(() => selectTodayEarnings(transactions), [transactions])
   const weeklyEarnings = useMemo(() => selectWeeklyEarnings(transactions), [transactions])
@@ -36,6 +43,57 @@ export default function EarningsScreen() {
   const toggleTx = useCallback((id: string) => {
     setExpandedTxId((prev) => (prev === id ? null : id))
   }, [])
+
+  const [rangeStart, setRangeStart] = useState<string | null>(null)
+  const [rangeEnd, setRangeEnd] = useState<string | null>(null)
+
+  const handleDayPress = useCallback((day: DateData) => {
+    if (!rangeStart || rangeEnd) {
+      setRangeStart(day.dateString)
+      setRangeEnd(null)
+    } else {
+      if (day.dateString < rangeStart) {
+        setRangeEnd(rangeStart)
+        setRangeStart(day.dateString)
+      } else {
+        setRangeEnd(day.dateString)
+      }
+    }
+  }, [rangeStart, rangeEnd])
+
+  const markedDates = useMemo(() => {
+    if (!rangeStart) return {}
+    const marks: Record<string, { startingDay?: boolean; endingDay?: boolean; color: string; textColor: string }> = {}
+    if (!rangeEnd) {
+      marks[rangeStart] = { startingDay: true, endingDay: true, color: c.primary, textColor: '#fff' }
+      return marks
+    }
+    const start = new Date(rangeStart)
+    const end = new Date(rangeEnd)
+    const cursor = new Date(start)
+    while (cursor <= end) {
+      const key = cursor.toISOString().slice(0, 10)
+      const isStart = key === rangeStart
+      const isEnd = key === rangeEnd
+      marks[key] = {
+        ...(isStart ? { startingDay: true } : {}),
+        ...(isEnd ? { endingDay: true } : {}),
+        color: isStart || isEnd ? c.primary : (isDark ? 'rgba(99,102,241,0.2)' : 'rgba(99,102,241,0.12)'),
+        textColor: isStart || isEnd ? '#fff' : c.text,
+      }
+      cursor.setDate(cursor.getDate() + 1)
+    }
+    return marks
+  }, [rangeStart, rangeEnd, c.primary, c.text, isDark])
+
+  const rangeStats = useMemo(() => {
+    if (!rangeStart) return null
+    const startMs = new Date(rangeStart).getTime()
+    const endMs = rangeEnd
+      ? new Date(rangeEnd).getTime() + 86_400_000 - 1
+      : startMs + 86_400_000 - 1
+    return computeDateRangeStats(orderHistory, startMs, endMs)
+  }, [rangeStart, rangeEnd, orderHistory])
 
   const hasTransactions = transactions.length > 0
   const cardBg = isDark ? c.surface : LIGHT_CARD
@@ -92,6 +150,53 @@ export default function EarningsScreen() {
         </View>
       </View>
 
+      {!isShiftActive && lastArchivedShift && (
+        <View style={{ marginTop: 16, marginBottom: 8 }}>
+          <Text style={[s.sectionTitle, { color: c.textSecondary }]}>
+            {t('last_shift_summary')}
+          </Text>
+          <View style={s.shiftRow}>
+            <View style={[s.shiftCard, cardShadow, { backgroundColor: cardBg }]}>
+              <Text style={[s.shiftLabel, { color: c.textSecondary }]}>{t('shift_summary_earnings')}</Text>
+              <Text style={[s.shiftValue, { color: c.text }]}>{formatPln(lastArchivedShift.totalEarnings)}</Text>
+            </View>
+            <View style={[s.shiftCard, cardShadow, { backgroundColor: cardBg }]}>
+              <Text style={[s.shiftLabel, { color: c.textSecondary }]}>{t('shift_summary_orders')}</Text>
+              <Text style={[s.shiftValue, { color: c.text }]}>{String(lastArchivedShift.completedOrders)}</Text>
+            </View>
+          </View>
+          <View style={[s.shiftRow, { marginTop: 8 }]}>
+            <View style={[s.shiftCard, cardShadow, { backgroundColor: cardBg }]}>
+              <Text style={[s.shiftLabel, { color: c.textSecondary }]}>{t('shift_summary_km')}</Text>
+              <Text style={[s.shiftValue, { color: c.text }]}>{lastArchivedShift.totalKm.toFixed(1)}</Text>
+            </View>
+            <View style={[s.shiftCard, cardShadow, { backgroundColor: cardBg }]}>
+              <Text style={[s.shiftLabel, { color: c.textSecondary }]}>{t('shift_summary_hours')}</Text>
+              <Text style={[s.shiftValue, { color: c.text }]}>{lastArchivedShift.hoursActive.toFixed(1)}</Text>
+            </View>
+          </View>
+          <View style={[s.shiftRow, { marginTop: 8 }]}>
+            <View style={[s.shiftCard, cardShadow, { backgroundColor: cardBg }]}>
+              <Text style={[s.shiftLabel, { color: c.textSecondary }]}>{t('shift_summary_pln_km')}</Text>
+              <Text style={[s.shiftValue, { color: c.text }]}>
+                {lastArchivedShift.totalKm > 0
+                  ? (lastArchivedShift.totalEarnings / lastArchivedShift.totalKm).toFixed(2)
+                  : '—'}
+              </Text>
+            </View>
+            <View style={[s.shiftCard, cardShadow, { backgroundColor: cardBg }]}>
+              <Text style={[s.shiftLabel, { color: c.textSecondary }]}>{t('shift_summary_pln_h')}</Text>
+              <Text style={[s.shiftValue, { color: c.text }]}>
+                {lastArchivedShift.hoursActive > 0.02
+                  ? formatPln(lastArchivedShift.totalEarnings / lastArchivedShift.hoursActive)
+                  : '—'}
+              </Text>
+            </View>
+          </View>
+          <ShiftRouteMap shift={lastArchivedShift} />
+        </View>
+      )}
+
       <View style={[s.balanceCard, cardShadow, { backgroundColor: cardBg }]}>
         <Text style={[s.balanceLabel, { color: c.textSecondary }]}>{t('wallet_balance_label')}</Text>
         <Text style={[s.balanceAmount, { color: c.text }]} numberOfLines={1} adjustsFontSizeToFit>
@@ -109,6 +214,60 @@ export default function EarningsScreen() {
           <Text style={[s.statValue, { color: c.text }]}>{formatPln(weeklyEarnings)}</Text>
         </View>
       </View>
+
+      <Text style={[s.sectionTitle, { color: c.textSecondary }]}>{t('analytics_title')}</Text>
+      <View style={[s.calendarCard, { backgroundColor: cardBg }]}>
+        <Calendar
+          markingType="period"
+          markedDates={markedDates}
+          onDayPress={handleDayPress}
+          maxDate={new Date().toISOString().slice(0, 10)}
+          theme={{
+            backgroundColor: 'transparent',
+            calendarBackground: 'transparent',
+            textSectionTitleColor: c.textMuted,
+            dayTextColor: c.text,
+            todayTextColor: c.primary,
+            monthTextColor: c.text,
+            arrowColor: c.primary,
+            textDisabledColor: c.textMuted,
+            textDayFontFamily: fonts.regular,
+            textMonthFontFamily: fonts.semiBold,
+            textDayHeaderFontFamily: fonts.medium,
+          }}
+        />
+      </View>
+
+      {rangeStats && rangeStats.orderCount > 0 && (
+        <View style={[s.analyticsCard, cardShadow, { backgroundColor: cardBg }]}>
+          <View style={s.analyticsRow}>
+            <View style={s.analyticItem}>
+              <Text style={[s.analyticValue, { color: c.text }]}>{formatPln(rangeStats.totalEarnings)}</Text>
+              <Text style={[s.analyticLabel, { color: c.textSecondary }]}>{t('analytics_total_earnings')}</Text>
+            </View>
+            <View style={s.analyticItem}>
+              <Text style={[s.analyticValue, { color: c.text }]}>{rangeStats.totalDistanceKm.toFixed(1)} km</Text>
+              <Text style={[s.analyticLabel, { color: c.textSecondary }]}>{t('analytics_total_distance')}</Text>
+            </View>
+          </View>
+          <View style={s.analyticsRow}>
+            <View style={s.analyticItem}>
+              <Text style={[s.analyticValue, { color: c.text }]}>{String(rangeStats.orderCount)}</Text>
+              <Text style={[s.analyticLabel, { color: c.textSecondary }]}>{t('analytics_order_count')}</Text>
+            </View>
+            <View style={s.analyticItem}>
+              <Text style={[s.analyticValue, { color: c.text }]}>{rangeStats.plnPerKm.toFixed(2)}</Text>
+              <Text style={[s.analyticLabel, { color: c.textSecondary }]}>PLN/km</Text>
+            </View>
+          </View>
+          <View style={s.analyticsRow}>
+            <View style={s.analyticItem}>
+              <Text style={[s.analyticValue, { color: c.text }]}>{rangeStats.plnPerHour.toFixed(2)}</Text>
+              <Text style={[s.analyticLabel, { color: c.textSecondary }]}>PLN/h</Text>
+            </View>
+          </View>
+        </View>
+      )}
 
       <Text style={[s.sectionTitle, { color: c.textSecondary }]}>{t('wallet_transactions')}</Text>
 
@@ -262,6 +421,34 @@ const s = StyleSheet.create({
     letterSpacing: 0.6,
     textTransform: 'uppercase',
     marginBottom: 14,
+  },
+  calendarCard: {
+    borderRadius: 14,
+    padding: 8,
+    marginBottom: 14,
+  },
+  analyticsCard: {
+    borderRadius: 14,
+    padding: 16,
+    marginBottom: 18,
+  },
+  analyticsRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 12,
+  },
+  analyticItem: {
+    flex: 1,
+  },
+  analyticValue: {
+    fontSize: 18,
+    fontFamily: fonts.bold,
+    fontWeight: '700',
+    marginBottom: 2,
+  },
+  analyticLabel: {
+    fontSize: 11,
+    fontFamily: fonts.regular,
   },
   shiftRow: {
     flexDirection: 'row',

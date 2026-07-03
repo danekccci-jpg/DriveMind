@@ -109,7 +109,7 @@ export interface Order {
   dropoffLat: number
   dropoffLng: number
   profitScore: number
-  profitLabel: string
+  profitTier: ProfitTier
   status: 'pickup' | 'dropoff' | 'completed'
 }
 ```
@@ -217,6 +217,8 @@ export type UnifiedOrder = {
 **Profitability I/O**
 
 ```ts
+export type ProfitTier = 'EXCELLENT' | 'GOOD_DEAL' | 'STANDARD' | 'LOW_YIELD'
+
 export type ProfitabilityInput = {
   role: Role
   pricePLN: number
@@ -296,10 +298,16 @@ So **`useDriverIngestBridge` is currently invoked with `enabled: false`**, meani
 
 ### PLN/km and tiers (Kraków 2026 constants)
 
-- **Weekday** “trash” threshold: effective PLN/km **&lt; 2.50** → tier **`TRASH`**.
-- **Weekend or night** (input flag): trash threshold **&lt; 4.00** → **`TRASH`** (stricter bar when demand is expected higher).
-- **Night/weekend flag** in callers: Saturday/Sunday **or** local hour **22:00–06:00** (see `mobile/src/engine/profitEngine.ts` and `driverIngestBridge.ts`).
-- **OKAY vs PROFIT**: if not trash, **`effectivePlnPerKm &gt;= 3.50`** → **`PROFIT`**, else **`OKAY`**.
+Four tiers based on **effective** gross PLN/km (after out-of-city penalty):
+
+| Tier code | UI label | Threshold |
+|-----------|----------|-------------|
+| **`EXCELLENT`** | 🟢 Excellent | ≥ 3.50 zł/km |
+| **`GOOD_DEAL`** | 🟡 Good Deal | 2.20 – 3.49 zł/km |
+| **`STANDARD`** | ⚪ Standard | 1.50 – 2.19 zł/km |
+| **`LOW_YIELD`** | 🔴 Low Yield | &lt; 1.50 zł/km |
+
+- **Night/weekend flag** in callers: Saturday/Sunday **or** local hour **22:00–06:00** (passed to `computeProfitability`; reserved for future tuning).
 
 ### Effective PLN/km and suburbs
 
@@ -312,20 +320,20 @@ So **`useDriverIngestBridge` is currently invoked with `enabled: false`**, meani
 - **`etaMin`** used in engine is **`max(1, input.etaMin * trafficFactor)`** — higher `trafficFactor` inflates ETA, which **lowers** `plnPerMin` and `estHourlyPLN`.
 - **Mobile `calculateProfitScore`** (`mobile/src/engine/profitEngine.ts`) sets **`trafficFactor = 1.15`** during **peak hours** `[12,14)` and `[18,21)` local time before calling `computeProfitability`. Distance passed in is **`order.distanceKm + order.deadrunKm`**.
 
-### Weekend / night (multiplier interpretation)
+### Weekend / night
 
-There is **no explicit numeric weekend multiplier** on price. Weekend/night shifts the **trash threshold** from **2.50** to **4.00** PLN/km and adjusts recommendation copy.
+There is **no explicit numeric weekend multiplier** on price in the current tier table. The `isWeekendOrNight` input is accepted for future tuning.
 
 ### Legacy 0–100 score and recommendation mapping
 
 - Role-specific targets for hourly and PLN/km scores (`courier` vs `taxi`).
 - **Time penalty** on score: courier penalizes long ETA (`etaMin` vs22 min); taxi penalizes *short* ETA (vs 10 min) — reflects different trip economics.
 - **Zone penalty score**: −15 if out-of-city penalty applied.
-- **`recommendation`**: `PROFIT` tier → **`TAKE`**; `TRASH` → **`SKIP`**; `OKAY` → **`WAIT`** if `score0to100 >= 55` else **`SKIP`**.
+- **`recommendation`**: **`EXCELLENT`** / **`GOOD_DEAL`** / **`STANDARD`** → **`TAKE`**; **`LOW_YIELD`** → **`SKIP`**.
 
 ### Mobile label layer
 
-`calculateProfitScore` maps shared output to UI labels **`GREAT` / `GOOD` / `OK` / `SKIP`** using `recommendation` and score thresholds.
+`calculateProfitScore` returns the shared engine's **`profitTier`** (`EXCELLENT` / `GOOD_DEAL` / `STANDARD` / `LOW_YIELD`) for badges and overlays. Legacy persisted `profitLabel` values are normalized via `mobile/src/utils/profitTier.ts`.
 
 ### Backend usage
 

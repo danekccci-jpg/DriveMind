@@ -5,11 +5,10 @@ import type { ProfitTier } from '@drivemind/shared'
 import { deriveSearchBlockedFromStore } from '../services/subscriptionGate'
 
 const TIER_KEYS: Record<ProfitTier, string> = {
-  LEGENDARY: 'tier_legendary',
-  VERY_GOOD: 'tier_very_good',
-  WORTH_IT: 'tier_worth_it',
-  RISKY: 'tier_risky',
-  TRASH: 'tier_trash',
+  EXCELLENT: 'tier_excellent',
+  GOOD_DEAL: 'tier_good_deal',
+  STANDARD: 'tier_standard',
+  LOW_YIELD: 'tier_low_yield',
 }
 
 function driveMindUiLanguage(): Language {

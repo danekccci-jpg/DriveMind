@@ -17,16 +17,15 @@ function round2(n: number) {
 // ---------------------------------------------------------------------------
 
 /**
- * 5-tier zł/km thresholds (gross, Brutto) for Kraków 2026.
+ * 4-tier zł/km thresholds (gross, Brutto) for Kraków 2026.
  *
  * These values are intended to match the driver-facing economics in 2026 and
  * align with what is typically shown on Uber/Bolt offer screens (gross zł).
  */
 const THRESHOLDS = {
-  LEGENDARY_MIN: 5.50, // > 5.50 zł/km
-  VERY_GOOD_MIN: 3.50, // 3.50–5.50 zł/km
-  WORTH_IT_MIN: 2.50,  // 2.50–3.50 zł/km
-  RISKY_MIN: 2.00,     // 2.00–2.50 zł/km
+  EXCELLENT_MIN: 3.50,   // >= 3.50 zł/km
+  GOOD_DEAL_MIN: 2.20,   // 2.20–3.49 zł/km
+  STANDARD_MIN: 1.50,    // 1.50–2.19 zł/km
 } as const;
 
 /**
@@ -69,25 +68,22 @@ function detectOutOfCity(dropoffLabel?: string): boolean {
 // ---------------------------------------------------------------------------
 
 function classifyTier(effectiveZlPerKm: number): ProfitTier {
-  if (effectiveZlPerKm > THRESHOLDS.LEGENDARY_MIN) return "LEGENDARY";
-  if (effectiveZlPerKm >= THRESHOLDS.VERY_GOOD_MIN) return "VERY_GOOD";
-  if (effectiveZlPerKm >= THRESHOLDS.WORTH_IT_MIN) return "WORTH_IT";
-  if (effectiveZlPerKm >= THRESHOLDS.RISKY_MIN) return "RISKY";
-  return "TRASH";
+  if (effectiveZlPerKm >= THRESHOLDS.EXCELLENT_MIN) return "EXCELLENT";
+  if (effectiveZlPerKm >= THRESHOLDS.GOOD_DEAL_MIN) return "GOOD_DEAL";
+  if (effectiveZlPerKm >= THRESHOLDS.STANDARD_MIN) return "STANDARD";
+  return "LOW_YIELD";
 }
 
 function tierMeta(tier: ProfitTier): { tierLabel: string; tierColor: string } {
   switch (tier) {
-    case "LEGENDARY":
-      return { tierLabel: "💎 LEGENDARY", tierColor: "#A855F7" };
-    case "VERY_GOOD":
-      return { tierLabel: "✅ VERY GOOD", tierColor: "#22C55E" };
-    case "WORTH_IT":
-      return { tierLabel: "👌 WORTH IT", tierColor: "#EAB308" };
-    case "RISKY":
-      return { tierLabel: "🤔 RISKY", tierColor: "#F97316" };
-    case "TRASH":
-      return { tierLabel: "🗑️ TRASH", tierColor: "#EF4444" };
+    case "EXCELLENT":
+      return { tierLabel: "🟢 Excellent", tierColor: "#22C55E" };
+    case "GOOD_DEAL":
+      return { tierLabel: "🟡 Good Deal", tierColor: "#EAB308" };
+    case "STANDARD":
+      return { tierLabel: "⚪ Standard", tierColor: "#A1A1AA" };
+    case "LOW_YIELD":
+      return { tierLabel: "🔴 Low Yield", tierColor: "#EF4444" };
   }
 }
 
@@ -107,7 +103,6 @@ function tierMeta(tier: ProfitTier): { tierLabel: string; tierColor: string } {
 export function computeProfitability(input: ProfitabilityInput): ProfitabilityOutput {
   const trafficFactor = input.trafficFactor ?? 1;
   const demandFactor = input.demandFactor ?? 1;
-  const isWeekendOrNight = input.isWeekendOrNight ?? false;
 
   const etaMin = Math.max(1, input.etaMin * trafficFactor);
   const distanceKm = Math.max(0.2, input.distanceKm);
@@ -167,26 +162,21 @@ export function computeProfitability(input: ProfitabilityInput): ProfitabilityOu
   let recommendation: ProfitabilityOutput["recommendation"] = "WAIT";
   let reason = "Borderline — keep watching for better tasks.";
 
-  if (profitTier === "LEGENDARY" || profitTier === "VERY_GOOD") {
+  if (profitTier === "EXCELLENT" || profitTier === "GOOD_DEAL") {
     recommendation = "TAKE";
     reason = isOutOfCity
       ? "Excellent gross rate, but destination is outside the city — factor in empty return."
       : "Excellent value for time and distance.";
-  } else if (profitTier === "WORTH_IT") {
+  } else if (profitTier === "STANDARD") {
     recommendation = "TAKE";
     reason = isOutOfCity
       ? "Worth it, but out-of-city dropoff may reduce real returns."
       : "Solid offer — generally worth taking.";
-  } else if (profitTier === "RISKY") {
-    recommendation = "WAIT";
-    reason = isWeekendOrNight
-      ? "Risky — weekend/night often pays better; consider waiting."
-      : "Risky — consider waiting for a better rate.";
-  } else if (profitTier === "TRASH") {
+  } else if (profitTier === "LOW_YIELD") {
     recommendation = "SKIP";
     reason = isOutOfCity
-      ? "Trash rate and destination is outside the city — likely not worth it."
-      : "Trash rate — likely hurts hourly earnings.";
+      ? "Low yield and destination is outside the city — likely not worth it."
+      : "Low yield — likely hurts hourly earnings.";
   }
 
   return {

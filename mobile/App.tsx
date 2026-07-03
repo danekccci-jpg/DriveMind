@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { Animated, Platform, ActivityIndicator, View, Dimensions, DeviceEventEmitter, AppState } from 'react-native'
+import { Animated, Platform, ActivityIndicator, View, Dimensions, DeviceEventEmitter, AppState, Linking } from 'react-native'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 import { NavigationContainer, DefaultTheme, DarkTheme, type Theme } from '@react-navigation/native'
 import { StatusBar } from 'expo-status-bar'
@@ -23,6 +23,7 @@ import { configureGoogleSignIn } from './src/services/googleAuth'
 import { isFirebaseConfigured } from './src/config/firebase'
 import { getOrCreateDeviceFingerprint } from './src/services/deviceFingerprint'
 import { syncGuestOrderCountFromRemote, GUEST_ORDER_THRESHOLD } from './src/services/userFirestoreService'
+import { isEmailSignInLink, handleEmailLinkSignIn, completeEmailLinkAuth } from './src/services/emailLinkAuth'
 import LoginScreen from './src/screens/Login'
 import OnboardingScreen from './src/screens/Onboarding'
 import LanguageSelectionScreen from './src/screens/LanguageSelection'
@@ -176,6 +177,28 @@ export default function App() {
       }
     })()
   // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // ── Firebase Email Link deep link handler ──────────────────────────────────
+  useEffect(() => {
+    const handleUrl = async (url: string) => {
+      if (!isEmailSignInLink(url)) return
+      const result = await handleEmailLinkSignIn(url)
+      if (result.kind === 'success') {
+        await completeEmailLinkAuth(result)
+      } else if (__DEV__ && result.kind === 'error') {
+        console.warn('[DriveMind] Email link sign-in failed', result.error)
+      }
+    }
+
+    Linking.getInitialURL().then((url) => {
+      if (url) void handleUrl(url)
+    })
+
+    const sub = Linking.addEventListener('url', ({ url }) => {
+      void handleUrl(url)
+    })
+    return () => sub.remove()
   }, [])
 
   if (!fontsLoaded || !splashHoldDone) {

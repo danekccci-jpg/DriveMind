@@ -3,21 +3,18 @@ import { computeProfitability } from '@drivemind/shared'
 import type { ProfitTier } from '@drivemind/shared'
 
 export type Role = 'courier' | 'taxi'
-export type ProfitLabel = 'GREAT' | 'GOOD' | 'OK' | 'SKIP'
 
 export type { ProfitTier }
 
 export interface ProfitScoreResult {
   score: number
-  label: ProfitLabel
   color: string
-  /** 5-tier classification from shared engine. */
   profitTier: ProfitTier
   /** Emoji shorthand matching the tier for quick display. */
-  tierEmoji: '💎' | '✅' | '👌' | '🤔' | '🗑️'
+  tierEmoji: '🟢' | '🟡' | '⚪' | '🔴'
   /** True when a 30 % out-of-city penalty was applied. */
   isOutOfCity: boolean
-  /** Shared tier label (emoji + name), e.g. \"💎 LEGENDARY\". */
+  /** Shared tier label (emoji + name), e.g. \"🟢 Excellent\". */
   tierLabel: string
   /** Shared tier color hex. */
   tierColor: string
@@ -56,19 +53,11 @@ function isWeekendOrNight(): boolean {
   return isWeekend || isNight
 }
 
-function tierEmoji(tier: ProfitTier): '💎' | '✅' | '👌' | '🤔' | '🗑️' {
-  if (tier === 'LEGENDARY') return '💎'
-  if (tier === 'VERY_GOOD') return '✅'
-  if (tier === 'WORTH_IT') return '👌'
-  if (tier === 'RISKY') return '🤔'
-  return '🗑️'
-}
-
-function labelFromScore(score: number): { label: ProfitLabel; color: string } {
-  if (score >= 1.2) return { label: 'GREAT', color: '#22C55E' }
-  if (score >= 0.9) return { label: 'GOOD', color: '#F59E0B' }
-  if (score >= 0.7) return { label: 'OK', color: '#888888' }
-  return { label: 'SKIP', color: '#EF4444' }
+function tierEmoji(tier: ProfitTier): '🟢' | '🟡' | '⚪' | '🔴' {
+  if (tier === 'EXCELLENT') return '🟢'
+  if (tier === 'GOOD_DEAL') return '🟡'
+  if (tier === 'STANDARD') return '⚪'
+  return '🔴'
 }
 
 export function calculateProfitScore(
@@ -95,17 +84,9 @@ export function calculateProfitScore(
 
   const normalizedScore = profitability.score0to100 / 100
 
-  let label: ProfitLabel = 'OK'
-  if (profitability.recommendation === 'SKIP') label = 'SKIP'
-  if (profitability.recommendation === 'TAKE') {
-    label = profitability.score0to100 >= 80 ? 'GREAT' : 'GOOD'
-  }
-  if (profitability.recommendation === 'WAIT') label = 'OK'
-
   return {
     score: normalizedScore,
-    ...labelFromScore(normalizedScore),
-    label,
+    color: profitability.tierColor,
     profitTier: profitability.profitTier,
     tierEmoji: tierEmoji(profitability.profitTier),
     isOutOfCity: profitability.isOutOfCity,

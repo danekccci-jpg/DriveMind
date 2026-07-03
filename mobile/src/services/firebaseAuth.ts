@@ -33,6 +33,7 @@ export type FirebaseSignInResult =
       paywallMode: PaywallMode
       paywallRequired: boolean
       searchBlocked: boolean
+      remainingTrips: number
     }
   | { kind: 'cancelled' }
   | { kind: 'error'; error: unknown }
@@ -68,7 +69,7 @@ export async function signInWithGoogleAndEnsureUser(): Promise<FirebaseSignInRes
 
     // Sync the Firestore user document (creates it if missing, back-fills publicId
     // and subscriptionEndsAt for older accounts). ensureUserDoc never throws.
-    const session = await syncUserSession(uid, fingerprint ?? undefined)
+    const session = await syncUserSession(uid, google.email, fingerprint ?? undefined)
 
     // Abuse detected: override the paywall state to force subscription
     const paywallRequired = session.blocked || isAbuse
@@ -84,6 +85,7 @@ export async function signInWithGoogleAndEnsureUser(): Promise<FirebaseSignInRes
       paywallMode,
       paywallRequired,
       searchBlocked,
+      remainingTrips: session.remainingTrips,
     }
   } catch (error) {
     return { kind: 'error', error }
@@ -102,7 +104,11 @@ export async function syncCurrentUserSubscription(): Promise<{
   if (!firebaseUser) return null
 
   const fingerprint = useAuthStore.getState().deviceFingerprint
-  const session = await syncUserSession(firebaseUser.uid, fingerprint ?? undefined)
+  const session = await syncUserSession(
+    firebaseUser.uid,
+    firebaseUser.email ?? undefined,
+    fingerprint ?? undefined,
+  )
   applyUserSessionToStore(
     firebaseUser.uid,
     session.user,

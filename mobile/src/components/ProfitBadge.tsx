@@ -1,29 +1,32 @@
 import React from 'react'
 import { View, Text, StyleSheet } from 'react-native'
-import { ProfitLabel } from '../engine/profitEngine'
+import type { ProfitTier } from '@drivemind/shared'
 import { useColors } from '../theme/theme'
+import { localizedProfitTierTitle } from '../utils/overlayI18n'
+import { normalizeProfitTier } from '../utils/profitTier'
 
 interface Props {
-  label: ProfitLabel
+  tier: ProfitTier | string
   score?: number
   showScore?: boolean
   /** Smaller padding/font for dense rows (e.g. OrderCard). */
   compact?: boolean
 }
 
-export default function ProfitBadge({ label, score, showScore = false, compact = false }: Props) {
+export default function ProfitBadge({ tier, score, showScore = false, compact = false }: Props) {
   const c = useColors()
-  const colorMap: Record<ProfitLabel, { color: string; bg: string }> = {
-    GREAT: { color: c.profitGreat, bg: c.profitGreatBg },
-    GOOD: { color: c.profitGood, bg: c.profitGoodBg },
-    OK: { color: c.profitOk, bg: c.profitOkBg },
-    SKIP: { color: c.profitSkip, bg: c.profitSkipBg },
+  const normalized = normalizeProfitTier(tier)
+  const colorMap: Record<ProfitTier, { color: string; bg: string }> = {
+    EXCELLENT: { color: c.profitExcellent, bg: c.profitExcellentBg },
+    GOOD_DEAL: { color: c.profitGoodDeal, bg: c.profitGoodDealBg },
+    STANDARD: { color: c.profitStandard, bg: c.profitStandardBg },
+    LOW_YIELD: { color: c.profitLowYield, bg: c.profitLowYieldBg },
   }
-  const normalized = String(label).toUpperCase() as ProfitLabel
-  const tone = colorMap[normalized] ?? colorMap.OK
+  const tone = colorMap[normalized]
+  const title = localizedProfitTierTitle(normalized)
   const text = showScore && score !== undefined
-    ? `${normalized} · ${score.toFixed(2)}`
-    : normalized
+    ? `${title} · ${score.toFixed(2)}`
+    : title
 
   return (
     <View
