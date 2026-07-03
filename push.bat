@@ -22,7 +22,7 @@ echo 📦 Индексация файлов...
 git add .
 
 echo 💾 Коммит: %msg%
-git commit -m "%msg%"
+git -c core.hooksPath=.githooks commit -m "%msg%"
 
 echo ⬆️ Отправка в репозиторий...
 git push

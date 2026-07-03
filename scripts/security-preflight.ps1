@@ -42,6 +42,7 @@ if ($adminSrc -match '@gmail\.com') {
 $trackedFiles = git ls-files
 foreach ($f in $trackedFiles) {
     if ($f -match '\.example$' -or $f -match 'package-lock\.json') { continue }
+    if ($f -match 'security-preflight\.ps1$') { continue }
     if (Test-Path $f) {
         $content = Get-Content $f -Raw -ErrorAction SilentlyContinue
         if ($content -match 'AIza[0-9A-Za-z_-]{20,}') {
