@@ -7,6 +7,7 @@ import {
 } from 'firebase/auth'
 
 import { getFirebaseAuth } from '../config/firebase'
+import i18n from '../i18n'
 import { useAuthStore } from '../store/authStore'
 import {
   syncUserSession,
@@ -20,6 +21,13 @@ import { isDeviceLinkedToOtherUid, linkUidToDevice } from './deviceFingerprintFi
 const EMAIL_STORAGE_KEY = 'drivemind_email_for_signin'
 const BUNDLE_ID = 'com.guessxx.drivemind'
 const DEEP_LINK_URL = 'https://drivemind-d4994.firebaseapp.com/login'
+
+/** Firebase email-link sign-in supports en/pl/ru (uk falls back to en). */
+function resolveFirebaseAuthLanguage(): string {
+  const raw = (i18n.language || 'en').split('-')[0]
+  if (raw === 'pl' || raw === 'ru') return raw
+  return 'en'
+}
 
 export type EmailLinkSendResult =
   | { kind: 'link_sent' }
@@ -42,6 +50,7 @@ export type EmailLinkSignInResult =
 export async function sendEmailLink(email: string): Promise<EmailLinkSendResult> {
   try {
     const auth = getFirebaseAuth()
+    auth.languageCode = resolveFirebaseAuthLanguage()
     const trimmed = email.trim()
     const actionCodeSettings = {
       url: DEEP_LINK_URL,

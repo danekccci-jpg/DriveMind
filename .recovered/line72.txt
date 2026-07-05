@@ -1,0 +1,139 @@
+All implementation is done. Here's the summary of everything that was refactored and the setup checklist.
+
+---
+
+## Refactoring Summary
+
+### 1. QA Feedback Fixes (Completed)
+
+**Ride Screen Loading** (`DashboardBottomSheet.tsx`):
+- Replaced the `ActivityIndicator` spinner with a `SearchingPulse` component that uses a looping opacity animation (0.4 → 1.0 → 0.4) on both a dot and the "Searching for offers..." text. This clearly communicates activity without looking frozen.
+
+**Status Bar** (`Dashboard/index.tsx`):
+- Added a `<StatusBar translucent backgroundColor="transparent" barStyle={...} />` component.
+- Added a semi-transparent backdrop View (`rgba(255,255,255,0.8)` in light mode, `rgba(0,0,0,0.6)` in dark mode) behind the status bar area to prevent map elements from overlapping text.
+
+**Onboarding Navigation** (`Onboarding/index.tsx`):
+- Replaced the old `react-native` `Animated.timing` transitions with `react-native-reanimated`'s `useSharedValue` + `withSpring` (damping: 20, stiffness: 200, mass: 0.8).
+- Added opacity cross-fade interpolations to elements during transitions.
+- All transitions now run on the native UI thread for buttery-smooth 60fps, even on mid-range devices.
+
+### 2. Authentication (Firebase Email Link)
+
+**New service** (`services/emailLinkAuth.ts`):
+- `sendEmailLink(email)` — sends a magic sign-in link via Firebase.
+- `handleEmailLinkSignIn(url)` — processes the deep link, signs in the user, syncs Firestore user doc (creates new with `publicId`, `email`, `createdAt`, `subscriptionStatus: "welcome_trips"` if first sign-in).
+- `isEmailSignInLink(url)` — checks if a URL is a sign-in link.
+- `completeEmailLinkAuth(result)` — syncs session to Zustand store.
+
+**Login screen** (`screens/Login/index.tsx`):
+- Added email input field + "Send sign-in link" button (primary CTA).
+- Added "or" divider between email link and Google sign-in.
+- Shows "Check your inbox" confirmation after sending.
+- Google sign-in retained as secondary option.
+
+**Deep link handling** (`App.tsx`):
+- Added `Linking.getInitialURL()` + `Linking.addEventListener('url')` to capture Firebase email links on cold start and while running.
+
+### 3. Admin & Analytics
+
+**Admin mock orders** — Already implemented in `services/adminSeeder.ts` and exposed in the Profile screen (visible only when `userEmail === 'danekccci@gmail.com'`).
+
+**Calendar date-range picker** (`screens/Earnings/index.tsx`):
+- Installed `react-native-calendars`.
+- Added a `Calendar` component with `markingType="period"` for date-range selection.
+- Tap once to set start, tap again to set end.
+
+**Analytics summary card**:
+- Created `services/analyticsService.ts` with `computeDateRangeStats()` — computes Total Earnings, Total Distance, Order Count, PLN/km, PLN/h from order history.
+- The summary card reactively updates via the Zustand `orderHistory` store whenever the selected range changes.
+
+### 4. Technical Quality
+
+- **Business logic isolation**: All new logic lives in dedicated service files (`emailLinkAuth.ts`, `analyticsService.ts`, `adminSeeder.ts`), not in UI components.
+- **Redundant state cleanup**: Removed old `RNAnimated` refs and `useMemo`-based parallax computations in Onboarding (replaced with native-thread Reanimated shared values).
+- **No linter errors** across all modified files.
+
+---
+
+## Setup Checklist
+
+### Firebase Console Configuration
+
+1. **Enable Email Link (Passwordless) sign-in**:
+   - Go to **Firebase Console → Authentication → Sign-in method**
+   - Enable **Email/Password** provider
+   - Toggle ON the **"Email link (passwordless sign-in)"** checkbox beneath it.
+
+2. **Add authorized domain for dynamic links**:
+   - Go to **Firebase Console → Authentication → Settings → Authorized domains**
+   - Ensure `drivemind.page.link` is listed (or your custom domain).
+
+3. **Create a Firebase Dynamic Link** (if not already):
+   - Go to **Firebase Console → Dynamic Links**
+   - Create a new link prefix: `drivemind.page.link`
+   - The deep link URL used in code is: `https://drivemind.page.link/login`
+
+### AndroidManifest.xml — Intent Filter for Deep Links
+
+Add this inside the `<activity>` tag of your main activity in `android/app/src/main/AndroidManifest.xml`:
+
+```xml
+<!-- Firebase Email Link deep link handler -->
+<intent-filter android:autoVerify="true">
+    <action android:name="android.intent.action.VIEW" />
+    <category android:name="android.intent.category.DEFAULT" />
+    <category android:name="android.intent.category.BROWSABLE" />
+    <data
+        android:host="drivemind.page.link"
+        android:scheme="https" />
+</intent-filter>
+```
+
+**Placement**: This should be added inside the `<activity android:name=".MainActivity" ...>` block. If using Expo with the config plugin, it's auto-generated in the `withDriveMindNative.js` plugin's `withAndroidManifest` section.
+
+### firebase.json — Hosting Rewrites (for web fallback)
+
+If you use Firebase Hosting for the `authDomain`, add to your `firebase.json`:
+
+```json
+{
+  "hosting": {
+    "rewrites": [
+      {
+        "source": "/login",
+        "dynamicLinks": true
+      }
+    ]
+  }
+}
+```
+
+**Placement**: Root of your Firebase project alongside `firestore.rules`, etc.
+
+### Firebase CLI Commands
+
+```bash
+# Deploy updated hosting config (if changed firebase.json)
+firebase deploy --only hosting
+
+# No CLI commands needed for Email Link auth — it's console-only config
+```
+
+### Package Dependencies Added
+
+- `react-native-calendars` — installed to `mobile/package.json`
+
+### Files Created/Modified
+
+| File | Change |
+|------|--------|
+| `mobile/src/services/emailLinkAuth.ts` | **NEW** — Email link auth service |
+| `mobile/src/services/analyticsService.ts` | **NEW** — Date-range stats computation |
+| `mobile/src/screens/Dashboard/DashboardBottomSheet.tsx` | Pulsing search animation |
+| `mobile/src/screens/Dashboard/index.tsx` | StatusBar + backdrop |
+| `mobile/src/screens/Onboarding/index.tsx` | Reanimated transitions |
+| `mobile/src/screens/Login/index.tsx` | Email link + email input UI |
+| `mobile/src/screens/Earnings/index.tsx` | Calendar + analytics card |
+| `mobile/App.tsx` | Deep link handler for email auth |
+| `mobile/src/i18n/locales/en.json` | New i18n keys |

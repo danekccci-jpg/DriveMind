@@ -18,6 +18,18 @@ const dirs = [
 
 for (const d of dirs) {
   if (!fs.existsSync(d)) continue
-  fs.rmSync(d, { recursive: true, force: true })
-  console.log('[DriveMind] removed', path.relative(mobileRoot, d))
+  try {
+    fs.rmSync(d, { recursive: true, force: true })
+    console.log('[DriveMind] removed', path.relative(mobileRoot, d))
+  } catch (error) {
+    const rel = path.relative(mobileRoot, d)
+    const isGradleCache = rel.replace(/\\/g, '/') === 'android/.gradle'
+    if (isGradleCache && error && (error.code === 'EPERM' || error.code === 'EBUSY')) {
+      console.warn(
+        `[DriveMind] skipped ${rel} (locked by Gradle daemon). Run: cd android && gradlew --stop`,
+      )
+      continue
+    }
+    throw error
+  }
 }

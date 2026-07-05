@@ -456,8 +456,8 @@ function assertManifestModResults(manifest) {
   }
 }
 
-/** Adds an intent-filter for Firebase Email Link (passwordless) deep links to the main activity. */
-function addEmailLinkIntentFilter(application) {
+/** Adds intent-filters for Firebase Email Link (Hosting /__/auth/links) deep links. */
+function addEmailLinkIntentFilters(application) {
   const activities = ensureArray(application.activity)
   const mainActivity = activities.find(
     (a) => a?.$?.['android:name'] === '.MainActivity',
@@ -465,22 +465,54 @@ function addEmailLinkIntentFilter(application) {
   if (!mainActivity) return
   if (!mainActivity['intent-filter']) mainActivity['intent-filter'] = []
   const filters = ensureArray(mainActivity['intent-filter'])
-  const already = filters.some((f) => {
+
+  const hasAuthLinks = filters.some((f) => {
     const dataArr = ensureArray(f.data)
-    return dataArr.some((d) => d?.$?.['android:host'] === 'drivemind-d4994.firebaseapp.com')
+    return dataArr.some((d) => d?.$?.['android:pathPrefix'] === '/__/auth/links')
   })
-  if (already) return
-  filters.push({
-    $: { 'android:autoVerify': 'true' },
-    action: [{ $: { 'android:name': 'android.intent.action.VIEW' } }],
-    category: [
-      { $: { 'android:name': 'android.intent.category.DEFAULT' } },
-      { $: { 'android:name': 'android.intent.category.BROWSABLE' } },
-    ],
-    data: [
-      { $: { 'android:host': 'drivemind-d4994.firebaseapp.com', 'android:scheme': 'https' } },
-    ],
+  if (!hasAuthLinks) {
+    filters.push({
+      $: { 'android:autoVerify': 'true' },
+      action: [{ $: { 'android:name': 'android.intent.action.VIEW' } }],
+      category: [
+        { $: { 'android:name': 'android.intent.category.DEFAULT' } },
+        { $: { 'android:name': 'android.intent.category.BROWSABLE' } },
+      ],
+      data: [
+        {
+          $: {
+            'android:scheme': 'https',
+            'android:host': 'drivemind-d4994.firebaseapp.com',
+            'android:pathPrefix': '/__/auth/links',
+          },
+        },
+      ],
+    })
+  }
+
+  const hasLoginContinue = filters.some((f) => {
+    const dataArr = ensureArray(f.data)
+    return dataArr.some((d) => d?.$?.['android:pathPrefix'] === '/login')
   })
+  if (!hasLoginContinue) {
+    filters.push({
+      action: [{ $: { 'android:name': 'android.intent.action.VIEW' } }],
+      category: [
+        { $: { 'android:name': 'android.intent.category.DEFAULT' } },
+        { $: { 'android:name': 'android.intent.category.BROWSABLE' } },
+      ],
+      data: [
+        {
+          $: {
+            'android:scheme': 'https',
+            'android:host': 'drivemind-d4994.firebaseapp.com',
+            'android:pathPrefix': '/login',
+          },
+        },
+      ],
+    })
+  }
+
   mainActivity['intent-filter'] = filters
 }
 
@@ -494,7 +526,7 @@ function withDriveMindAndroidManifest(config) {
 
     const application = getOrCreateApplication(manifest)
     addDriveMindServices(application)
-    addEmailLinkIntentFilter(application)
+    addEmailLinkIntentFilters(application)
     assertManifestModResults(manifest)
 
     return cfg
@@ -547,14 +579,20 @@ function patchManifestOnDisk(manifestPath) {
 
   xml = xml.replace('</application>', `${services}  </application>`)
 
-  // Firebase Email Link deep link intent filter on the main activity
-  if (!xml.includes('drivemind-d4994.firebaseapp.com')) {
+  // Firebase Email Link deep link intent filters on the main activity
+  if (!xml.includes('/__/auth/links')) {
     const emailLinkFilter = `
       <intent-filter android:autoVerify="true">
         <action android:name="android.intent.action.VIEW"/>
         <category android:name="android.intent.category.DEFAULT"/>
         <category android:name="android.intent.category.BROWSABLE"/>
-        <data android:host="drivemind-d4994.firebaseapp.com" android:scheme="https"/>
+        <data android:scheme="https" android:host="drivemind-d4994.firebaseapp.com" android:pathPrefix="/__/auth/links"/>
+      </intent-filter>
+      <intent-filter>
+        <action android:name="android.intent.action.VIEW"/>
+        <category android:name="android.intent.category.DEFAULT"/>
+        <category android:name="android.intent.category.BROWSABLE"/>
+        <data android:scheme="https" android:host="drivemind-d4994.firebaseapp.com" android:pathPrefix="/login"/>
       </intent-filter>`
     xml = xml.replace(
       '</activity>',

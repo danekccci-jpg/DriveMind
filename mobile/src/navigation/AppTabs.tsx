@@ -3,6 +3,7 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs'
 import { Feather } from '@expo/vector-icons'
 import { useTranslation } from 'react-i18next'
 import * as Haptics from 'expo-haptics'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import DashboardScreen from '../screens/Dashboard'
 import OrderHubScreen from '../screens/OrderHub'
@@ -17,6 +18,7 @@ const Tab = createBottomTabNavigator()
 export default function AppTabs() {
   const { t } = useTranslation()
   const c = useColors()
+  const insets = useSafeAreaInsets()
   const ordersBadge = useDriverIngestStore(selectAvailableIngestCount)
 
   return (
@@ -32,15 +34,19 @@ export default function AppTabs() {
           backgroundColor: c.tabBar,
           borderTopColor: c.tabBarBorder,
           borderTopWidth: 0.5,
-          height: 60,
-          paddingBottom: 10,
+          height: 60 + insets.bottom,
+          paddingTop: 8,
+          paddingBottom: Math.max(insets.bottom, 8),
+        },
+        tabBarItemStyle: {
+          paddingVertical: 4,
         },
         tabBarActiveTintColor: c.primary,
         tabBarInactiveTintColor: c.textMuted,
         tabBarLabelStyle: {
           fontSize: 11,
           fontFamily: 'Poppins_400Regular',
-          marginTop: -2,
+          marginTop: 2,
         },
       }}
     >

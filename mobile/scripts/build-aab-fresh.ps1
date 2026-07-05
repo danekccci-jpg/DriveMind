@@ -41,6 +41,10 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 Set-Location $mobileRoot
 
 # 6. Build production AAB forcing re-run of tasks
+Write-Host "Verifying release auth env..." -ForegroundColor Yellow
+npm run android:verify-release-env
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
 Write-Host "Building fresh production AAB..." -ForegroundColor Green
 $env:NODE_ENV = "production"
 Set-Location (Join-Path $mobileRoot "android")

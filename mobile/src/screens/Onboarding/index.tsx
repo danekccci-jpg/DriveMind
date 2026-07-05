@@ -5,9 +5,10 @@ import {
   StyleSheet,
   Dimensions,
   SafeAreaView,
-  Platform,
   Linking,
+  ScrollView,
 } from 'react-native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useTranslation } from 'react-i18next'
 import { MaterialCommunityIcons, Feather } from '@expo/vector-icons'
 import Reanimated, {
@@ -60,6 +61,7 @@ function ProgressDots({
 export default function OnboardingScreen() {
   const { t } = useTranslation()
   const c = useColors()
+  const insets = useSafeAreaInsets()
   const roleFromStore = useRoleStore((s) => s.role)
   const { setRole, setVehicleType, setSelectedServices, setOnboardingComplete } = useRoleStore()
 
@@ -138,128 +140,152 @@ export default function OnboardingScreen() {
   )
 
   const renderStepRole = () => (
-    <View style={[st.step, { backgroundColor: c.bg }]}>
-      <ProgressDots total={totalSteps} current={0} activeColor={c.primary} mutedColor={c.border} />
-      <Reanimated.View style={[st.heroWrap, backgroundStyle]}>
-        <Logo theme="auto" variant="full" size={140} maxWidth={220} />
-      </Reanimated.View>
-      <Reanimated.View style={backgroundStyle}>
-        <Text style={[st.title, { color: c.text }]}>{t('onboarding_role_title')}</Text>
-        <Text style={[st.sub, { color: c.textSecondary }]}>{t('onboarding_role_subtitle')}</Text>
-      </Reanimated.View>
-      <Reanimated.View style={foregroundStyle}>
-      <View style={st.roleCardsRow}>
-        <AnimatedButton
-          activeOpacity={0.8}
-          onPress={() => setSelectedRole('taxi')}
-          style={[
-            st.roleCard,
-            {
-              backgroundColor: selectedRole === 'taxi' ? c.primaryDim : c.surface,
-              borderColor: selectedRole === 'taxi' ? c.primary : c.border,
-            },
-          ]}
-        >
-          <MaterialCommunityIcons name="car-outline" size={28} color={selectedRole === 'taxi' ? c.primary : c.secondary} />
-          <Text style={[st.roleCardText, { color: c.text }]}>{t('taxi')}</Text>
-        </AnimatedButton>
-        <AnimatedButton
-          activeOpacity={0.8}
-          onPress={() => setSelectedRole('courier')}
-          style={[
-            st.roleCard,
-            {
-              backgroundColor: selectedRole === 'courier' ? c.primaryDim : c.surface,
-              borderColor: selectedRole === 'courier' ? c.primary : c.border,
-            },
-          ]}
-        >
-          <MaterialCommunityIcons name="bike" size={28} color={selectedRole === 'courier' ? c.primary : c.secondary} />
-          <Text style={[st.roleCardText, { color: c.text }]}>{t('courier')}</Text>
-        </AnimatedButton>
-      </View>
-      </Reanimated.View>
+    <View style={[st.step, { backgroundColor: c.bg, paddingBottom: Math.max(insets.bottom, 8) }]}>
+      <ScrollView
+        style={st.stepScroll}
+        contentContainerStyle={st.stepScrollContent}
+        showsVerticalScrollIndicator={false}
+      >
+        <ProgressDots total={totalSteps} current={0} activeColor={c.primary} mutedColor={c.border} />
+        <Reanimated.View style={[st.heroWrap, backgroundStyle]}>
+          <Logo theme="auto" variant="full" size={140} maxWidth={220} />
+        </Reanimated.View>
+        <Reanimated.View style={backgroundStyle}>
+          <Text style={[st.title, { color: c.text }]}>{t('onboarding_role_title')}</Text>
+          <Text style={[st.sub, { color: c.textSecondary }]}>{t('onboarding_role_subtitle')}</Text>
+        </Reanimated.View>
+        <Reanimated.View style={foregroundStyle}>
+        <View style={st.roleCardsRow}>
+          <AnimatedButton
+            activeOpacity={0.8}
+            onPress={() => setSelectedRole('taxi')}
+            style={[
+              st.roleCard,
+              {
+                backgroundColor: selectedRole === 'taxi' ? c.primaryDim : c.surface,
+                borderColor: selectedRole === 'taxi' ? c.primary : c.border,
+              },
+            ]}
+          >
+            <MaterialCommunityIcons name="car-outline" size={28} color={selectedRole === 'taxi' ? c.primary : c.secondary} />
+            <Text style={[st.roleCardText, { color: c.text }]}>{t('taxi')}</Text>
+          </AnimatedButton>
+          <AnimatedButton
+            activeOpacity={0.8}
+            onPress={() => setSelectedRole('courier')}
+            style={[
+              st.roleCard,
+              {
+                backgroundColor: selectedRole === 'courier' ? c.primaryDim : c.surface,
+                borderColor: selectedRole === 'courier' ? c.primary : c.border,
+              },
+            ]}
+          >
+            <MaterialCommunityIcons name="bike" size={28} color={selectedRole === 'courier' ? c.primary : c.secondary} />
+            <Text style={[st.roleCardText, { color: c.text }]}>{t('courier')}</Text>
+          </AnimatedButton>
+        </View>
+        </Reanimated.View>
+      </ScrollView>
       <PrimaryBtn label={t('next')} onPress={goNext} bg={c.primary} textColor={c.textInverse} />
     </View>
   )
 
   const renderStepWidget = () => (
-    <View style={[st.step, { backgroundColor: c.bg }]}>
-      <ProgressDots total={totalSteps} current={1} activeColor={c.primary} mutedColor={c.border} />
-      <AnimatedButton style={st.backBtn} onPress={goBack} activeOpacity={0.7}>
-        <Feather name="arrow-left" size={22} color={c.text} />
-      </AnimatedButton>
-      <Reanimated.View style={backgroundStyle}>
-        <Text style={[st.title, { color: c.text }]}>{t('onboarding_widget_title')}</Text>
-        <Text style={[st.sub, { color: c.textSecondary }]}>{t('onboarding_widget_desc')}</Text>
-      </Reanimated.View>
-      <Reanimated.View style={[st.infoCard, { backgroundColor: c.surface, borderColor: c.border }, foregroundStyle]}>
-        <MaterialCommunityIcons name="widgets-outline" size={34} color={c.primary} />
-        <Text style={[st.infoCardBody, { color: c.textSecondary }]}>{t('onboarding_widget_body')}</Text>
-      </Reanimated.View>
+    <View style={[st.step, { backgroundColor: c.bg, paddingBottom: Math.max(insets.bottom, 8) }]}>
+      <ScrollView
+        style={st.stepScroll}
+        contentContainerStyle={st.stepScrollContent}
+        showsVerticalScrollIndicator={false}
+      >
+        <ProgressDots total={totalSteps} current={1} activeColor={c.primary} mutedColor={c.border} />
+        <AnimatedButton style={st.backBtn} onPress={goBack} activeOpacity={0.7}>
+          <Feather name="arrow-left" size={22} color={c.text} />
+        </AnimatedButton>
+        <Reanimated.View style={backgroundStyle}>
+          <Text style={[st.title, { color: c.text }]}>{t('onboarding_widget_title')}</Text>
+          <Text style={[st.sub, { color: c.textSecondary }]}>{t('onboarding_widget_desc')}</Text>
+        </Reanimated.View>
+        <Reanimated.View style={[st.infoCard, { backgroundColor: c.surface, borderColor: c.border }, foregroundStyle]}>
+          <MaterialCommunityIcons name="widgets-outline" size={34} color={c.primary} />
+          <Text style={[st.infoCardBody, { color: c.textSecondary }]}>{t('onboarding_widget_body')}</Text>
+        </Reanimated.View>
+      </ScrollView>
       <PrimaryBtn label={t('next')} onPress={goNext} bg={c.primary} textColor={c.textInverse} />
     </View>
   )
 
   const renderStepRoleValue = () => (
-    <View style={[st.step, { backgroundColor: c.bg }]}>
-      <ProgressDots total={totalSteps} current={2} activeColor={c.primary} mutedColor={c.border} />
-      <AnimatedButton style={st.backBtn} onPress={goBack} activeOpacity={0.7}>
-        <Feather name="arrow-left" size={22} color={c.text} />
-      </AnimatedButton>
-      <Reanimated.View style={backgroundStyle}>
-        <Text style={[st.title, { color: c.text }]}>{t('onboarding_value_title')}</Text>
-        <Text style={[st.sub, { color: c.textSecondary }]}>{t('onboarding_value_subtitle')}</Text>
-      </Reanimated.View>
-      <Reanimated.View style={[st.valueList, foregroundStyle]}>
-        {roleSpecificValue.map((line) => (
-          <View key={line} style={[st.valueItem, { backgroundColor: c.surface, borderColor: c.border }]}>
-            <Feather name="check-circle" size={18} color={c.primary} />
-            <Text style={[st.valueText, { color: c.text }]}>{line}</Text>
-          </View>
-        ))}
-      </Reanimated.View>
+    <View style={[st.step, { backgroundColor: c.bg, paddingBottom: Math.max(insets.bottom, 8) }]}>
+      <ScrollView
+        style={st.stepScroll}
+        contentContainerStyle={st.stepScrollContent}
+        showsVerticalScrollIndicator={false}
+      >
+        <ProgressDots total={totalSteps} current={2} activeColor={c.primary} mutedColor={c.border} />
+        <AnimatedButton style={st.backBtn} onPress={goBack} activeOpacity={0.7}>
+          <Feather name="arrow-left" size={22} color={c.text} />
+        </AnimatedButton>
+        <Reanimated.View style={backgroundStyle}>
+          <Text style={[st.title, { color: c.text }]}>{t('onboarding_value_title')}</Text>
+          <Text style={[st.sub, { color: c.textSecondary }]}>{t('onboarding_value_subtitle')}</Text>
+        </Reanimated.View>
+        <Reanimated.View style={[st.valueList, foregroundStyle]}>
+          {roleSpecificValue.map((line) => (
+            <View key={line} style={[st.valueItem, { backgroundColor: c.surface, borderColor: c.border }]}>
+              <Feather name="check-circle" size={18} color={c.primary} />
+              <Text style={[st.valueText, { color: c.text }]}>{line}</Text>
+            </View>
+          ))}
+        </Reanimated.View>
+      </ScrollView>
       <PrimaryBtn label={t('next')} onPress={goNext} bg={c.primary} textColor={c.textInverse} />
     </View>
   )
 
   const renderStepDisclosure = () => (
-    <View style={[st.step, { backgroundColor: c.bg }]}>
-      <ProgressDots total={totalSteps} current={3} activeColor={c.primary} mutedColor={c.border} />
-      <AnimatedButton style={st.backBtn} onPress={goBack} activeOpacity={0.7}>
-        <Feather name="arrow-left" size={22} color={c.text} />
-      </AnimatedButton>
+    <View style={[st.step, { backgroundColor: c.bg, paddingBottom: Math.max(insets.bottom, 8) }]}>
+      <ScrollView
+        style={st.stepScroll}
+        contentContainerStyle={st.stepScrollContent}
+        showsVerticalScrollIndicator={false}
+      >
+        <ProgressDots total={totalSteps} current={3} activeColor={c.primary} mutedColor={c.border} />
+        <AnimatedButton style={st.backBtn} onPress={goBack} activeOpacity={0.7}>
+          <Feather name="arrow-left" size={22} color={c.text} />
+        </AnimatedButton>
 
-      <Reanimated.View entering={FadeInDown.delay(100)} style={st.disclosureHeader}>
-        <Logo theme="auto" variant="full" size={80} maxWidth={120} />
-      </Reanimated.View>
-
-      <Text style={[st.title, st.disclosureTitle, { color: c.text }]}>{t('onboarding_disclosure_title')}</Text>
-      <Text style={[st.disclosureIntro, { color: c.textSecondary }]}>{t('onboarding_disclosure_privacy_intro')}</Text>
-
-      <View style={st.permissionCards}>
-        <Reanimated.View
-          entering={SlideInRight.delay(300).springify()}
-          style={[st.permissionCard, st.disclosureCard, { backgroundColor: c.surface, borderColor: c.border }]}
-        >
-          <View style={st.disclosureCardTitleRow}>
-            <Feather name="lock" size={19} color={c.primary} />
-            <Text style={[st.permissionTitle, { color: c.text }]}>{t('onboarding_disclosure_a11y_title')}</Text>
-          </View>
-          <Text style={[st.permissionDesc, { color: c.textSecondary }]}>{t('onboarding_disclosure_a11y_desc')}</Text>
+        <Reanimated.View entering={FadeInDown.delay(100)} style={st.disclosureHeader}>
+          <Logo theme="auto" variant="full" size={80} maxWidth={120} />
         </Reanimated.View>
 
-        <Reanimated.View
-          entering={SlideInRight.delay(500).springify()}
-          style={[st.permissionCard, st.disclosureCard, { backgroundColor: c.surface, borderColor: c.border }]}
-        >
-          <View style={st.disclosureCardTitleRow}>
-            <Feather name="layers" size={19} color={c.primary} />
-            <Text style={[st.permissionTitle, { color: c.text }]}>{t('onboarding_disclosure_overlay_title')}</Text>
-          </View>
-          <Text style={[st.permissionDesc, { color: c.textSecondary }]}>{t('onboarding_disclosure_overlay_desc')}</Text>
-        </Reanimated.View>
-      </View>
+        <Text style={[st.title, st.disclosureTitle, { color: c.text }]}>{t('onboarding_disclosure_title')}</Text>
+        <Text style={[st.disclosureIntro, { color: c.textSecondary }]}>{t('onboarding_disclosure_privacy_intro')}</Text>
+
+        <View style={st.permissionCards}>
+          <Reanimated.View
+            entering={SlideInRight.delay(300).springify()}
+            style={[st.permissionCard, st.disclosureCard, { backgroundColor: c.surface, borderColor: c.border }]}
+          >
+            <View style={st.disclosureCardTitleRow}>
+              <Feather name="lock" size={19} color={c.primary} />
+              <Text style={[st.permissionTitle, { color: c.text }]}>{t('onboarding_disclosure_a11y_title')}</Text>
+            </View>
+            <Text style={[st.permissionDesc, { color: c.textSecondary }]}>{t('onboarding_disclosure_a11y_desc')}</Text>
+          </Reanimated.View>
+
+          <Reanimated.View
+            entering={SlideInRight.delay(500).springify()}
+            style={[st.permissionCard, st.disclosureCard, { backgroundColor: c.surface, borderColor: c.border }]}
+          >
+            <View style={st.disclosureCardTitleRow}>
+              <Feather name="layers" size={19} color={c.primary} />
+              <Text style={[st.permissionTitle, { color: c.text }]}>{t('onboarding_disclosure_overlay_title')}</Text>
+            </View>
+            <Text style={[st.permissionDesc, { color: c.textSecondary }]}>{t('onboarding_disclosure_overlay_desc')}</Text>
+          </Reanimated.View>
+        </View>
+      </ScrollView>
 
       <View style={st.disclosureFooter}>
         <PrimaryBtn
@@ -329,7 +355,12 @@ const st = StyleSheet.create({
   step: {
     flex: 1,
     paddingHorizontal: 24,
-    paddingBottom: Platform.OS === 'ios' ? 8 : 24,
+  },
+  stepScroll: {
+    flex: 1,
+  },
+  stepScrollContent: {
+    flexGrow: 1,
   },
   dotsRow: { flexDirection: 'row', gap: 6, marginTop: 16, marginBottom: 8, alignSelf: 'center' },
   dot: { width: 6, height: 6, borderRadius: 3 },
@@ -346,7 +377,7 @@ const st = StyleSheet.create({
     borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 'auto',
+    marginTop: 20,
   },
   primaryBtnText: { fontSize: 16, fontWeight: '600', fontFamily: fonts.semiBold },
   roleCardsRow: {

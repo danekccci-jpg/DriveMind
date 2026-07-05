@@ -14,6 +14,7 @@
     "android:crash-log": "powershell -ExecutionPolicy Bypass -File ./scripts/capture-release-crash-log.ps1",
     "android:install-release": "powershell -ExecutionPolicy Bypass -File ./scripts/install-release-apk.ps1",
     "android:verify-keystore": "powershell -ExecutionPolicy Bypass -File ./scripts/verify-upload-keystore.ps1",
+    "android:verify-release-env": "cross-env NODE_ENV=production powershell -ExecutionPolicy Bypass -File ./scripts/verify-release-env.ps1",
     "android:bundle:release": "cross-env NODE_ENV=production powershell -ExecutionPolicy Bypass -Command \"Set-Location android; .\\gradlew bundleRelease\"",
     "android:bundle:release:fresh": "cross-env NODE_ENV=production powershell -ExecutionPolicy Bypass -File ./scripts/build-aab-fresh.ps1",
     "ios": "expo run:ios",

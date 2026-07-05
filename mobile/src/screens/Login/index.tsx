@@ -24,7 +24,7 @@ import { sendEmailLink } from '../../services/emailLinkAuth'
 import { syncOrderParsingGate } from '../../services/subscriptionGate'
 import { useLanguageStore } from '../../store/languageStore'
 import { useRoleStore } from '../../store/roleStore'
-import { isGoogleSignInDeveloperError, formatGoogleSignInErrorDebug } from '../../services/googleAuth'
+import { formatAuthErrorMessage, logAuthFailure } from '../../services/authErrorMessages'
 import Logo from '../../components/common/Logo'
 import GoogleGIcon from '../../components/common/GoogleGIcon'
 import { PRIVACY_POLICY_URL, TERMS_OF_SERVICE_URL } from '../../constants/legalUrls'
@@ -58,8 +58,8 @@ export default function LoginScreen() {
       if (result.kind === 'link_sent') {
         setEmailLinkSent(true)
       } else {
-        Alert.alert(t('login_error_title'), t('login_failed'))
-        if (__DEV__) console.warn('[DriveMind] email link send failed', result.error)
+        logAuthFailure('email link send', result.error)
+        Alert.alert(t('login_error_title'), formatAuthErrorMessage(result.error, t))
       }
     } finally {
       setLoading(false)
@@ -104,19 +104,12 @@ export default function LoginScreen() {
       } else if (result.kind === 'cancelled') {
         // User closed the picker — no message.
       } else {
-        const devErr = isGoogleSignInDeveloperError(result.error)
-        const body =
-          (devErr ? t('login_developer_error') : t('login_failed')) +
-          formatGoogleSignInErrorDebug(result.error)
-        Alert.alert(t('login_error_title'), body)
-        console.warn(
-          '[DriveMind] Google sign-in failed',
-          result.error instanceof Error ? result.error.message : result.error,
-        )
+        logAuthFailure('Google sign-in', result.error)
+        Alert.alert(t('login_error_title'), formatAuthErrorMessage(result.error, t))
       }
     } catch (e) {
-      Alert.alert(t('login_error_title'), t('login_failed'))
-      console.warn('[DriveMind] Google sign-in failed', e)
+      logAuthFailure('Google sign-in', e)
+      Alert.alert(t('login_error_title'), formatAuthErrorMessage(e, t))
     } finally {
       setLoading(false)
     }

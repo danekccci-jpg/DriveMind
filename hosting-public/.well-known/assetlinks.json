@@ -1,0 +1,14 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.guessxx.drivemind",
+      "sha256_cert_fingerprints": [
+        "8A:77:7F:38:EE:73:13:3C:B6:58:34:AC:3D:17:05:26:54:42:3A:49:AC:86:7F:35:91:36:5E:4C:CE:F4:1A:14",
+        "18:B2:2B:B7:BC:98:2A:D5:6E:85:91:D0:8A:BA:C9:AC:20:D9:20:28:2B:E5:84:60:DE:02:54:A7:E3:19:FC:9B",
+        "34:F9:34:E5:C8:76:2D:F1:A4:2F:6C:87:16:AE:B1:E9:5E:74:37:EB:F8:7B:C4:84:FB:B2:59:60:5A:72:2C:E9"
+      ]
+    }
+  }
+]

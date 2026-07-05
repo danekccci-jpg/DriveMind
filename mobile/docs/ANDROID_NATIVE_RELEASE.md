@@ -169,7 +169,29 @@ Release builds must use the **Play upload key** (SHA-1 `7F:C9:1F:8A:…`), not `
    ```
    Output: `android/app/build/outputs/bundle/release/app-release.aab`
 
-Add the upload key SHA-1 to **Firebase → Project settings → Android app** so Google Sign-In works on Play builds.
+Add **both** SHA-1 fingerprints to **Firebase → Project settings → Your apps → Android app**:
+
+| Certificate | Where to find SHA-1 | Used when |
+|-------------|---------------------|-----------|
+| **Upload key** | `npm run android:verify-keystore` | Local release APK/AAB you install via `adb` |
+| **Play App signing key** | Play Console → **App integrity** → **App signing** → **App signing key certificate** | **Internal testing / production** installs from Play Store |
+
+Internal testing and production builds are re-signed by Google Play. If only the upload or debug SHA-1 is in Firebase, Google Sign-In and Firebase Auth (including email link) fail with generic “Could not complete sign-in” on Play-distributed builds.
+
+After adding fingerprints:
+
+1. Download an updated `google-services.json` from Firebase Console (do not rely on the env-generated file — it only contains the Web OAuth client).
+2. Replace `android/app/google-services.json`.
+3. Rebuild the AAB with `NODE_ENV=production` (`npm run android:bundle:release:fresh`).
+4. In Firebase **Authentication → Sign-in method**, enable **Email link** (passwordless).
+5. In **Authentication → Settings → Authorized domains**, ensure `drivemind-d4994.firebaseapp.com` is listed.
+6. If the Firebase API key is restricted in Google Cloud Console, add the same Android package + SHA-1 entries there.
+
+Verify env keys before building:
+
+```powershell
+npm run android:verify-release-env
+```
 
 ## Local release APK
 
