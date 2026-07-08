@@ -22,7 +22,6 @@ import { isFirebaseConfigured } from '../../config/firebase'
 import { signInWithGoogleAndEnsureUser } from '../../services/firebaseAuth'
 import { sendEmailLink } from '../../services/emailLinkAuth'
 import { syncOrderParsingGate } from '../../services/subscriptionGate'
-import { useLanguageStore } from '../../store/languageStore'
 import { useRoleStore } from '../../store/roleStore'
 import { formatAuthErrorMessage, logAuthFailure } from '../../services/authErrorMessages'
 import Logo from '../../components/common/Logo'
@@ -206,8 +205,6 @@ export default function LoginScreen() {
         <TouchableOpacity
           style={[styles.laterBtn, { backgroundColor: laterBg, borderColor: laterBorder }]}
           onPress={() => {
-            const lang = useLanguageStore.getState()
-            if (!lang.hasChosenLanguage) lang.confirmLanguageChoice(lang.language)
             const rs = useRoleStore.getState()
             if (!rs.role) rs.setRole('courier')
             if (!rs.onboardingComplete) rs.setOnboardingComplete(true)

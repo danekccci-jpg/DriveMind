@@ -6,8 +6,9 @@
     "packages/shared"
   ],
   "scripts": {
+    "postinstall": "node mobile/scripts/patch-metro-multipart.js",
     "dev": "npm-run-all -p dev:mobile",
-    "dev:mobile": "npm --workspace mobile run start",
+    "dev:mobile": "npm --workspace mobile run start:dev",
     "lint": "npm-run-all -p lint:mobile",
     "lint:mobile": "npm --workspace mobile run lint",
     "build:shared": "npm --workspace @drivemind/shared run build"
@@ -26,7 +27,7 @@
     "react-native": "0.83.4",
     "react-native-web": "^0.21.0"
   },
-  "main": "mobile/index.js",
+  "main": "mobile/index.ts",
   "overrides": {},
   "version": "1.0.0"
 }

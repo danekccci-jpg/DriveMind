@@ -20,8 +20,6 @@ try {
           return
         }
 
-        // Emergency minimal handler for release debugging:
-        // avoid Store/engine imports while validating TaskManager bootstrap stability.
         const count = Array.isArray(data?.locations) ? data.locations.length : 0
         console.log('[DriveMind LocationTask]: heartbeat', { task: LOCATION_TRACKING_TASK, locations: count })
       } catch (e) {
@@ -31,12 +29,4 @@ try {
   }
 } catch (e) {
   console.error('[DriveMind TaskManager bootstrap]: failed', e)
-}
-
-try {
-  /** Metro / `export:embed` default entry is `index.js`; delegates to `index.ts`. */
-  require('./index.ts')
-} catch (e) {
-  console.error('[DriveMind bootstrap]: index.ts failed', e)
-  throw e
 }

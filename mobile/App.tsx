@@ -15,6 +15,7 @@ import Logo from './src/components/common/Logo'
 import { SPLASH_NAVY } from './src/theme/logoAssets'
 
 import { useRoleStore } from './src/store/roleStore'
+import { useWelcomeStore } from './src/store/welcomeStore'
 import { useLanguageStore } from './src/store/languageStore'
 import { useOrdersStore } from './src/store/ordersStore'
 import { useAuthStore, isGuestEmail } from './src/store/authStore'
@@ -26,7 +27,7 @@ import { syncGuestOrderCountFromRemote, GUEST_ORDER_THRESHOLD } from './src/serv
 import { isEmailSignInLink, handleEmailLinkSignIn, completeEmailLinkAuth } from './src/services/emailLinkAuth'
 import LoginScreen from './src/screens/Login'
 import OnboardingScreen from './src/screens/Onboarding'
-import LanguageSelectionScreen from './src/screens/LanguageSelection'
+import WelcomeScreen from './src/screens/Welcome'
 import RootNavigator, { navigationRef } from './src/navigation/RootNavigator'
 import PaywallScreen from './src/screens/PaywallScreen'
 import { EVENT_OPEN_PAYWALL } from './src/services/subscriptionGate'
@@ -56,8 +57,9 @@ export default function App() {
   const [splashHoldDone, setSplashHoldDone] = useState(false)
 
   const onboardingComplete = useRoleStore((s) => s.onboardingComplete)
+  const hasSeenWelcome = useWelcomeStore((s) => s.hasSeenWelcome)
+  const setHasSeenWelcome = useWelcomeStore((s) => s.setHasSeenWelcome)
   const language = useLanguageStore((s) => s.language)
-  const hasChosenLanguage = useLanguageStore((s) => s.hasChosenLanguage)
   const { colors: c, isDark } = useTheme()
 
   const fadeAnim = useRef(new Animated.Value(0)).current
@@ -86,6 +88,15 @@ export default function App() {
   useEffect(() => {
     i18n.changeLanguage(language)
   }, [language])
+
+  // Existing users pre-dating this screen already have onboardingComplete
+  // set; persist hasSeenWelcome for them so the gate stays consistent and
+  // doesn't need to keep checking onboardingComplete on future launches.
+  useEffect(() => {
+    if (!hasSeenWelcome && onboardingComplete) {
+      setHasSeenWelcome(true)
+    }
+  }, [hasSeenWelcome, onboardingComplete, setHasSeenWelcome])
 
   // Startup: audit permissions only — never auto-request or open Settings.
   useEffect(() => {
@@ -238,11 +249,15 @@ export default function App() {
     },
   }
 
-  if (!hasChosenLanguage) {
+  // Existing users who already finished onboarding pre-date this screen —
+  // never show it retroactively, only to fresh installs.
+  const shouldShowWelcome = !hasSeenWelcome && !onboardingComplete
+
+  if (shouldShowWelcome) {
     return (
       <SafeAreaProvider>
         <StatusBar style={isDark ? 'light' : 'dark'} backgroundColor={c.bg} />
-        <LanguageSelectionScreen />
+        <WelcomeScreen />
       </SafeAreaProvider>
     )
   }

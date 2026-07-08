@@ -1,13 +1,10 @@
 /**
  * Monorepo root metro.config.js
  *
- * When the Android Gradle build invokes Expo CLI with the working directory set
- * to the monorepo root, Metro's config resolver looks for metro.config.js at
- * exactly this location. Without this file it falls back to a blank default
- * config that sets projectRoot to the monorepo root.
- *
- * By forwarding to mobile/metro.config.js, __dirname inside that file is
- * "mobile/", so getDefaultConfig(__dirname) and server.unstable_serverRoot
- * are both anchored to mobile/ — the correct project root.
+ * When Metro is invoked with the working directory at the monorepo root,
+ * it looks for metro.config.js here. Forward to mobile/metro.config.js so
+ * getDefaultConfig(__dirname) uses mobile/ as the Expo project root while
+ * server.unstable_serverRoot stays at the workspace root (required for
+ * "mobile/index.ts" entry resolution in npm workspaces).
  */
 module.exports = require('./mobile/metro.config.js');

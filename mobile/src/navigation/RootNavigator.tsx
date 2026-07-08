@@ -3,7 +3,6 @@ import { createNavigationContainerRef } from '@react-navigation/native'
 import { createStackNavigator, CardStyleInterpolators } from '@react-navigation/stack'
 import { useTranslation } from 'react-i18next'
 import AppTabs from './AppTabs'
-import NotificationsScreen from '../screens/Notifications'
 import NavigationSettingsScreen from '../screens/NavigationSettings'
 import PermissionsScreen from '../screens/Settings/PermissionsScreen'
 import PaywallScreen from '../screens/PaywallScreen'
@@ -50,11 +49,6 @@ export default function RootNavigator() {
           presentation: 'modal',
           gestureEnabled: true,
         }}
-      />
-      <Stack.Screen
-        name="Notifications"
-        component={NotificationsScreen}
-        options={{ title: t('notification_prefs') }}
       />
       <Stack.Screen
         name="NavigationSettings"

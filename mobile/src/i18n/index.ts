@@ -5,21 +5,14 @@ import en from './locales/en.json'
 import pl from './locales/pl.json'
 import uk from './locales/uk.json'
 import ru from './locales/ru.json'
+import { detectDeviceLanguage } from './detectDeviceLanguage'
 
-// Language is read synchronously from the store's persisted state before i18n
-// initialises. The store will call i18n.changeLanguage whenever the user
-// changes the preference at runtime.
-function getPersistedLanguage(): string {
-  try {
-    const raw = require('@react-native-async-storage/async-storage')
-    // AsyncStorage is async; we fall back to 'en' and let the app call
-    // i18n.changeLanguage once the store rehydrates.
-  } catch {
-    // ignore
-  }
-  return 'en'
-}
-
+// The initial language is detected synchronously from the device's system
+// locale (see `detectDeviceLanguage`), falling back to English when the
+// system language isn't one of the app's supported languages. If the user
+// previously made an explicit choice, `languageStore`'s `onRehydrateStorage`
+// callback will call `i18n.changeLanguage` once AsyncStorage rehydrates,
+// overriding this initial detection.
 i18n
   .use(initReactI18next)
   .init({
@@ -30,7 +23,7 @@ i18n
       uk: { translation: uk },
       ru: { translation: ru },
     },
-    lng: getPersistedLanguage(),
+    lng: detectDeviceLanguage(),
     fallbackLng: 'en',
     supportedLngs: ['en', 'pl', 'uk', 'ru'],
     nonExplicitSupportedLngs: true,

@@ -4,6 +4,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage'
 import { Platform } from 'react-native'
 
 import i18n from '../i18n'
+import { detectDeviceLanguage } from '../i18n/detectDeviceLanguage'
 
 export type Language = 'en' | 'pl' | 'uk' | 'ru'
 
@@ -18,9 +19,7 @@ export function cycleDriveMindLanguage(current: Language): Language {
 
 interface LanguageState {
   language: Language
-  hasChosenLanguage: boolean
   setLanguage: (language: Language) => void
-  confirmLanguageChoice: (language: Language) => void
 }
 
 const storage =
@@ -31,11 +30,11 @@ const storage =
 export const useLanguageStore = create<LanguageState>()(
   persist(
     (set) => ({
-      language: 'en',
-      hasChosenLanguage: false,
+      // Matches the language i18n already auto-detected on startup, so this
+      // is a no-op until AsyncStorage rehydrates a previously chosen language
+      // or the user explicitly picks one (Profile / Navigation settings).
+      language: detectDeviceLanguage(),
       setLanguage: (language) => set({ language }),
-      confirmLanguageChoice: (language) =>
-        set({ language, hasChosenLanguage: true }),
     }),
     {
       name: 'drivemind-language',

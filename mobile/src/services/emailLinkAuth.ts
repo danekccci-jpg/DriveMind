@@ -8,6 +8,7 @@ import {
 
 import { getFirebaseAuth } from '../config/firebase'
 import i18n from '../i18n'
+import { AUTO_DETECT_LANGUAGES, DEFAULT_LANGUAGE } from '../i18n/detectDeviceLanguage'
 import { useAuthStore } from '../store/authStore'
 import {
   syncUserSession,
@@ -22,11 +23,14 @@ const EMAIL_STORAGE_KEY = 'drivemind_email_for_signin'
 const BUNDLE_ID = 'com.guessxx.drivemind'
 const DEEP_LINK_URL = 'https://drivemind-d4994.firebaseapp.com/login'
 
-/** Firebase email-link sign-in supports en/pl/ru (uk falls back to en). */
+/**
+ * Firebase email-link sign-in supports en/pl/ru (uk, and any other
+ * unsupported system language, falls back to en). Uses the same detected
+ * language as the app's i18n layer so the sign-in email matches the UI.
+ */
 function resolveFirebaseAuthLanguage(): string {
-  const raw = (i18n.language || 'en').split('-')[0]
-  if (raw === 'pl' || raw === 'ru') return raw
-  return 'en'
+  const raw = (i18n.language || DEFAULT_LANGUAGE).split('-')[0]
+  return (AUTO_DETECT_LANGUAGES as readonly string[]).includes(raw) ? raw : DEFAULT_LANGUAGE
 }
 
 export type EmailLinkSendResult =

@@ -34,6 +34,12 @@ const SPRING_CONFIG = { damping: 20, stiffness: 200, mass: 0.8 }
 
 type PlatformId = 'glovo' | 'uber' | 'bolt' | 'wolt'
 type Role = 'courier' | 'taxi'
+type ValueListItem = {
+  key: string
+  icon: 'check' | 'widget'
+  title: string
+  subtitle?: string
+}
 
 const COURIER_PLATFORMS: PlatformId[] = ['glovo', 'uber', 'bolt', 'wolt']
 const TAXI_PLATFORMS: PlatformId[] = ['uber', 'bolt']
@@ -69,7 +75,7 @@ export default function OnboardingScreen() {
   const [selectedRole, setSelectedRole] = useState<Role>(roleFromStore ?? 'courier')
   const progress = useSharedValue(0)
 
-  const totalSteps = 4
+  const totalSteps = 3
   const isTaxi = selectedRole === 'taxi'
   const platforms = isTaxi ? TAXI_PLATFORMS : COURIER_PLATFORMS
 
@@ -131,13 +137,21 @@ export default function OnboardingScreen() {
     void Linking.openURL(PRIVACY_POLICY_URL)
   }, [])
 
-  const roleSpecificValue = useMemo(
-    () =>
-      isTaxi
-        ? [t('onboarding_taxi_value_1'), t('onboarding_taxi_value_2')]
-        : [t('onboarding_delivery_value_1'), t('onboarding_delivery_value_2')],
-    [isTaxi, t],
-  )
+  const unifiedValueItems: ValueListItem[] = useMemo(() => {
+    const roleItems = isTaxi
+      ? [t('onboarding_taxi_value_1'), t('onboarding_taxi_value_2')]
+      : [t('onboarding_delivery_value_1'), t('onboarding_delivery_value_2')]
+
+    return [
+      ...roleItems.map((title): ValueListItem => ({ key: title, icon: 'check', title })),
+      {
+        key: 'widget',
+        icon: 'widget',
+        title: t('onboarding_widget_item_title'),
+        subtitle: t('onboarding_widget_combined_desc'),
+      },
+    ]
+  }, [isTaxi, t])
 
   const renderStepRole = () => (
     <View style={[st.step, { backgroundColor: c.bg, paddingBottom: Math.max(insets.bottom, 8) }]}>
@@ -191,7 +205,7 @@ export default function OnboardingScreen() {
     </View>
   )
 
-  const renderStepWidget = () => (
+  const renderStepValue = () => (
     <View style={[st.step, { backgroundColor: c.bg, paddingBottom: Math.max(insets.bottom, 8) }]}>
       <ScrollView
         style={st.stepScroll}
@@ -203,39 +217,33 @@ export default function OnboardingScreen() {
           <Feather name="arrow-left" size={22} color={c.text} />
         </AnimatedButton>
         <Reanimated.View style={backgroundStyle}>
-          <Text style={[st.title, { color: c.text }]}>{t('onboarding_widget_title')}</Text>
-          <Text style={[st.sub, { color: c.textSecondary }]}>{t('onboarding_widget_desc')}</Text>
-        </Reanimated.View>
-        <Reanimated.View style={[st.infoCard, { backgroundColor: c.surface, borderColor: c.border }, foregroundStyle]}>
-          <MaterialCommunityIcons name="widgets-outline" size={34} color={c.primary} />
-          <Text style={[st.infoCardBody, { color: c.textSecondary }]}>{t('onboarding_widget_body')}</Text>
-        </Reanimated.View>
-      </ScrollView>
-      <PrimaryBtn label={t('next')} onPress={goNext} bg={c.primary} textColor={c.textInverse} />
-    </View>
-  )
-
-  const renderStepRoleValue = () => (
-    <View style={[st.step, { backgroundColor: c.bg, paddingBottom: Math.max(insets.bottom, 8) }]}>
-      <ScrollView
-        style={st.stepScroll}
-        contentContainerStyle={st.stepScrollContent}
-        showsVerticalScrollIndicator={false}
-      >
-        <ProgressDots total={totalSteps} current={2} activeColor={c.primary} mutedColor={c.border} />
-        <AnimatedButton style={st.backBtn} onPress={goBack} activeOpacity={0.7}>
-          <Feather name="arrow-left" size={22} color={c.text} />
-        </AnimatedButton>
-        <Reanimated.View style={backgroundStyle}>
           <Text style={[st.title, { color: c.text }]}>{t('onboarding_value_title')}</Text>
           <Text style={[st.sub, { color: c.textSecondary }]}>{t('onboarding_value_subtitle')}</Text>
         </Reanimated.View>
         <Reanimated.View style={[st.valueList, foregroundStyle]}>
-          {roleSpecificValue.map((line) => (
-            <View key={line} style={[st.valueItem, { backgroundColor: c.surface, borderColor: c.border }]}>
-              <Feather name="check-circle" size={18} color={c.primary} />
-              <Text style={[st.valueText, { color: c.text }]}>{line}</Text>
-            </View>
+          {unifiedValueItems.map((item, index) => (
+            <Reanimated.View
+              key={item.key}
+              entering={FadeInDown.delay(80 * index).springify()}
+              style={[st.valueItem, { backgroundColor: c.surface, borderColor: c.border }]}
+            >
+              {item.icon === 'check' ? (
+                <Feather name="check-circle" size={18} color={c.primary} style={st.valueItemIcon} />
+              ) : (
+                <MaterialCommunityIcons
+                  name="widgets-outline"
+                  size={20}
+                  color={c.primary}
+                  style={st.valueItemIcon}
+                />
+              )}
+              <View style={st.valueItemTextWrap}>
+                <Text style={[st.valueText, { color: c.text }]}>{item.title}</Text>
+                {item.subtitle ? (
+                  <Text style={[st.valueSubtext, { color: c.textSecondary }]}>{item.subtitle}</Text>
+                ) : null}
+              </View>
+            </Reanimated.View>
           ))}
         </Reanimated.View>
       </ScrollView>
@@ -250,7 +258,7 @@ export default function OnboardingScreen() {
         contentContainerStyle={st.stepScrollContent}
         showsVerticalScrollIndicator={false}
       >
-        <ProgressDots total={totalSteps} current={3} activeColor={c.primary} mutedColor={c.border} />
+        <ProgressDots total={totalSteps} current={2} activeColor={c.primary} mutedColor={c.border} />
         <AnimatedButton style={st.backBtn} onPress={goBack} activeOpacity={0.7}>
           <Feather name="arrow-left" size={22} color={c.text} />
         </AnimatedButton>
@@ -310,7 +318,7 @@ export default function OnboardingScreen() {
     </View>
   )
 
-  const steps = [renderStepRole, renderStepWidget, renderStepRoleValue, renderStepDisclosure]
+  const steps = [renderStepRole, renderStepValue, renderStepDisclosure]
 
   return (
     <SafeAreaView style={[st.safe, { backgroundColor: c.bg }]}>
@@ -398,18 +406,6 @@ const st = StyleSheet.create({
     fontSize: 14,
     fontFamily: fonts.semiBold,
   },
-  infoCard: {
-    borderWidth: 1,
-    borderRadius: 16,
-    padding: 18,
-    marginTop: 8,
-    gap: 10,
-  },
-  infoCardBody: {
-    fontSize: 14,
-    lineHeight: 21,
-    fontFamily: fonts.regular,
-  },
   permissionCards: {
     gap: 12,
     marginTop: 6,
@@ -439,13 +435,24 @@ const st = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 12,
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     gap: 10,
   },
-  valueText: {
+  valueItemIcon: {
+    marginTop: 2,
+  },
+  valueItemTextWrap: {
     flex: 1,
+    gap: 4,
+  },
+  valueText: {
     fontSize: 14,
     fontFamily: fonts.medium,
+  },
+  valueSubtext: {
+    fontSize: 12,
+    lineHeight: 17,
+    fontFamily: fonts.regular,
   },
   disclosureHeader: {
     alignItems: 'center',

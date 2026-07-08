@@ -334,16 +334,6 @@ export default function ProfileScreen() {
           separatorColor={c.separator}
         />
         <SettingsRow
-          icon={<Feather name="bell" size={20} color={c.secondary} />}
-          label={t('notification_prefs')}
-          onPress={() => {
-            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
-            navigation.navigate('Notifications')
-          }}
-          right={<Feather name="chevron-right" size={18} color={c.textMuted} />}
-          separatorColor={c.separator}
-        />
-        <SettingsRow
           icon={<Feather name="globe" size={20} color={c.secondary} />}
           label={t('language')}
           onPress={openLanguageModal}
