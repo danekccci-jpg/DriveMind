@@ -20,13 +20,20 @@ Edit Kotlin and XML directly under `mobile/android/` — there is no separate na
 
 `mobile/app.json` includes two DriveMind plugins that run on every `expo prebuild` and every EAS Build:
 
-### `./plugins/withDriveMindNative` (v2.1.0)
+### `./plugins/withDriveMindNative` (v2.4.0)
 
 1. Merges manifest entries via `withAndroidManifest` (`DriveMindScraperService`, `DriveMindNotificationService`, queries, usage stats permission)
 2. Ensures `accessibility_service_description` in `res/values/strings.xml`
-3. **Pins `android.enableMinifyInReleaseBuilds=false` and `android.enableR8.fullMode=false`** in `android/gradle.properties` (see Minification section below)
-4. **Wires release signing** via `android/keystore.properties` (Play upload key — fails `bundleRelease` if missing)
-5. **Fails the build** if `AndroidManifest.xml` is missing required service entries
+3. **Pins full R8 release optimizations** in `android/gradle.properties`:
+   - `android.enableMinifyInReleaseBuilds=true`
+   - `android.enableR8.fullMode=true` (Play: полнофункциональный режим)
+   - `android.enableShrinkResourcesInReleaseBuilds=true`
+   - `android.r8.optimizedResourceShrinking=true` (Play: оптимизированное удаление ресурсов; AGP 9+)
+   - `android.enableBundleCompression=true`
+4. **Patches** `app/build.gradle` to use `proguard-android-optimize.txt` (bytecode optimization; legacy `.txt` includes `-dontoptimize`)
+5. **Copies** `mobile/proguard-rules.pro` → `android/app/proguard-rules.pro` (includes `-repackageclasses` for class repacking)
+6. **Wires release signing** via `android/keystore.properties`
+7. **Fails the build** if `AndroidManifest.xml` is missing required service entries
 
 ### `./plugins/withDriveMindIcons` (v1.0.0)
 
@@ -45,32 +52,31 @@ the plugin logs a warning and skips gracefully if `sharp` is unavailable.
 
 ## Minification (R8)
 
-**Current state: `android.enableMinifyInReleaseBuilds=false`**
+**Current state: `android.enableMinifyInReleaseBuilds=true`**
 
-This is explicitly pinned by `withDriveMindNative → patchGradleProperties()` on every prebuild.
-Several Expo native modules use runtime reflection patterns that R8 full mode strips even with
-`-keep` rules, causing hard-to-reproduce crashes on device (observed with Firebase and Google
-Maps SDK in mixed managed/bare workflow).
+Pinned by `withDriveMindNative → patchGradleProperties()` on every `expo prebuild`.
+`npm run android:bundle:release:fresh` runs prebuild automatically before `bundleRelease`.
 
-**ProGuard keeps** in `mobile/android/app/proguard-rules.pro` are kept comprehensive so the flag
-can be flipped to `true` without extra work once validation is complete:
+**Source of truth for keep rules:** `mobile/proguard-rules.pro` (copied into `android/app/` by the plugin).
 
-- `com.guessxx.drivemind.**` (all fields, methods, names)
-- All individual DriveMind service classes (belt-and-suspenders)
-- `android.accessibilityservice.AccessibilityService` subclasses
-- `android.app.Service` subclasses
-- `NotificationListenerService` subclasses
-- React Native bridge reflection (`ReactPackage`, `NativeModule`, `@ReactMethod`)
-- Kotlin metadata and runtime
-- `androidx.dynamicanimation.**` (overlay spring animation)
-- Firebase / Google Play Services (with `-dontwarn`)
+**Verify before upload:**
 
-**To re-enable minification when ready:**
+```bash
+npm run android:verify-r8
+```
 
-1. In `withDriveMindNative.js → patchGradleProperties()`, change both values to `'true'`
-2. Run `npm run android:release:fresh` locally
-3. Smoke-test on device (grant all permissions, start a shift, confirm overlay works)
-4. Inspect `.aab` with APK Analyzer for unexpected stripping
+**Gradle log must include** `:app:minifyReleaseWithR8` and `:app:shrinkReleaseRes` during `bundleRelease`.
+
+**Play Console R8 checklist** (all four should show ✅ after uploading optimized AAB):
+
+| Play metric | Setting |
+|-------------|---------|
+| Полнофункциональный режим | `android.enableR8.fullMode=true` |
+| Удаление неиспользуемых ресурсов | `shrinkResources true` |
+| Оптимизированное удаление ресурсов | `android.r8.optimizedResourceShrinking=true` |
+| Перепаковка классов | `-repackageclasses` in proguard-rules.pro |
+
+**ProGuard keeps** use narrow rules (official RN + Expo consumer patterns) with `allowobfuscation` so Play measures a real obfuscation rate.
 
 ## Verify merged manifest (before Play upload)
 
@@ -113,6 +119,9 @@ If icons are wrong, update `mobile/assets/logo/logo-symbol-light.png` (day) or
 > into an already-prebuild `android/` folder without re-running full prebuild.
 
 ## Google Play Console — Accessibility API declaration
+
+**Store listing:** Play rejected builds when the **long description** omits AccessibilityService
+usage. Ready-to-paste Polish/English copy: [`PLAY_STORE_LISTING.md`](./PLAY_STORE_LISTING.md).
 
 DriveMind is **not** an accessibility tool (`isAccessibilityTool` is not set / defaults to `false`). Before internal testing users can enable the service, complete:
 

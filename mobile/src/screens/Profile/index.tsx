@@ -10,7 +10,6 @@ import {
   Switch,
   Linking,
   Alert,
-  ActivityIndicator,
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useNavigation } from '@react-navigation/native'
@@ -30,6 +29,7 @@ import { useLanguageStore, type Language } from '../../store/languageStore'
 import { useColors, type AppColors } from '../../theme/theme'
 import { fonts } from '../../theme/typography'
 import Logo from '../../components/common/Logo'
+import LoadingSpinner from '../../components/common/LoadingSpinner'
 import { LanguagePickerModal } from '../../components/LanguagePickerModal'
 import { PRIVACY_POLICY_URL, TERMS_OF_SERVICE_URL } from '../../constants/legalUrls'
 
@@ -386,7 +386,7 @@ export default function ProfileScreen() {
             onPress={() => void handleSeedOrders()}
           >
             {seeding ? (
-              <ActivityIndicator size="small" color={c.primary} />
+              <LoadingSpinner size="small" color={c.primary} />
             ) : (
               <Text style={[s.adminBtnText, { color: c.primary }]}>
                 🗺 Seed Kraków test orders
@@ -417,7 +417,7 @@ export default function ProfileScreen() {
           onPress={handleDeleteAccountPress}
         >
           {deletingAccount ? (
-            <ActivityIndicator size="small" color={c.danger} />
+            <LoadingSpinner size="small" color={c.danger} />
           ) : (
             <Text style={[s.deleteAccountText, { color: c.danger }]}>{t('delete_account')}</Text>
           )}

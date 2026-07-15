@@ -53,7 +53,7 @@ interface WeekCalendarProps {
   /** Currently selected day (midnight local). Null = no selection. */
   selectedDate: Date | null
   /** Days that have at least one order — highlighted with a dot. */
-  activeDates: Date[]
+  activeDates: ReadonlySet<string>
   onSelectDate: (day: Date | null) => void
 }
 
@@ -79,7 +79,7 @@ export function WeekCalendar({ selectedDate, activeDates, onSelectDate }: WeekCa
   }, [])
 
   const isActive = useCallback(
-    (day: Date) => activeDates.some((ad) => isSameDay(ad, day)),
+    (day: Date) => activeDates.has(dateKey(day)),
     [activeDates],
   )
 

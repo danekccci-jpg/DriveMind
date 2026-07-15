@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { Animated, Platform, ActivityIndicator, View, Dimensions, DeviceEventEmitter, AppState, Linking } from 'react-native'
+import { Animated, Platform, View, Dimensions, DeviceEventEmitter, AppState, Linking } from 'react-native'
+import LoadingSpinner from './src/components/common/LoadingSpinner'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 import { NavigationContainer, DefaultTheme, DarkTheme, type Theme } from '@react-navigation/native'
 import { StatusBar } from 'expo-status-bar'
@@ -30,13 +31,17 @@ import OnboardingScreen from './src/screens/Onboarding'
 import WelcomeScreen from './src/screens/Welcome'
 import RootNavigator, { navigationRef } from './src/navigation/RootNavigator'
 import PaywallScreen from './src/screens/PaywallScreen'
+import { EVENT_CLOSE_PAYWALL } from './src/screens/PaywallScreen'
 import { EVENT_OPEN_PAYWALL } from './src/services/subscriptionGate'
 import { SubscriptionProvider, useSubscription } from './src/context/SubscriptionContext'
 import { DriverIngestToast } from './src/components/DriverIngestToast'
 import { AccessibilityDisclosureHost } from './src/components/AccessibilityDisclosureHost'
+import { AccessibilityServiceDisclosureHost } from './src/components/AccessibilityServiceDisclosureHost'
+import { BackgroundLocationDisclosureHost } from './src/components/BackgroundLocationDisclosureHost'
 import { useDriverIngestBridge } from './src/services/driverIngestBridge'
 import { runPermissionColdStartAfterHydration } from './src/services/permissionColdStart'
 import { startLocationTracking, stopLocationTracking } from './src/services/locationTrackingService'
+import { ensureBackgroundLocationConsent } from './src/services/backgroundLocationDisclosure'
 import {
   checkPermissionsStatus,
   onReturnedFromSystemSettings,
@@ -116,6 +121,49 @@ export default function App() {
     })
     return () => sub.remove()
   }, [])
+
+  // ── Paywall close navigation ─────────────────────────────────────
+  useEffect(() => {
+    const closeSub = DeviceEventEmitter.addListener(EVENT_CLOSE_PAYWALL, () => {
+      if (navigationRef.isReady()) {
+        if (navigationRef.canGoBack()) {
+          navigationRef.goBack()
+        } else {
+          try { navigationRef.navigate('Tabs' as never) } catch {}
+        }
+      }
+    })
+    return () => closeSub.remove()
+  }, [])
+
+  // Proactively resolve background-location disclosure + permission while the
+  // app is still in the foreground (nav just started) — showing the Google
+  // Play prominent-disclosure modal only works while the UI is visible, so we
+  // must not wait until the app is actually backgrounded to ask.
+  useEffect(() => {
+    if (!onboardingComplete || Platform.OS !== 'android') return
+    const tryPrepareBackgroundLocation = () => {
+      void (async () => {
+        try {
+          const consented = await ensureBackgroundLocationConsent()
+          if (!consented) return
+          const { getBackgroundPermissionsAsync, requestBackgroundPermissionsAsync } =
+            await import('expo-location')
+          const existing = await getBackgroundPermissionsAsync()
+          if (existing.status !== 'granted') {
+            await requestBackgroundPermissionsAsync()
+          }
+        } catch (e) {
+          if (__DEV__) console.warn('[DriveMind] background location pre-consent failed', e)
+        }
+      })()
+    }
+    if (useOrdersStore.getState().isNavigating) tryPrepareBackgroundLocation()
+    const unsub = useOrdersStore.subscribe((state, prev) => {
+      if (state.isNavigating && !prev.isNavigating) tryPrepareBackgroundLocation()
+    })
+    return unsub
+  }, [onboardingComplete])
 
   useEffect(() => {
     if (!onboardingComplete) return
@@ -229,7 +277,7 @@ export default function App() {
           {fontsLoaded ? (
             <Logo theme="dark" variant="full" size="large" maxWidth={splashW} />
           ) : (
-            <ActivityIndicator color="#FFFFFF" size="large" />
+            <LoadingSpinner color="#FFFFFF" size="large" />
           )}
         </View>
       </SafeAreaProvider>
@@ -256,7 +304,7 @@ export default function App() {
   if (shouldShowWelcome) {
     return (
       <SafeAreaProvider>
-        <StatusBar style={isDark ? 'light' : 'dark'} backgroundColor={c.bg} />
+        <StatusBar style={isDark ? 'light' : 'dark'} />
         <WelcomeScreen />
       </SafeAreaProvider>
     )
@@ -265,7 +313,7 @@ export default function App() {
   if (!onboardingComplete) {
     return (
       <SafeAreaProvider>
-        <StatusBar style={isDark ? 'light' : 'dark'} backgroundColor={c.bg} />
+        <StatusBar style={isDark ? 'light' : 'dark'} />
         <OnboardingScreen />
       </SafeAreaProvider>
     )
@@ -277,9 +325,9 @@ export default function App() {
   if (needsNativeGoogleAuth && !authHydrated) {
     return (
       <SafeAreaProvider>
-        <StatusBar style={isDark ? 'light' : 'dark'} backgroundColor={c.bg} />
+        <StatusBar style={isDark ? 'light' : 'dark'} />
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: c.bg }}>
-          <ActivityIndicator size="large" color={c.primary} />
+          <LoadingSpinner size="large" color={c.primary} />
         </View>
       </SafeAreaProvider>
     )
@@ -288,7 +336,7 @@ export default function App() {
   if (needsNativeGoogleAuth && !isAuthenticated) {
     return (
       <SafeAreaProvider>
-        <StatusBar style={isDark ? 'light' : 'dark'} backgroundColor={c.bg} />
+        <StatusBar style={isDark ? 'light' : 'dark'} />
         <LoginScreen />
       </SafeAreaProvider>
     )
@@ -296,7 +344,7 @@ export default function App() {
 
   return (
     <SafeAreaProvider>
-      <StatusBar style={isDark ? 'light' : 'dark'} backgroundColor={c.tabBar} />
+      <StatusBar style={isDark ? 'light' : 'dark'} />
       <SubscriptionProvider>
         <AuthenticatedAppShell
           navTheme={navTheme}
@@ -341,7 +389,7 @@ function AuthenticatedAppShell({
   ) {
     return (
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: c.bg }}>
-        <ActivityIndicator size="large" color={c.primary} />
+        <LoadingSpinner size="large" color={c.primary} />
       </View>
     )
   }
@@ -353,7 +401,7 @@ function AuthenticatedAppShell({
   if (blocked) {
     return (
       <>
-        <StatusBar style="light" backgroundColor="#121212" />
+        <StatusBar style="dark" />
         <PaywallScreen />
       </>
     )
@@ -388,6 +436,8 @@ function MainAppWithDriverIngest({ navTheme }: { navTheme: Theme }) {
       <NavigationContainer ref={navigationRef} theme={navTheme}>
         <RootNavigator />
         <AccessibilityDisclosureHost />
+        <AccessibilityServiceDisclosureHost />
+        <BackgroundLocationDisclosureHost />
       </NavigationContainer>
     </>
   )

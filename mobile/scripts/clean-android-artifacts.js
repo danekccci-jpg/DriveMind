@@ -22,11 +22,12 @@ for (const d of dirs) {
     fs.rmSync(d, { recursive: true, force: true })
     console.log('[DriveMind] removed', path.relative(mobileRoot, d))
   } catch (error) {
-    const rel = path.relative(mobileRoot, d)
-    const isGradleCache = rel.replace(/\\/g, '/') === 'android/.gradle'
-    if (isGradleCache && error && (error.code === 'EPERM' || error.code === 'EBUSY')) {
+    const rel = path.relative(mobileRoot, d).replace(/\\/g, '/')
+    const locked =
+      error && (error.code === 'EPERM' || error.code === 'EBUSY')
+    if (locked) {
       console.warn(
-        `[DriveMind] skipped ${rel} (locked by Gradle daemon). Run: cd android && gradlew --stop`,
+        `[DriveMind] skipped ${rel} (locked). Stop Gradle/Metro, close Android Studio, then retry.`,
       )
       continue
     }

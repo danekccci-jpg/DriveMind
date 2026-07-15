@@ -1,5 +1,6 @@
-/** Google Play subscription SKU — must match Play Console product id. */
-export const SUBSCRIPTION_SKU = 'drivemind_weekly_premium'
+/** Google Play subscription product id — must match Play Console → Monetize → Subscriptions. */
+export const SUBSCRIPTION_SKU =
+  (process.env.EXPO_PUBLIC_SUBSCRIPTION_SKU ?? '').trim() || 'drivemind_weekly_premium'
 
 /** Android application id — must match Play Console package name. */
 export const ANDROID_PACKAGE_NAME = 'com.guessxx.drivemind'

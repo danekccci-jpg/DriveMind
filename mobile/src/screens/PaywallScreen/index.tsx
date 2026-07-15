@@ -4,15 +4,17 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  ActivityIndicator,
+  Pressable,
   ScrollView,
   Linking,
+  DeviceEventEmitter,
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useTranslation } from 'react-i18next'
-import { useNavigation } from '@react-navigation/native'
 
 import { fonts } from '../../theme/typography'
+import LoadingSpinner from '../../components/common/LoadingSpinner'
+import { navigationRef } from '../../navigation/navigationRef'
 import { signOutFirebase } from '../../services/firebaseAuth'
 import { useAuthStore, isGuestEmail } from '../../store/authStore'
 import { useSubscription } from '../../context/SubscriptionContext'
@@ -20,14 +22,27 @@ import { SUBSCRIPTION_PRICE_LABEL } from '../../constants/subscription'
 import { PRIVACY_POLICY_URL, TERMS_OF_SERVICE_URL } from '../../constants/legalUrls'
 import GoogleGIcon from '../../components/common/GoogleGIcon'
 
-const BG = '#121212'
-const CARD = '#1A1A1D'
-const BORDER = '#27272A'
-const TEXT_PRIMARY = '#FAFAFA'
-const TEXT_MUTED = '#A1A1AA'
-const TEXT_SOFT = '#71717A'
+export const EVENT_CLOSE_PAYWALL = 'DriveMindClosePaywall'
+
+type PaywallNavigation = {
+  canGoBack: () => boolean
+  goBack: () => void
+  navigate: (screen: 'Tabs') => void
+}
+
+type PaywallScreenProps = {
+  navigation?: PaywallNavigation
+}
+
+// ── Light theme palette ─────────────────────────────────────────────────────
+const BG = '#FFFFFF'
+const CARD = '#F9FAFB'
+const BORDER = '#E5E7EB'
+const TEXT_PRIMARY = '#0B0B0B'
+const TEXT_MUTED = '#6B7280'
+const TEXT_SOFT = '#9CA3AF'
 const ACCENT = '#22C55E'
-const ACCENT_DIM = 'rgba(34, 197, 94, 0.12)'
+const ACCENT_DIM = 'rgba(34, 197, 94, 0.10)'
 
 const FEATURES = [
   { icon: '📈', titleKey: 'feature1Title', subKey: 'feature1Sub' },
@@ -35,12 +50,9 @@ const FEATURES = [
   { icon: '🤖', titleKey: 'feature3Title', subKey: 'feature3Sub' },
 ] as const
 
-type PaywallNav = { goBack?: () => void; canGoBack?: () => boolean }
-
-export default function PaywallScreen() {
+export default function PaywallScreen({ navigation }: PaywallScreenProps) {
   const { t } = useTranslation()
   const insets = useSafeAreaInsets()
-  const navigation = useNavigation<PaywallNav>()
   const signOut = useAuthStore((s) => s.signOut)
   const isPaywallBlocked = useAuthStore((s) => s.isPaywallBlocked)
   const userEmail = useAuthStore((s) => s.userEmail)
@@ -64,8 +76,22 @@ export default function PaywallScreen() {
   }, [signOut])
 
   const onClose = useCallback(() => {
-    if (navigation.canGoBack?.()) {
-      navigation.goBack?.()
+    try {
+      // React Navigation injects this live navigation object when Paywall is
+      // opened as a Stack modal. Do not route modal dismissal through a global ref.
+      if (navigation) {
+        if (navigation.canGoBack()) navigation.goBack()
+        else navigation.navigate('Tabs')
+        return
+      }
+
+      // Fallback for direct rendering outside NavigationContainer.
+      DeviceEventEmitter.emit(EVENT_CLOSE_PAYWALL)
+      if (navigationRef.isReady() && navigationRef.canGoBack()) {
+        navigationRef.goBack()
+      }
+    } catch (e) {
+      if (__DEV__) console.warn('[DriveMind] Paywall onClose navigation failed', e)
     }
   }, [navigation])
 
@@ -80,17 +106,11 @@ export default function PaywallScreen() {
   const showClose = !isPaywallBlocked && !isGuest
 
   return (
-    <View style={[styles.root, { paddingTop: insets.top, paddingBottom: insets.bottom + 12 }]}>
+    <View style={styles.root}>
       <ScrollView
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[styles.scrollContent, { paddingTop: insets.top + 50, paddingBottom: insets.bottom + 12 }]}
         showsVerticalScrollIndicator={false}
       >
-        {showClose ? (
-          <TouchableOpacity style={styles.closeBtn} onPress={onClose} activeOpacity={0.7}>
-            <Text style={styles.closeLabel}>✕</Text>
-          </TouchableOpacity>
-        ) : null}
-
         {isGuest ? (
           <View style={styles.guestCard}>
             <Text style={styles.guestEmoji}>🏁</Text>
@@ -152,7 +172,7 @@ export default function PaywallScreen() {
           disabled={isPurchasing}
         >
           {isPurchasing ? (
-            <ActivityIndicator color="#0A0A0A" />
+            <LoadingSpinner color="#FFFFFF" />
           ) : (
             <Text style={styles.ctaLabel}>{t('paywall_checkout_cta')}</Text>
           )}
@@ -184,6 +204,20 @@ export default function PaywallScreen() {
           </TouchableOpacity>
         ) : null}
       </ScrollView>
+
+      {showClose ? (
+        <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+          <Pressable
+            style={[styles.closeBtn, { top: insets.top + 4, right: 12 }]}
+            onPressIn={onClose}
+            hitSlop={{ top: 50, bottom: 50, left: 50, right: 50 }}
+            accessibilityRole="button"
+            accessibilityLabel={t('paywall_close')}
+          >
+            <Text style={styles.closeLabel}>✕</Text>
+          </Pressable>
+        </View>
+      ) : null}
     </View>
   )
 }
@@ -198,12 +232,17 @@ const styles = StyleSheet.create({
     paddingBottom: 24,
   },
   closeBtn: {
-    alignSelf: 'flex-end',
-    padding: 8,
-    marginBottom: 4,
+    position: 'absolute',
+    width: 48,
+    height: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 24,
+    backgroundColor: 'rgba(0,0,0,0.06)',
   },
   closeLabel: {
-    fontSize: 20,
+    fontSize: 22,
+    lineHeight: 24,
     color: TEXT_MUTED,
     fontFamily: fonts.medium,
   },
@@ -254,7 +293,7 @@ const styles = StyleSheet.create({
     width: 42,
     height: 42,
     borderRadius: 21,
-    backgroundColor: '#242428',
+    backgroundColor: '#E8E8EC',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -310,10 +349,10 @@ const styles = StyleSheet.create({
     color: TEXT_MUTED,
   },
   pendingBanner: {
-    backgroundColor: 'rgba(234, 179, 8, 0.12)',
+    backgroundColor: '#FEFCE8',
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: 'rgba(234, 179, 8, 0.35)',
+    borderColor: '#FDE68A',
     padding: 12,
     marginBottom: 12,
   },
@@ -321,14 +360,14 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 18,
     fontFamily: fonts.medium,
-    color: '#FACC15',
+    color: '#92400E',
     textAlign: 'center',
   },
   errorBanner: {
-    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+    backgroundColor: '#FEF2F2',
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: 'rgba(239, 68, 68, 0.35)',
+    borderColor: '#FECACA',
     padding: 12,
     marginBottom: 12,
   },
@@ -336,7 +375,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 18,
     fontFamily: fonts.medium,
-    color: '#F87171',
+    color: '#B91C1C',
     textAlign: 'center',
   },
   ctaBtn: {
@@ -353,8 +392,8 @@ const styles = StyleSheet.create({
   ctaLabel: {
     fontSize: 17,
     fontFamily: fonts.semiBold,
-    fontWeight: '600',
-    color: '#0A0A0A',
+    fontWeight: '700',
+    color: '#FFFFFF',
   },
   footerLegal: {
     fontSize: 12,
@@ -436,7 +475,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontFamily: fonts.semiBold,
     fontWeight: '600',
-    color: '#0A0A0A',
+    color: '#FFFFFF',
   },
   guestHint: {
     fontSize: 12,

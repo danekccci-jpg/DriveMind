@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import {
-  ActivityIndicator,
   AppState,
   NativeModules,
   Platform,
@@ -16,11 +15,13 @@ import { useTranslation } from 'react-i18next'
 import { Feather } from '@expo/vector-icons'
 import * as Haptics from 'expo-haptics'
 import { useColors, type AppColors } from '../../theme/theme'
+import LoadingSpinner from '../../components/common/LoadingSpinner'
 import { fonts } from '../../theme/typography'
 import {
   checkPermissionsStatus,
   requestRuntimePermissionsOnUserAction,
 } from '../../services/permissionManager'
+import { openAccessibilitySettingsManaged } from '../../services/accessibilityDisclosure'
 
 // ── Native module types ───────────────────────────────────────────────────────
 
@@ -151,7 +152,7 @@ export default function PermissionsScreen() {
 
       {loading ? (
         <View style={s.loadingWrap}>
-          <ActivityIndicator size="large" color={c.primary} />
+          <LoadingSpinner size="large" color={c.primary} />
         </View>
       ) : (
         <>
@@ -226,7 +227,7 @@ export default function PermissionsScreen() {
             actionLabel={perms.accessibility ? t('perm_a11y_action_manage') : t('perm_a11y_action_grant')}
             onAction={() => {
               void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
-              native?.openAccessibilitySettings()
+              void openAccessibilitySettingsManaged()
             }}
             danger={!perms.accessibility}
           />

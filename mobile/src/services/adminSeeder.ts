@@ -18,7 +18,7 @@ const ORDERS_COLLECTION = 'seeded_orders'
 function parseCsvEnv(key: string): string[] {
   return (process.env[key] ?? '')
     .split(',')
-    .map((s) => s.trim())
+    .map((s: string) => s.trim())
     .filter(Boolean)
 }
 

@@ -27,20 +27,35 @@ if (Test-Path (Join-Path $mobileRoot ".expo")) {
 if (Test-Path (Join-Path $mobileRoot "node_modules\.cache")) {
     Remove-Item -Recurse -Force (Join-Path $mobileRoot "node_modules\.cache")
 }
+$metroCache = Join-Path $repoRoot "node_modules\.cache"
+if (Test-Path $metroCache) {
+    Remove-Item -Recurse -Force $metroCache
+}
 
-# 4. Clean Android artifacts
-Write-Host "Cleaning Android artifacts..." -ForegroundColor Yellow
-npm run android:clean:artifacts
+# 4. Apply Expo config plugins (R8, proguard, signing, manifest)
+Write-Host "Applying Expo config plugins (expo prebuild)..." -ForegroundColor Yellow
+$env:NODE_ENV = "production"
+npx expo prebuild --platform android --no-install
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-# 5. Stop Gradle Daemon to flush in-memory cache
+Write-Host "Verifying R8 / ProGuard config..." -ForegroundColor Yellow
+node "$mobileRoot\scripts\verify-r8-config.js"
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+# 5. Stop Gradle Daemon first — otherwise Windows locks android/app/build (EPERM)
 Write-Host "Stopping Gradle Daemon..." -ForegroundColor Yellow
 Set-Location (Join-Path $mobileRoot "android")
 .\gradlew --stop
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 Set-Location $mobileRoot
+Start-Sleep -Seconds 2
 
-# 6. Build production AAB forcing re-run of tasks
+# 6. Clean Android artifacts
+Write-Host "Cleaning Android artifacts..." -ForegroundColor Yellow
+npm run android:clean:artifacts
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+# 7. Build production AAB forcing re-run of tasks
 Write-Host "Verifying release auth env..." -ForegroundColor Yellow
 npm run android:verify-release-env
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

@@ -1,15 +1,15 @@
 import React from 'react'
-import { createNavigationContainerRef } from '@react-navigation/native'
 import { createStackNavigator, CardStyleInterpolators } from '@react-navigation/stack'
 import { useTranslation } from 'react-i18next'
 import AppTabs from './AppTabs'
 import NavigationSettingsScreen from '../screens/NavigationSettings'
 import PermissionsScreen from '../screens/Settings/PermissionsScreen'
 import PaywallScreen from '../screens/PaywallScreen'
+import { navigationRef } from './navigationRef'
+
+export { navigationRef }
 
 const Stack = createStackNavigator()
-
-export const navigationRef = createNavigationContainerRef<Record<string, object | undefined>>()
 
 export default function RootNavigator() {
   const { t } = useTranslation()

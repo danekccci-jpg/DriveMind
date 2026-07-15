@@ -3,6 +3,7 @@ import * as Location from 'expo-location'
 import * as TaskManager from 'expo-task-manager'
 import { LOCATION_TRACKING_TASK } from '../tasks/locationTrackingTask'
 import { devLog, devWarn, devError } from '../utils/logger'
+import { ensureBackgroundLocationConsent } from './backgroundLocationDisclosure'
 
 export { LOCATION_TRACKING_TASK }
 
@@ -42,6 +43,15 @@ export async function startLocationTracking(): Promise<boolean> {
     if (Platform.OS === 'android') {
       const bgExisting = await Location.getBackgroundPermissionsAsync()
       if (bgExisting.status !== 'granted' && !backgroundPromptedThisSession) {
+        // Google Play policy: the prominent disclosure MUST be shown and
+        // explicitly accepted before the system dialog appears. If the user
+        // has already declined this session, skip silently — never re-prompt
+        // mid-shift.
+        const consented = await ensureBackgroundLocationConsent()
+        if (!consented) {
+          devWarn('[DriveMind Location]: background location consent not given — skipping background updates')
+          return false
+        }
         backgroundPromptedThisSession = true
         const bg = await Location.requestBackgroundPermissionsAsync()
         if (bg.status !== 'granted') {

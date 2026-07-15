@@ -4,7 +4,6 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  ActivityIndicator,
   Platform,
   Alert,
   Linking,
@@ -25,6 +24,7 @@ import { syncOrderParsingGate } from '../../services/subscriptionGate'
 import { useRoleStore } from '../../store/roleStore'
 import { formatAuthErrorMessage, logAuthFailure } from '../../services/authErrorMessages'
 import Logo from '../../components/common/Logo'
+import LoadingSpinner from '../../components/common/LoadingSpinner'
 import GoogleGIcon from '../../components/common/GoogleGIcon'
 import { PRIVACY_POLICY_URL, TERMS_OF_SERVICE_URL } from '../../constants/legalUrls'
 
@@ -172,7 +172,7 @@ export default function LoginScreen() {
               disabled={loading}
             >
               {loading ? (
-                <ActivityIndicator color={c.textInverse} />
+                <LoadingSpinner color={c.textInverse} />
               ) : (
                 <Text style={[styles.emailLinkLabel, { color: c.textInverse }]}>{t('login_send_link')}</Text>
               )}
@@ -191,7 +191,7 @@ export default function LoginScreen() {
               disabled={loading}
             >
               {loading ? (
-                <ActivityIndicator color={c.primary} />
+                <LoadingSpinner color={c.primary} />
               ) : (
                 <>
                   <GoogleGIcon size={22} />

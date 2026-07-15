@@ -39,7 +39,10 @@ const DRIVER_PACKAGES = [
   'com.guessxx.krakowmocks',
 ]
 
-const DRIVEMIND_PERMISSIONS = ['android.permission.PACKAGE_USAGE_STATS']
+const DRIVEMIND_PERMISSIONS = [
+  'android.permission.PACKAGE_USAGE_STATS',
+  'com.android.vending.BILLING',
+]
 const DEFAULT_ANDROID_PACKAGE = 'com.guessxx.drivemind'
 
 function envTrim(key) {
@@ -195,22 +198,21 @@ function ensureAccessibilityServiceString(destPath) {
 }
 
 /**
- * Writes/updates android/gradle.properties to pin the release-minify setting.
+ * Writes/updates android/gradle.properties to pin release-build optimizations.
  *
- * Why false?  Several Expo native modules use reflection patterns that R8's full
- * mode strips even with keep rules, causing hard-to-reproduce crashes on device.
- * Flip to `true` only after validating a release APK locally with `--no-minify`
- * removed.  The ProGuard keeps in proguard-rules.pro are kept comprehensive so
- * the switch is safe whenever we're ready.
+ * Targets Google Play optimization without breaking React Native:
+ *   - minifyEnabled + proguard-android-optimize.txt (bytecode optimization)
+ *   - shrinkResources + bundleCompression
+ *   - R8 standard mode (fullMode=false) — full mode + repackaging break RN/Expo
  *
- * Keys managed by this function (idempotent — will not duplicate):
- *   android.enableMinifyInReleaseBuilds=false
- *   android.enableR8.fullMode=false
+ * Keep rules in mobile/proguard-rules.pro are comprehensive for JNI/bridge/services.
  */
 function patchGradleProperties(gradlePropertiesPath) {
   const MANAGED_KEYS = {
-    'android.enableMinifyInReleaseBuilds': 'false',
+    'android.enableMinifyInReleaseBuilds': 'true',
     'android.enableR8.fullMode': 'false',
+    'android.enableShrinkResourcesInReleaseBuilds': 'true',
+    'android.enableBundleCompression': 'true',
   }
 
   let content = ''
@@ -237,8 +239,57 @@ function patchGradleProperties(gradlePropertiesPath) {
   if (changed) {
     fs.mkdirSync(path.dirname(gradlePropertiesPath), { recursive: true })
     fs.writeFileSync(gradlePropertiesPath, content, 'utf8')
-    console.log('[with-drivemind-native] patched gradle.properties: minify=false, R8.fullMode=false')
+    console.log('[with-drivemind-native] patched gradle.properties: minify=true, optimize proguard, R8.fullMode=false')
   }
+}
+
+/**
+ * Copies mobile/proguard-rules.pro → android/app/proguard-rules.pro so the
+ * proguardFiles reference in app/build.gradle resolves to our comprehensive
+ * keep rules.
+ *
+ * The source file (mobile/proguard-rules.pro) is the single source of truth
+ * and is committed to git.  The android/ directory is ephemeral (regenerated
+ * by `expo prebuild`) so we copy it fresh on every prebuild cycle.
+ */
+function ensureProguardRules(pkgRoot, appDir) {
+  const src = path.join(pkgRoot, 'proguard-rules.pro')
+  const dest = path.join(appDir, 'proguard-rules.pro')
+
+  if (!fs.existsSync(src)) {
+    console.warn(
+      '[with-drivemind-native] mobile/proguard-rules.pro not found — R8 will use default rules only. ' +
+      'Create it to prevent native-module stripping.',
+    )
+    return
+  }
+
+  let content = fs.readFileSync(src, 'utf8')
+  // Replace trailing blank lines with exactly one \n so the file is clean.
+  content = content.replace(/\n{3,}$/, '\n\n')
+  fs.writeFileSync(dest, content, 'utf8')
+  console.log('[with-drivemind-native] copied proguard-rules.pro → android/app/proguard-rules.pro')
+}
+
+/**
+ * Switches release proguardFiles from proguard-android.txt to
+ * proguard-android-optimize.txt.  The legacy file includes -dontoptimize which
+ * blocks bytecode optimization and causes Play Console optimization metrics to
+ * show "—" even when minifyEnabled=true.
+ */
+function patchReleaseProguardOptimize(appGradlePath) {
+  if (!fs.existsSync(appGradlePath)) return
+  let gradle = fs.readFileSync(appGradlePath, 'utf8')
+  const legacy = 'getDefaultProguardFile("proguard-android.txt")'
+  const optimized = 'getDefaultProguardFile("proguard-android-optimize.txt")'
+  if (gradle.includes(optimized)) return
+  if (!gradle.includes(legacy)) {
+    console.warn('[with-drivemind-native] patchReleaseProguardOptimize: proguard-android.txt anchor not found')
+    return
+  }
+  gradle = gradle.replace(legacy, optimized)
+  fs.writeFileSync(appGradlePath, gradle, 'utf8')
+  console.log('[with-drivemind-native] patched app/build.gradle: proguard-android-optimize.txt')
 }
 
 const RELEASE_SIGNING_MARKER = '// DriveMind release signing (keystore.properties)'
@@ -516,6 +567,24 @@ function addEmailLinkIntentFilters(application) {
   mainActivity['intent-filter'] = filters
 }
 
+/**
+ * Android 16 ignores fixed orientation on large screens. Keep the app
+ * resizable and let the existing responsive/safe-area layout handle rotation.
+ * The top-level Expo orientation remains available to iOS.
+ */
+function removeAndroidLargeScreenRestrictions(application) {
+  if (!application.$) application.$ = {}
+  application.$['android:resizeableActivity'] = 'true'
+
+  const mainActivity = ensureArray(application.activity).find((activity) => {
+    const name = activity?.$?.['android:name']
+    return name === '.MainActivity' || name?.endsWith('.MainActivity')
+  })
+  if (mainActivity?.$) {
+    delete mainActivity.$['android:screenOrientation']
+  }
+}
+
 function withDriveMindAndroidManifest(config) {
   return withAndroidManifest(config, (cfg) => {
     const manifest = cfg.modResults.manifest
@@ -527,6 +596,7 @@ function withDriveMindAndroidManifest(config) {
     const application = getOrCreateApplication(manifest)
     addDriveMindServices(application)
     addEmailLinkIntentFilters(application)
+    removeAndroidLargeScreenRestrictions(application)
     assertManifestModResults(manifest)
 
     return cfg
@@ -627,10 +697,14 @@ function withDriveMindNative(config) {
         ensureDriveMindGradleDeps(appGradle, hasGoogleServices)
         stripGradleNativeSync(appGradle)
         patchReleaseSigning(appGradle)
+        patchReleaseProguardOptimize(appGradle)
       }
 
       const gradlePropertiesPath = path.join(projectRoot, 'gradle.properties')
       patchGradleProperties(gradlePropertiesPath)
+
+      const pkgRoot = path.join(__dirname, '..')
+      ensureProguardRules(pkgRoot, appDir)
 
       const manifestPath = path.join(projectRoot, 'app', 'src', 'main', 'AndroidManifest.xml')
       patchManifestOnDisk(manifestPath)
@@ -640,4 +714,4 @@ function withDriveMindNative(config) {
   ])
 }
 
-module.exports = createRunOncePlugin(withDriveMindNative, 'with-drivemind-native', '2.1.0')
+module.exports = createRunOncePlugin(withDriveMindNative, 'with-drivemind-native', '2.6.0')

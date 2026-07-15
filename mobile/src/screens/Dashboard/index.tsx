@@ -8,7 +8,6 @@ import {
   AppStateStatus,
   Alert,
   Animated,
-  ActivityIndicator,
   Platform,
   ScrollView,
   Linking,
@@ -887,11 +886,7 @@ export default function DashboardScreen() {
 
   return (
     <View style={[s.root, { backgroundColor: c.tabBar }]}>
-      <StatusBar
-        translucent
-        backgroundColor="transparent"
-        barStyle={isDark ? 'light-content' : 'dark-content'}
-      />
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
       <View style={s.mapFill}>
       {!NUCLEAR_DISABLE_NATIVE_MAPS && isMapReady && (
       <DashboardMap

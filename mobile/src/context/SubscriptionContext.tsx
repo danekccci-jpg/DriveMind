@@ -72,12 +72,101 @@ const SubscriptionContext = createContext<SubscriptionContextValue | null>(null)
 function isAndroidSubscriptionProduct(
   product: unknown,
 ): product is SubscriptionAndroid {
+  if (typeof product !== 'object' || product == null) return false
+  const candidate = product as SubscriptionAndroid
+  const id = (candidate.productId ?? '').trim().toLowerCase()
+  const expected = SUBSCRIPTION_SKU.trim().toLowerCase()
   return (
-    typeof product === 'object' &&
-    product != null &&
-    'subscriptionOfferDetails' in product &&
-    Array.isArray((product as SubscriptionAndroid).subscriptionOfferDetails)
+    id === expected &&
+    Array.isArray(candidate.subscriptionOfferDetails) &&
+    candidate.subscriptionOfferDetails.length > 0
   )
+}
+
+function pickWeeklyOfferToken(product: SubscriptionAndroid): string | null {
+  const offers = product.subscriptionOfferDetails ?? []
+  const weeklyOffer = offers.find((offer) =>
+    offer.pricingPhases?.pricingPhaseList?.some(
+      (phase) => phase.billingPeriod === 'P1W',
+    ),
+  )
+  return weeklyOffer?.offerToken ?? offers[0]?.offerToken ?? null
+}
+
+/** Small delay helper for BillingClient settlement. */
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+/** Guards against redundant/parallel BillingClient connections across the process lifetime. */
+let iapConnectionEstablished = false
+
+/**
+ * Ensures the BillingClient connection is initialised exactly once per process.
+ * Safe to call repeatedly — never throws (a dead billing service must never
+ * crash the boot sequence; the paywall simply shows a retry error instead).
+ */
+async function ensureIapConnection(): Promise<void> {
+  if (iapConnectionEstablished) return
+  try {
+    await initConnection()
+    await flushFailedPurchasesCachedAsPendingAndroid()
+    iapConnectionEstablished = true
+  } catch (e) {
+    console.error('[DriveMind] IAP initConnection failed:', e)
+    throw e
+  }
+}
+
+/**
+ * Fetches the Android subscription product from Google Play with retry logic.
+ *
+ * The empty-array bug happens when BillingClient.initConnection() resolves
+ * before the service is fully bound.  We retry once with a full disconnect
+ * + re-init + settlement delay to work around it.
+ */
+async function loadAndroidSubscriptionProduct(): Promise<SubscriptionAndroid> {
+  const attempt = async (firstTry: boolean): Promise<SubscriptionAndroid | null> => {
+    if (firstTry) {
+      await ensureIapConnection()
+    } else {
+      try {
+        await endConnection()
+      } catch {
+        /* may not be connected */
+      }
+      iapConnectionEstablished = false
+      await sleep(1500)
+      await initConnection()
+      await flushFailedPurchasesCachedAsPendingAndroid()
+      iapConnectionEstablished = true
+      await sleep(500)
+    }
+
+    const subs = await getSubscriptions({ skus: [SUBSCRIPTION_SKU] })
+    const match = subs.find(isAndroidSubscriptionProduct)
+    if (match) return match
+
+    const returnedSubIds = subs.map((p) => p.productId).filter(Boolean).join(', ') || '(none)'
+    console.warn(
+      `[DriveMind] IAP: attempt ${firstTry ? 'first' : 'retry'} — ` +
+        `getSubscriptions returned [${returnedSubIds}] for SKU "${SUBSCRIPTION_SKU}"`,
+    )
+    return null
+  }
+
+  // First attempt
+  let product = await attempt(true)
+  if (product) return product
+
+  // Retry with full connection reset
+  product = await attempt(false)
+  if (product) return product
+
+  const msg =
+    `Subscription product "${SUBSCRIPTION_SKU}" is not available. ` +
+    `Verify the product exists and is active in Play Console → Monetize → Subscriptions ` +
+    `for package "${ANDROID_PACKAGE_NAME}".`
+  console.error('[DriveMind] IAP:', msg)
+  throw new Error(msg)
 }
 
 function timestampToDate(value: unknown): Date | null {
@@ -350,14 +439,9 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
 
     void (async () => {
       try {
-        await initConnection()
-        if (cancelled) return
-        await flushFailedPurchasesCachedAsPendingAndroid()
-        if (cancelled) return
-
-        const products = await getSubscriptions({ skus: [SUBSCRIPTION_SKU] })
-        if (!cancelled && products.length > 0 && isAndroidSubscriptionProduct(products[0])) {
-          subscriptionProductRef.current = products[0]
+        const product = await loadAndroidSubscriptionProduct()
+        if (!cancelled) {
+          subscriptionProductRef.current = product
         }
 
         purchaseSub = purchaseUpdatedListener((purchase) => {
@@ -370,7 +454,7 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
           }
         })
       } catch (error) {
-        if (__DEV__) console.warn('[DriveMind] IAP init failed', error)
+        console.error('[DriveMind] IAP init failed:', error)
       } finally {
         if (!cancelled) setIapReady(true)
       }
@@ -380,7 +464,8 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
       cancelled = true
       purchaseSub?.remove()
       errorSub?.remove()
-      void endConnection()
+      iapConnectionEstablished = false
+      void endConnection().catch(() => { /* may not be connected */ })
     }
   }, [isGuest, handlePurchase])
 
@@ -400,18 +485,15 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
     try {
       let product = subscriptionProductRef.current
       if (!product) {
-        const products = await getSubscriptions({ skus: [SUBSCRIPTION_SKU] })
-        const candidate = products.find(isAndroidSubscriptionProduct)
-        if (!candidate) {
-          throw new Error('Subscription product is not configured in Google Play Console.')
-        }
-        product = candidate
+        product = await loadAndroidSubscriptionProduct()
         subscriptionProductRef.current = product
       }
 
-      const offerToken = product.subscriptionOfferDetails[0]?.offerToken
+      const offerToken = pickWeeklyOfferToken(product)
       if (!offerToken) {
-        throw new Error('No subscription offer token — check Play Console base plan.')
+        throw new Error(
+          `No subscription offer token for "${SUBSCRIPTION_SKU}" — activate a weekly base plan in Play Console.`,
+        )
       }
 
       await requestSubscription({

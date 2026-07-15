@@ -88,6 +88,7 @@ export default function Logo({
           {...imageProps}
           source={source}
           resizeMode="contain"
+          resizeMethod="resize"
           style={styles.fillWidthImage}
         />
       </View>
@@ -125,6 +126,7 @@ export default function Logo({
         {...imageProps}
         source={source}
         resizeMode="contain"
+        resizeMethod="resize"
         style={[{ height: fixedHeight, width: imageWidth }, style]}
       />
     </View>
