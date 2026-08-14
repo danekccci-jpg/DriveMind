@@ -30,31 +30,31 @@ export default function AppTabs() {
       }}
       screenOptions={{
         headerShown: false,
+        // Icons only — hide the text label on every tab
+        tabBarShowLabel: false,
         tabBarStyle: {
           backgroundColor: c.tabBar,
           borderTopColor: c.tabBarBorder,
           borderTopWidth: 0.5,
-          height: 60 + insets.bottom,
-          paddingTop: 8,
-          paddingBottom: Math.max(insets.bottom, 8),
+          // Fixed content height above the safe-area inset so the bar adapts
+          // to gesture bars, home indicators and Android edge-to-edge mode
+          height: 56 + insets.bottom,
+          paddingBottom: insets.bottom,
         },
-        tabBarItemStyle: {
-          paddingVertical: 4,
+        // Vertically center the icon inside each tab button
+        tabBarIconStyle: {
+          marginTop: 'auto',
+          marginBottom: 'auto',
         },
         tabBarActiveTintColor: c.primary,
         tabBarInactiveTintColor: c.textMuted,
-        tabBarLabelStyle: {
-          fontSize: 11,
-          fontFamily: 'Poppins_400Regular',
-          marginTop: 2,
-        },
       }}
     >
       <Tab.Screen
         name="Dashboard"
         component={DashboardScreen}
         options={{
-          tabBarLabel: t('ride'),
+          tabBarAccessibilityLabel: t('ride'),
           tabBarIcon: ({ color, size }) => (
             <Feather name="navigation" size={size ?? 22} color={color} />
           ),
@@ -64,7 +64,7 @@ export default function AppTabs() {
         name="OrderHub"
         component={OrderHubScreen}
         options={{
-          tabBarLabel: t('orders'),
+          tabBarAccessibilityLabel: t('orders'),
           tabBarBadge: ordersBadge > 0 ? ordersBadge : undefined,
           tabBarIcon: ({ color, size }) => (
             <Feather name="list" size={size ?? 22} color={color} />
@@ -75,7 +75,7 @@ export default function AppTabs() {
         name="ShiftMode"
         component={ShiftModeScreen}
         options={{
-          tabBarLabel: t('shift'),
+          tabBarAccessibilityLabel: t('shift'),
           tabBarIcon: ({ color, size }) => (
             <Feather name="clock" size={size ?? 22} color={color} />
           ),
@@ -85,7 +85,7 @@ export default function AppTabs() {
         name="Earnings"
         component={EarningsScreen}
         options={{
-          tabBarLabel: t('earnings'),
+          tabBarAccessibilityLabel: t('earnings'),
           tabBarIcon: ({ color, size }) => (
             <Feather name="bar-chart-2" size={size ?? 22} color={color} />
           ),
@@ -95,7 +95,7 @@ export default function AppTabs() {
         name="Profile"
         component={ProfileScreen}
         options={{
-          tabBarLabel: t('profile'),
+          tabBarAccessibilityLabel: t('profile'),
           tabBarIcon: ({ color, size }) => (
             <Feather name="user" size={size ?? 22} color={color} />
           ),

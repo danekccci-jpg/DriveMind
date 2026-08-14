@@ -1,4 +1,4 @@
-import React, { useCallback } from 'react'
+import React, { useCallback, useMemo } from 'react'
 import {
   View,
   Text,
@@ -11,14 +11,15 @@ import {
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useTranslation } from 'react-i18next'
+import { Ionicons } from '@expo/vector-icons'
 
 import { fonts } from '../../theme/typography'
+import { useColors, type AppColors } from '../../theme/theme'
 import LoadingSpinner from '../../components/common/LoadingSpinner'
 import { navigationRef } from '../../navigation/navigationRef'
 import { signOutFirebase } from '../../services/firebaseAuth'
 import { useAuthStore, isGuestEmail } from '../../store/authStore'
 import { useSubscription } from '../../context/SubscriptionContext'
-import { SUBSCRIPTION_PRICE_LABEL } from '../../constants/subscription'
 import { PRIVACY_POLICY_URL, TERMS_OF_SERVICE_URL } from '../../constants/legalUrls'
 import GoogleGIcon from '../../components/common/GoogleGIcon'
 
@@ -34,32 +35,29 @@ type PaywallScreenProps = {
   navigation?: PaywallNavigation
 }
 
-// ── Light theme palette ─────────────────────────────────────────────────────
-const BG = '#FFFFFF'
-const CARD = '#F9FAFB'
-const BORDER = '#E5E7EB'
-const TEXT_PRIMARY = '#0B0B0B'
-const TEXT_MUTED = '#6B7280'
-const TEXT_SOFT = '#9CA3AF'
-const ACCENT = '#22C55E'
-const ACCENT_DIM = 'rgba(34, 197, 94, 0.10)'
-
 const FEATURES = [
-  { icon: '📈', titleKey: 'feature1Title', subKey: 'feature1Sub' },
-  { icon: '👁️', titleKey: 'feature2Title', subKey: 'feature2Sub' },
-  { icon: '🤖', titleKey: 'feature3Title', subKey: 'feature3Sub' },
+  { icon: 'trending-up', titleKey: 'feature1Title', subKey: 'feature1Sub' },
+  { icon: 'eye-off', titleKey: 'feature2Title', subKey: 'feature2Sub' },
+  { icon: 'flash', titleKey: 'feature3Title', subKey: 'feature3Sub' },
 ] as const
 
 export default function PaywallScreen({ navigation }: PaywallScreenProps) {
   const { t } = useTranslation()
   const insets = useSafeAreaInsets()
+  const c = useColors()
+  const styles = useMemo(() => createStyles(c), [c])
   const signOut = useAuthStore((s) => s.signOut)
-  const isPaywallBlocked = useAuthStore((s) => s.isPaywallBlocked)
   const userEmail = useAuthStore((s) => s.userEmail)
   const isGuest = isGuestEmail(userEmail)
 
-  const { buySubscription, isPurchasing, lastError, clearError, subscriptionStatus } =
-    useSubscription()
+  const {
+    buySubscription,
+    isPurchasing,
+    lastError,
+    clearError,
+    freeTrialAvailable,
+    subscriptionStatus,
+  } = useSubscription()
 
   const onSubscribe = useCallback(() => {
     clearError()
@@ -103,17 +101,38 @@ export default function PaywallScreen({ navigation }: PaywallScreenProps) {
     void Linking.openURL(PRIVACY_POLICY_URL)
   }, [])
 
-  const showClose = !isPaywallBlocked && !isGuest
+  // The paywall is always presented as a dismissible modal over the app
+  // shell (restricted free mode) — the close button is therefore always
+  // available and dismissal routes back to the main tabs.
+  const ctaLabel = t(freeTrialAvailable ? 'paywall_checkout_cta_trial' : 'paywall_checkout_cta')
 
   return (
     <View style={styles.root}>
       <ScrollView
-        contentContainerStyle={[styles.scrollContent, { paddingTop: insets.top + 50, paddingBottom: insets.bottom + 12 }]}
+        contentContainerStyle={[
+          styles.scrollContent,
+          { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 12 },
+        ]}
         showsVerticalScrollIndicator={false}
       >
+        <View style={styles.headerRow}>
+          <Text style={styles.eyebrow}>{t('premiumBadge')}</Text>
+          <Pressable
+            style={styles.closeBtn}
+            onPress={onClose}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            accessibilityRole="button"
+            accessibilityLabel={t('paywall_close')}
+          >
+            <Ionicons name="close" size={22} color={c.textSecondary} />
+          </Pressable>
+        </View>
+
         {isGuest ? (
           <View style={styles.guestCard}>
-            <Text style={styles.guestEmoji}>🏁</Text>
+            <View style={styles.guestIconWrap}>
+              <Ionicons name="flag" size={24} color={c.success} />
+            </View>
             <Text style={styles.guestTitle}>{t('guest_trial_exhausted_title')}</Text>
             <Text style={styles.guestBody}>{t('guest_trial_exhausted_body')}</Text>
             <TouchableOpacity
@@ -128,17 +147,25 @@ export default function PaywallScreen({ navigation }: PaywallScreenProps) {
           </View>
         ) : null}
 
-        <View style={styles.badge}>
-          <Text style={styles.badgeText}>{t('premiumBadge')}</Text>
-        </View>
-
         <Text style={styles.mainTitle}>{t('mainTitle')}</Text>
         <Text style={styles.subtitle}>{t('subtitle')}</Text>
+
+        {freeTrialAvailable ? (
+          <View style={styles.trialCard}>
+            <View style={styles.trialIconWrap}>
+              <Ionicons name="gift" size={22} color={c.success} />
+            </View>
+            <View style={styles.trialCopy}>
+              <Text style={styles.trialBadge}>{t('paywall_trial_badge')}</Text>
+              <Text style={styles.trialAfter}>{t('paywall_trial_after')}</Text>
+            </View>
+          </View>
+        ) : null}
 
         {FEATURES.map((f) => (
           <View key={f.titleKey} style={styles.featureCard}>
             <View style={styles.featureIconWrap}>
-              <Text style={styles.featureIcon}>{f.icon}</Text>
+              <Ionicons name={f.icon} size={20} color={c.primary} />
             </View>
             <View style={styles.featureCopy}>
               <Text style={styles.featureTitle}>{t(f.titleKey)}</Text>
@@ -149,18 +176,20 @@ export default function PaywallScreen({ navigation }: PaywallScreenProps) {
 
         <View style={styles.pricingCard}>
           <Text style={styles.pricingTitle}>{t('pricingTitle')}</Text>
-          <Text style={styles.pricingValue}>{SUBSCRIPTION_PRICE_LABEL}</Text>
+          <Text style={styles.pricingValue}>{t('pricingValue')}</Text>
           <Text style={styles.pricingSub}>{t('pricingSub')}</Text>
         </View>
 
         {subscriptionStatus === 'pending' ? (
           <View style={styles.pendingBanner}>
+            <Ionicons name="time" size={16} color={c.warning} />
             <Text style={styles.pendingText}>{t('paywall_pending_payment')}</Text>
           </View>
         ) : null}
 
         {lastError ? (
           <View style={styles.errorBanner}>
+            <Ionicons name="alert-circle" size={16} color={c.danger} />
             <Text style={styles.errorText}>{lastError}</Text>
           </View>
         ) : null}
@@ -174,7 +203,7 @@ export default function PaywallScreen({ navigation }: PaywallScreenProps) {
           {isPurchasing ? (
             <LoadingSpinner color="#FFFFFF" />
           ) : (
-            <Text style={styles.ctaLabel}>{t('paywall_checkout_cta')}</Text>
+            <Text style={styles.ctaLabel}>{ctaLabel}</Text>
           )}
         </TouchableOpacity>
 
@@ -204,101 +233,115 @@ export default function PaywallScreen({ navigation }: PaywallScreenProps) {
           </TouchableOpacity>
         ) : null}
       </ScrollView>
-
-      {showClose ? (
-        <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
-          <Pressable
-            style={[styles.closeBtn, { top: insets.top + 4, right: 12 }]}
-            onPressIn={onClose}
-            hitSlop={{ top: 50, bottom: 50, left: 50, right: 50 }}
-            accessibilityRole="button"
-            accessibilityLabel={t('paywall_close')}
-          >
-            <Text style={styles.closeLabel}>✕</Text>
-          </Pressable>
-        </View>
-      ) : null}
     </View>
   )
 }
 
-const styles = StyleSheet.create({
+// Colors are resolved at render time via useColors() so the paywall follows
+// the app theme (dark by default). The sheet is memoized per color set.
+function createStyles(c: AppColors) {
+  return StyleSheet.create({
   root: {
     flex: 1,
-    backgroundColor: BG,
+    backgroundColor: c.bg,
   },
   scrollContent: {
     paddingHorizontal: 20,
     paddingBottom: 24,
   },
-  closeBtn: {
-    position: 'absolute',
-    width: 48,
-    height: 48,
+  headerRow: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 24,
-    backgroundColor: 'rgba(0,0,0,0.06)',
+    justifyContent: 'space-between',
+    marginBottom: 24,
   },
-  closeLabel: {
-    fontSize: 22,
-    lineHeight: 24,
-    color: TEXT_MUTED,
-    fontFamily: fonts.medium,
-  },
-  badge: {
-    alignSelf: 'flex-start',
-    backgroundColor: ACCENT_DIM,
-    borderRadius: 999,
-    paddingHorizontal: 14,
-    paddingVertical: 7,
-    marginBottom: 14,
-    borderWidth: 1,
-    borderColor: 'rgba(34, 197, 94, 0.25)',
-  },
-  badgeText: {
+  eyebrow: {
     fontSize: 12,
     fontFamily: fonts.semiBold,
     fontWeight: '600',
-    color: ACCENT,
-    letterSpacing: 0.3,
+    color: c.primary,
+    letterSpacing: 1.6,
+    textTransform: 'uppercase',
+  },
+  closeBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: c.surface,
+    borderWidth: 1,
+    borderColor: c.border,
   },
   mainTitle: {
     fontSize: 28,
     lineHeight: 34,
     fontFamily: fonts.bold,
     fontWeight: '700',
-    color: TEXT_PRIMARY,
+    color: c.text,
     marginBottom: 8,
   },
   subtitle: {
     fontSize: 15,
     lineHeight: 22,
     fontFamily: fonts.regular,
-    color: TEXT_MUTED,
+    color: c.textSecondary,
     marginBottom: 20,
+  },
+  trialCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    backgroundColor: c.surface,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: c.success,
+    padding: 16,
+    marginBottom: 16,
+  },
+  trialIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: c.successDim,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  trialCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  trialBadge: {
+    fontSize: 18,
+    fontFamily: fonts.bold,
+    fontWeight: '700',
+    color: c.success,
+    marginBottom: 2,
+  },
+  trialAfter: {
+    fontSize: 13,
+    lineHeight: 18,
+    fontFamily: fonts.regular,
+    color: c.textSecondary,
   },
   featureCard: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: 12,
-    backgroundColor: CARD,
+    backgroundColor: c.surface,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: BORDER,
+    borderColor: c.border,
     padding: 14,
     marginBottom: 10,
   },
   featureIconWrap: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: '#E8E8EC',
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: c.primaryDim,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  featureIcon: {
-    fontSize: 20,
   },
   featureCopy: {
     flex: 1,
@@ -308,20 +351,20 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontFamily: fonts.semiBold,
     fontWeight: '600',
-    color: TEXT_PRIMARY,
+    color: c.text,
     marginBottom: 4,
   },
   featureSub: {
     fontSize: 13,
     lineHeight: 18,
     fontFamily: fonts.regular,
-    color: TEXT_MUTED,
+    color: c.textSecondary,
   },
   pricingCard: {
-    backgroundColor: CARD,
+    backgroundColor: c.surface,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: ACCENT,
+    borderColor: c.border,
     padding: 20,
     marginTop: 8,
     marginBottom: 18,
@@ -330,8 +373,8 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontFamily: fonts.semiBold,
     fontWeight: '600',
-    color: ACCENT,
-    letterSpacing: 1,
+    color: c.primary,
+    letterSpacing: 1.2,
     textTransform: 'uppercase',
     marginBottom: 8,
   },
@@ -339,49 +382,55 @@ const styles = StyleSheet.create({
     fontSize: 32,
     fontFamily: fonts.bold,
     fontWeight: '700',
-    color: TEXT_PRIMARY,
+    color: c.text,
     marginBottom: 6,
   },
   pricingSub: {
-    fontSize: 14,
-    lineHeight: 20,
+    fontSize: 13,
+    lineHeight: 19,
     fontFamily: fonts.regular,
-    color: TEXT_MUTED,
+    color: c.textSecondary,
   },
   pendingBanner: {
-    backgroundColor: '#FEFCE8',
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    backgroundColor: c.warningDim,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#FDE68A',
+    borderColor: c.warning,
     padding: 12,
     marginBottom: 12,
   },
   pendingText: {
+    flex: 1,
     fontSize: 13,
     lineHeight: 18,
     fontFamily: fonts.medium,
-    color: '#92400E',
-    textAlign: 'center',
+    color: c.warning,
   },
   errorBanner: {
-    backgroundColor: '#FEF2F2',
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    backgroundColor: c.dangerDim,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#FECACA',
+    borderColor: c.danger,
     padding: 12,
     marginBottom: 12,
   },
   errorText: {
+    flex: 1,
     fontSize: 13,
     lineHeight: 18,
     fontFamily: fonts.medium,
-    color: '#B91C1C',
-    textAlign: 'center',
+    color: c.danger,
   },
   ctaBtn: {
     height: 56,
     borderRadius: 16,
-    backgroundColor: ACCENT,
+    backgroundColor: c.success,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 16,
@@ -400,7 +449,7 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     textAlign: 'center',
     fontFamily: fonts.regular,
-    color: TEXT_SOFT,
+    color: c.textSecondary,
     marginBottom: 10,
   },
   legalLinksRow: {
@@ -414,13 +463,13 @@ const styles = StyleSheet.create({
   legalLink: {
     fontSize: 12,
     fontFamily: fonts.medium,
-    color: ACCENT,
+    color: c.primary,
     textDecorationLine: 'underline',
   },
   legalDot: {
     fontSize: 12,
     fontFamily: fonts.regular,
-    color: TEXT_SOFT,
+    color: c.textSecondary,
   },
   signOutBtn: {
     alignItems: 'center',
@@ -429,26 +478,31 @@ const styles = StyleSheet.create({
   signOutLabel: {
     fontSize: 14,
     fontFamily: fonts.medium,
-    color: TEXT_MUTED,
+    color: c.textSecondary,
   },
   guestCard: {
-    backgroundColor: CARD,
+    backgroundColor: c.surface,
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: BORDER,
+    borderColor: c.border,
     padding: 22,
     marginBottom: 18,
     alignItems: 'center',
   },
-  guestEmoji: {
-    fontSize: 36,
-    marginBottom: 10,
+  guestIconWrap: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: c.successDim,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
   },
   guestTitle: {
     fontSize: 18,
     fontFamily: fonts.bold,
     fontWeight: '700',
-    color: TEXT_PRIMARY,
+    color: c.text,
     textAlign: 'center',
     marginBottom: 8,
   },
@@ -456,7 +510,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
     fontFamily: fonts.regular,
-    color: TEXT_MUTED,
+    color: c.textSecondary,
     textAlign: 'center',
     marginBottom: 20,
   },
@@ -468,7 +522,7 @@ const styles = StyleSheet.create({
     height: 52,
     width: '100%',
     borderRadius: 14,
-    backgroundColor: ACCENT,
+    backgroundColor: c.success,
     marginBottom: 10,
   },
   googleBtnLabel: {
@@ -481,7 +535,8 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 17,
     fontFamily: fonts.regular,
-    color: TEXT_SOFT,
+    color: c.textSecondary,
     textAlign: 'center',
   },
-})
+  })
+}

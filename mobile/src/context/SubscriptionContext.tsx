@@ -61,6 +61,12 @@ export type SubscriptionContextValue = {
   subscriptionStatus: SubscriptionFirestoreStatus | 'none'
   isPurchasing: boolean
   lastError: string | null
+  /**
+   * Whether the Google Play product exposes a free-trial offer (7 days).
+   * Drives the "free trial" copy on the paywall so the app never promises
+   * a trial that the billing product doesn't actually grant.
+   */
+  freeTrialAvailable: boolean
   buySubscription: () => Promise<void>
   clearError: () => void
 }
@@ -83,14 +89,61 @@ function isAndroidSubscriptionProduct(
   )
 }
 
-function pickWeeklyOfferToken(product: SubscriptionAndroid): string | null {
-  const offers = product.subscriptionOfferDetails ?? []
-  const weeklyOffer = offers.find((offer) =>
-    offer.pricingPhases?.pricingPhaseList?.some(
-      (phase) => phase.billingPeriod === 'P1W',
-    ),
+type PricingPhaseLike = {
+  billingPeriod?: string
+  priceAmountMicros?: number | string
+}
+
+function hasFreeTrialPhase(offer: {
+  pricingPhases?: { pricingPhaseList?: PricingPhaseLike[] }
+}): boolean {
+  // A Google Play free-trial phase is a pricing phase with zero price
+  // (e.g. "P1W" trial with priceAmountMicros = 0 before the paid phase).
+  return (offer.pricingPhases?.pricingPhaseList ?? []).some(
+    (phase) =>
+      phase.priceAmountMicros !== undefined && Number(phase.priceAmountMicros) === 0,
   )
-  return weeklyOffer?.offerToken ?? offers[0]?.offerToken ?? null
+}
+
+function hasWeeklyPhase(offer: {
+  pricingPhases?: { pricingPhaseList?: PricingPhaseLike[] }
+}): boolean {
+  return (offer.pricingPhases?.pricingPhaseList ?? []).some(
+    (phase) => phase.billingPeriod === 'P1W',
+  )
+}
+
+export type SelectedSubscriptionOffer = {
+  token: string | null
+  /** Whether the chosen offer grants a free-trial phase (7 days in Play Console). */
+  hasFreeTrial: boolean
+}
+
+/**
+ * Selects the Google Play offer used for checkout.
+ *
+ * Priority:
+ *  1. Weekly offer that includes a free-trial phase — the 7-day trial only
+ *     applies when this offer token is used; picking a plain offer charges
+ *     the card immediately.
+ *  2. Any offer with a free-trial phase.
+ *  3. Any weekly offer (no trial).
+ *  4. First available offer.
+ */
+function pickOffer(product: SubscriptionAndroid): SelectedSubscriptionOffer {
+  const offers = product.subscriptionOfferDetails ?? []
+
+  const weeklyTrial = offers.find((o) => hasWeeklyPhase(o) && hasFreeTrialPhase(o))
+  if (weeklyTrial) return { token: weeklyTrial.offerToken, hasFreeTrial: true }
+
+  const anyTrial = offers.find(hasFreeTrialPhase)
+  if (anyTrial) return { token: anyTrial.offerToken, hasFreeTrial: true }
+
+  const weekly = offers.find(hasWeeklyPhase)
+  if (weekly) return { token: weekly.offerToken, hasFreeTrial: false }
+
+  const first = offers[0]
+  return { token: first?.offerToken ?? null, hasFreeTrial: false }
 }
 
 /** Small delay helper for BillingClient settlement. */
@@ -260,9 +313,10 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
   const [trialUser, setTrialUser] = useState<FirestoreUser | null>(null)
   const [isPurchasing, setIsPurchasing] = useState(false)
   const [lastError, setLastError] = useState<string | null>(null)
+  const [freeTrialAvailable, setFreeTrialAvailable] = useState(false)
 
   const verifyingTokensRef = useRef<Set<string>>(new Set())
-  const subscriptionProductRef = useRef<SubscriptionAndroid | null>(null)
+  const subscriptionOfferRef = useRef<SelectedSubscriptionOffer | null>(null)
 
   const isPremium = useMemo(() => isPaidPremium(subscription), [subscription])
 
@@ -441,7 +495,16 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
       try {
         const product = await loadAndroidSubscriptionProduct()
         if (!cancelled) {
-          subscriptionProductRef.current = product
+          const offer = pickOffer(product)
+          subscriptionOfferRef.current = offer
+          setFreeTrialAvailable(offer.hasFreeTrial)
+          if (!offer.hasFreeTrial) {
+            console.warn(
+              `[DriveMind] IAP: no free-trial offer for "${SUBSCRIPTION_SKU}". ` +
+                'Add a 7-day free trial offer in Play Console → Monetize → Subscriptions ' +
+                'so checkout starts with the trial phase.',
+            )
+          }
         }
 
         purchaseSub = purchaseUpdatedListener((purchase) => {
@@ -483,14 +546,15 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
     setLastError(null)
 
     try {
-      let product = subscriptionProductRef.current
-      if (!product) {
-        product = await loadAndroidSubscriptionProduct()
-        subscriptionProductRef.current = product
+      let offer = subscriptionOfferRef.current
+      if (!offer) {
+        const product = await loadAndroidSubscriptionProduct()
+        offer = pickOffer(product)
+        subscriptionOfferRef.current = offer
+        setFreeTrialAvailable(offer.hasFreeTrial)
       }
 
-      const offerToken = pickWeeklyOfferToken(product)
-      if (!offerToken) {
+      if (!offer.token) {
         throw new Error(
           `No subscription offer token for "${SUBSCRIPTION_SKU}" — activate a weekly base plan in Play Console.`,
         )
@@ -498,7 +562,7 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
 
       await requestSubscription({
         sku: SUBSCRIPTION_SKU,
-        subscriptionOffers: [{ sku: SUBSCRIPTION_SKU, offerToken }],
+        subscriptionOffers: [{ sku: SUBSCRIPTION_SKU, offerToken: offer.token }],
       })
       // purchaseUpdatedListener handles verification + finishTransaction.
     } catch (error) {
@@ -516,6 +580,7 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
       subscriptionStatus,
       isPurchasing,
       lastError,
+      freeTrialAvailable,
       buySubscription,
       clearError,
     }),
@@ -527,6 +592,7 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
       subscriptionStatus,
       isPurchasing,
       lastError,
+      freeTrialAvailable,
       buySubscription,
       clearError,
     ],

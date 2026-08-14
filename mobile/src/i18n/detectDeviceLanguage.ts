@@ -2,10 +2,10 @@ import * as Localization from 'expo-localization'
 
 /**
  * Languages the app can auto-detect from the device's system locale.
- * Manual selection (see `languageStore`) additionally supports 'uk',
- * but system auto-detection is intentionally limited to this list per spec.
+ * Mirrors the full set of app UI languages (`DRIVEMIND_LANGUAGES`).
+ * If the device language is not one of these, the app falls back to English.
  */
-export const AUTO_DETECT_LANGUAGES = ['en', 'ru', 'pl'] as const
+export const AUTO_DETECT_LANGUAGES = ['en', 'ru', 'pl', 'uk'] as const
 export type AutoDetectLanguage = (typeof AUTO_DETECT_LANGUAGES)[number]
 
 export const DEFAULT_LANGUAGE: AutoDetectLanguage = 'en'
@@ -17,7 +17,7 @@ function isAutoDetectLanguage(tag: string): tag is AutoDetectLanguage {
 /**
  * Detects the device's current system language and maps it to one of the
  * app's supported auto-detect languages. Falls back to English when the
- * system language isn't recognised (e.g. 'de', 'fr', 'uk').
+ * system language isn't one of the app's UI languages (e.g. 'de', 'fr', 'es').
  */
 export function detectDeviceLanguage(): AutoDetectLanguage {
   try {

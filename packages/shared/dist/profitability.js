@@ -54,17 +54,36 @@ function detectOutOfCity(dropoffLabel) {
     if (!dropoffLabel)
         return false;
     const lower = dropoffLabel.toLowerCase();
+    // Kraków-Balice Airport exception: airport hub dropoffs have high rematch
+    // probability and should not be penalized as an empty-return suburb.
+    if (lower.includes("balice") || lower.includes("lotnisko") || lower.includes("airport")) {
+        return false;
+    }
     return OUT_OF_CITY_KEYWORDS.some((kw) => lower.includes(kw));
 }
 // ---------------------------------------------------------------------------
 // Tier classification
 // ---------------------------------------------------------------------------
-function classifyTier(effectiveZlPerKm) {
-    if (effectiveZlPerKm >= THRESHOLDS.EXCELLENT_MIN)
+/**
+ * 4-tier zł/km thresholds (gross, Brutto) for Kraków 2026.
+ * Role-aware: couriers have higher zł/km baseline due to short trip base fees.
+ */
+function classifyTier(effectiveZlPerKm, role = "taxi") {
+    if (role === "courier") {
+        if (effectiveZlPerKm >= 4.50)
+            return "EXCELLENT";
+        if (effectiveZlPerKm >= 3.00)
+            return "GOOD_DEAL";
+        if (effectiveZlPerKm >= 1.80)
+            return "STANDARD";
+        return "LOW_YIELD";
+    }
+    // Taxi thresholds (Kraków 2026)
+    if (effectiveZlPerKm >= 3.50)
         return "EXCELLENT";
-    if (effectiveZlPerKm >= THRESHOLDS.GOOD_DEAL_MIN)
+    if (effectiveZlPerKm >= 2.20)
         return "GOOD_DEAL";
-    if (effectiveZlPerKm >= THRESHOLDS.STANDARD_MIN)
+    if (effectiveZlPerKm >= 1.60)
         return "STANDARD";
     return "LOW_YIELD";
 }
@@ -112,7 +131,7 @@ function computeProfitability(input) {
     const plnPerMin = pricePLN / etaMin;
     const estHourlyPLN = plnPerMin * 60;
     // ── Tier classification (Kraków 2026) ───────────────────────────────────
-    const profitTier = classifyTier(effectiveZlPerKm);
+    const profitTier = classifyTier(effectiveZlPerKm, input.role);
     const { tierLabel, tierColor } = tierMeta(profitTier);
     // ── Legacy 0-100 score (preserved for existing UI badge logic) ──────────
     // Role-aware normalization targets (can be tuned per market).

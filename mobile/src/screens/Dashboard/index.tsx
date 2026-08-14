@@ -439,6 +439,11 @@ export default function DashboardScreen() {
   }, [setPendingConfirmation])
 
   const handleAcceptSuggestion = useCallback(() => {
+    if (isSearchBlocked) {
+      // Premium feature — restricted (free) mode routes to the paywall.
+      openPaywall()
+      return
+    }
     if (!suggestion) return
     console.log('[DriveMind Nav]: accept tapped', { orderId: suggestion.id })
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
@@ -448,7 +453,7 @@ export default function DashboardScreen() {
     if (Platform.OS === 'android') triggerScraperWindow()
     pendingOrderRef.current = suggestion
     openPlatformDeepLink(suggestion?.platform ?? '')
-  }, [suggestion, activeRideSnapshot, activeOrder, removeIngestOffer])
+  }, [isSearchBlocked, openPaywall, suggestion, activeRideSnapshot, activeOrder, removeIngestOffer])
 
   const handleDismissSuggestion = useCallback(() => {
     if (!suggestion) return
@@ -837,6 +842,12 @@ export default function DashboardScreen() {
   }, [startShiftManually, setIsDriverOnline])
 
   const handleStartShift = useCallback(async () => {
+    if (isSearchBlocked) {
+      // Going online to receive orders is a premium feature — restricted
+      // (free) mode routes to the paywall instead of starting a shift.
+      openPaywall()
+      return
+    }
     const canProceed =
       Platform.OS !== 'android' ? true : await requestShiftAccessibilityDisclosure()
     if (!canProceed) {
@@ -845,7 +856,7 @@ export default function DashboardScreen() {
     }
     setAccessibilityConsentGiven(true)
     doStartShift()
-  }, [doStartShift, setAccessibilityConsentGiven, setIsDriverOnline])
+  }, [isSearchBlocked, openPaywall, doStartShift, setAccessibilityConsentGiven, setIsDriverOnline])
 
   const handleSwitchPlatform = useCallback(async (platform: string) => {
     const normalized = platform.toLowerCase()
@@ -984,6 +995,21 @@ export default function DashboardScreen() {
           },
         ]}
       >
+        {/* Free-mode (restricted) banner — visible whenever order search is
+            blocked; tapping it re-opens the paywall */}
+        {isSearchBlocked && !isNavigating ? (
+          <TouchableOpacity
+            style={[s.freeModeBanner, { backgroundColor: c.warningDim, borderColor: c.warning }]}
+            onPress={openPaywall}
+            activeOpacity={0.85}
+            accessibilityRole="button"
+          >
+            <Feather name="lock" size={13} color={c.warning} />
+            <Text style={[s.freeModeBannerText, { color: c.warning }]}>{t('free_mode_banner')}</Text>
+            <Text style={[s.freeModeBannerCta, { color: c.warning }]}>{t('free_mode_upgrade')}</Text>
+          </TouchableOpacity>
+        ) : null}
+
         {/* Daily goal progress bar (thin) */}
         <View style={[s.goalBarTrack, { backgroundColor: c.separator }]}>
           <View
@@ -1119,6 +1145,29 @@ const s = StyleSheet.create({
   goalBarFill: {
     height: 4,
     borderRadius: 999,
+  },
+  freeModeBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderRadius: 12,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    marginBottom: 10,
+  },
+  freeModeBannerText: {
+    flex: 1,
+    fontSize: 12,
+    lineHeight: 16,
+    fontFamily: fonts.medium,
+  },
+  freeModeBannerCta: {
+    fontSize: 11,
+    fontFamily: fonts.semiBold,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
   },
   orderRow: {
     flexDirection: 'row',

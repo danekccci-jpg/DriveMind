@@ -2,7 +2,7 @@
   "expo": {
     "name": "DriveMind",
     "slug": "drivemind",
-    "version": "1.0.57",
+    "version": "1.0.60",
     "orientation": "portrait",
     "icon": "./assets/logo/logo-symbol-light.png",
     "userInterfaceStyle": "automatic",
@@ -21,7 +21,7 @@
     },
     "android": {
       "package": "com.guessxx.drivemind",
-      "versionCode": 57,
+      "versionCode": 60,
       "jsEngine": "hermes",
       "adaptiveIcon": {
         "foregroundImage": "./assets/logo/logo-symbol-light.png",

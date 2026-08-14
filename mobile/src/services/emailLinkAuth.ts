@@ -24,8 +24,8 @@ const BUNDLE_ID = 'com.guessxx.drivemind'
 const DEEP_LINK_URL = 'https://drivemind-d4994.firebaseapp.com/login'
 
 /**
- * Firebase email-link sign-in supports en/pl/ru (uk, and any other
- * unsupported system language, falls back to en). Uses the same detected
+ * Firebase email-link sign-in supports all app UI languages (en/pl/ru/uk);
+ * any other system language falls back to en. Uses the same detected
  * language as the app's i18n layer so the sign-in email matches the UI.
  */
 function resolveFirebaseAuthLanguage(): string {

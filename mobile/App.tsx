@@ -24,13 +24,12 @@ import { useTheme } from './src/theme/theme'
 import { configureGoogleSignIn } from './src/services/googleAuth'
 import { isFirebaseConfigured } from './src/config/firebase'
 import { getOrCreateDeviceFingerprint } from './src/services/deviceFingerprint'
-import { syncGuestOrderCountFromRemote, GUEST_ORDER_THRESHOLD } from './src/services/userFirestoreService'
+import { syncGuestOrderCountFromRemote } from './src/services/userFirestoreService'
 import { isEmailSignInLink, handleEmailLinkSignIn, completeEmailLinkAuth } from './src/services/emailLinkAuth'
 import LoginScreen from './src/screens/Login'
 import OnboardingScreen from './src/screens/Onboarding'
 import WelcomeScreen from './src/screens/Welcome'
 import RootNavigator, { navigationRef } from './src/navigation/RootNavigator'
-import PaywallScreen from './src/screens/PaywallScreen'
 import { EVENT_CLOSE_PAYWALL } from './src/screens/PaywallScreen'
 import { EVENT_OPEN_PAYWALL } from './src/services/subscriptionGate'
 import { SubscriptionProvider, useSubscription } from './src/context/SubscriptionContext'
@@ -70,11 +69,9 @@ export default function App() {
   const fadeAnim = useRef(new Animated.Value(0)).current
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated || s.isLoggedIn)
   const userEmail = useAuthStore((s) => s.userEmail)
-  const guestOrderCount = useAuthStore((s) => s.guestOrderCount)
   const needsNativeGoogleAuth = Platform.OS === 'android' || Platform.OS === 'ios'
   const [authHydrated, setAuthHydrated] = useState(!needsNativeGoogleAuth)
   const isGuest = isGuestEmail(userEmail)
-  const isGuestBlocked = isGuest && guestOrderCount >= GUEST_ORDER_THRESHOLD
 
   useEffect(() => {
     if (!NUCLEAR_DISABLE_GOOGLE_NATIVE_CALLS && needsNativeGoogleAuth) {
@@ -352,7 +349,6 @@ export default function App() {
           needsNativeGoogleAuth={needsNativeGoogleAuth}
           isAuthenticated={isAuthenticated}
           isGuest={isGuest}
-          isGuestBlocked={isGuestBlocked}
         />
       </SubscriptionProvider>
     </SafeAreaProvider>
@@ -365,7 +361,6 @@ type AuthenticatedAppShellProps = {
   needsNativeGoogleAuth: boolean
   isAuthenticated: boolean
   isGuest: boolean
-  isGuestBlocked: boolean
 }
 
 function AuthenticatedAppShell({
@@ -374,10 +369,9 @@ function AuthenticatedAppShell({
   needsNativeGoogleAuth,
   isAuthenticated,
   isGuest,
-  isGuestBlocked,
 }: AuthenticatedAppShellProps) {
   const { colors: c } = useTheme()
-  const { isLoading, hasAppAccess } = useSubscription()
+  const { isLoading } = useSubscription()
   const firebaseEnabled = isFirebaseConfigured()
 
   if (
@@ -394,19 +388,10 @@ function AuthenticatedAppShell({
     )
   }
 
-  const blocked =
-    (needsNativeGoogleAuth && isAuthenticated && !isGuest && firebaseEnabled && !hasAppAccess) ||
-    isGuestBlocked
-
-  if (blocked) {
-    return (
-      <>
-        <StatusBar style="dark" />
-        <PaywallScreen />
-      </>
-    )
-  }
-
+  // No hard lockout: users without an active subscription land in the app
+  // in a restricted (free) mode — order parsing/search is gated and the
+  // paywall opens as a dismissible modal (auto-once per session, then on
+  // premium-feature taps). See `MainAppWithDriverIngest` below.
   return (
     <Animated.View style={{ flex: 1, opacity: fadeAnim }}>
       <MainAppWithDriverIngest navTheme={navTheme} />
@@ -428,6 +413,50 @@ function MainAppWithDriverIngest({ navTheme }: { navTheme: Theme }) {
       }
     })
     return () => sub.remove()
+  }, [])
+
+  // Auto-present the paywall modal once per blocking transition (app launch
+  // with an expired trial / reached guest limit, or the trial expiring
+  // mid-session). It is dismissible and is never re-presented while the
+  // block persists — reopening happens explicitly via premium-feature taps
+  // (blocked search bar, start-shift, accept order), so there is no loop.
+  // When access is granted (subscription starts), an open paywall is closed.
+  useEffect(() => {
+    const presentPaywall = (attemptsLeft = 5) => {
+      if (attemptsLeft <= 0) return
+      if (!navigationRef.isReady()) {
+        setTimeout(() => presentPaywall(attemptsLeft - 1), 500)
+        return
+      }
+      const st = useAuthStore.getState()
+      const blocked = isGuestEmail(st.userEmail) ? st.isGuestBlocked : st.isPaywallBlocked
+      if (!blocked) return
+      // Let the navigator settle before pushing the modal.
+      setTimeout(() => {
+        if (navigationRef.isReady()) {
+          navigationRef.navigate('Paywall' as never)
+        }
+      }, 400)
+    }
+
+    presentPaywall()
+    const unsub = useAuthStore.subscribe((state, prev) => {
+      const wasBlocked = isGuestEmail(state.userEmail)
+        ? prev.isGuestBlocked
+        : prev.isPaywallBlocked
+      const nowBlocked = isGuestEmail(state.userEmail)
+        ? state.isGuestBlocked
+        : state.isPaywallBlocked
+      if (!wasBlocked && nowBlocked) {
+        presentPaywall()
+      } else if (wasBlocked && !nowBlocked && navigationRef.isReady()) {
+        // Subscription/trial became active — dismiss an open paywall.
+        if (navigationRef.getCurrentRoute()?.name === 'Paywall') {
+          navigationRef.goBack()
+        }
+      }
+    })
+    return () => unsub()
   }, [])
 
   return (
